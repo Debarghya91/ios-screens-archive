@@ -231,14 +231,22 @@ enum LessonDurations {
         lessons.reduce(0) { $0 + (secondsByID[$1.id] ?? 0) }
     }
 
-    /// Short label for one lesson: "6 min". Nil when unknown.
-    static func label(for lessonID: String) -> String? {
+    /// Short listen label for one lesson: "About 6 min listen".
+    /// Nil when unknown. The word "listen" is part of the label:
+    /// these seconds are narration length, never read time, and
+    /// stamping them as a bare time misled learners into reading
+    /// them as read time. Read time is computed separately, from
+    /// the full lesson text, in LessonView.
+    static func listenLabel(for lessonID: String) -> String? {
         guard let sec = secondsByID[lessonID], sec > 0 else { return nil }
-        return "\(minutes(sec)) min"
+        return "About " + durationText(sec) + " listen"
     }
 
-    /// Total label for a chapter, session or course: "About 45 min"
-    /// or "About 1 hr 20 min". Nil when nothing is known.
+    /// Total label for a chapter, session or course: "About 45 min
+    /// of listening" or "About 1 hr 20 min of listening". Nil when
+    /// nothing is known. Narration totals only: no read-time total
+    /// is claimed, because full lesson texts are not loaded in
+    /// list context.
     static func totalLabel(for lessons: [SearchEntry]) -> String? {
         totalLabel(seconds: totalSeconds(for: lessons))
     }
@@ -246,7 +254,7 @@ enum LessonDurations {
     /// Total label for a raw second count. Nil when zero.
     static func totalLabel(seconds: Int) -> String? {
         guard seconds > 0 else { return nil }
-        return "About " + durationText(seconds)
+        return "About " + durationText(seconds) + " of listening"
     }
 
     /// "45 min", "1 hr", "1 hr 20 min", "3 hrs".
@@ -270,11 +278,20 @@ enum LessonDurations {
 /// Approximate read time for text content, at 200 words per
 /// minute, rounded up, at least 1 minute. Computed from the
 /// actual text, never guessed: empty text has no estimate.
+/// Callers must pass the FULL text of the item: the search index
+/// entry text is a truncated excerpt (86 to 193 words), and timing
+/// it stamps "About 1 min read" on every item. List rows for
+/// excerpt-only items show no read time at all.
 enum ReadTime {
-    static func label(for text: String) -> String? {
+    /// Whole read minutes for the full text, or nil when empty.
+    static func minutes(for text: String) -> Int? {
         let words = text.split(whereSeparator: { $0.isWhitespace }).count
         guard words > 0 else { return nil }
-        let mins = max(1, (words + 199) / 200)
+        return max(1, (words + 199) / 200)
+    }
+
+    static func label(for text: String) -> String? {
+        guard let mins = minutes(for: text) else { return nil }
         return "About \(mins) min read"
     }
 }
@@ -296,7 +313,13 @@ struct EntryRow: View {
     var body: some View {
         PFCard {
             HStack(spacing: PFSpacing.md) {
-                PFIconTile(systemImage: systemImage, size: 44)
+                // The thumbnail sits beside the title when the
+                // website exposes one; the type icon tile otherwise.
+                if entry.thumbnail != nil {
+                    PFThumbnailView(thumbnailPath: entry.thumbnail, size: 44, cornerRadius: 12)
+                } else {
+                    PFIconTile(systemImage: systemImage, size: 44)
+                }
                 VStack(alignment: .leading, spacing: PFSpacing.xs) {
                     Text(entry.title)
                         .font(.pfCardTitle)
@@ -326,20 +349,24 @@ struct EntryRow: View {
         }
     }
 
-    /// Approximate time for this entry: the narration length
-    /// for a lesson when the manifest knows it, else the read
-    /// time of the entry text. Nil shows nothing.
+    /// Approximate time for this entry: the narration length for
+    /// a lesson when the manifest knows it, labelled as listen
+    /// time. Guides, labs, tests and FAQs show no time here: the
+    /// only text in list context is the truncated index excerpt,
+    /// and timing an excerpt stamps a fake read time on the item.
+    /// Nil shows nothing.
     private var timeLabel: String? {
-        if entry.type == .lesson, let label = LessonDurations.label(for: entry.id) {
-            return "About " + label
-        }
-        return ReadTime.label(for: entry.text)
+        guard entry.type == .lesson else { return nil }
+        return LessonDurations.listenLabel(for: entry.id)
     }
 }
 
 // MARK: - Entry detail
 
-/// Shows one guide, lab or test entry: title, type pill, full text.
+/// Shows one guide, lab or test entry: title, type pill, text.
+/// No time label: the entry text is the truncated index excerpt,
+/// not the full item, so no truthful read time can be computed
+/// here, and a stamped label would mislead.
 struct EntryDetailView: View {
     let entry: SearchEntry
 
@@ -350,11 +377,6 @@ struct EntryDetailView: View {
                 Text(entry.title)
                     .font(.pfSectionTitle)
                     .foregroundColor(.pfNavy)
-                if let timeLabel = ReadTime.label(for: entry.text) {
-                    Label(timeLabel, systemImage: "clock")
-                        .font(.pfCaptionBold)
-                        .foregroundColor(.pfSecondaryText)
-                }
                 PFBodyText(text: entry.text)
             }
             .padding(PFSpacing.lg)

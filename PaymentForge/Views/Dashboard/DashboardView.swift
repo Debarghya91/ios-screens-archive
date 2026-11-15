@@ -60,12 +60,31 @@ struct DashboardView: View {
     @Binding var isDrawerOpen: Bool
 
     /// Optional tab selection, for the empty-state action. MainTabView
-    /// always passes $selectedTab, so the action switches to Learn.
+    /// always passes $selectedTab, so the action switches to Home.
     var selectedTab: Binding<Int>?
 
-    init(isDrawerOpen: Binding<Bool>, selectedTab: Binding<Int>? = nil) {
+    /// The Home section the empty-state action lands on. MainTabView
+    /// passes its target binding, so "Start learning" switches to
+    /// Home and lands on the course browsing below the Continue
+    /// learning block. There is no Learn tab any more.
+    var homeSectionTarget: Binding<HomeSectionTarget?>?
+
+    /// The empty-state action: switch to Home and land on the
+    /// course browsing. Both bindings are set together, so Home
+    /// scrolls to the browsing section on arrival.
+    private func startLearning() {
+        selectedTab?.wrappedValue = 0
+        homeSectionTarget?.wrappedValue = .learn(.courses)
+    }
+
+    init(
+        isDrawerOpen: Binding<Bool>,
+        selectedTab: Binding<Int>? = nil,
+        homeSectionTarget: Binding<HomeSectionTarget?>? = nil
+    ) {
         self._isDrawerOpen = isDrawerOpen
         self.selectedTab = selectedTab
+        self.homeSectionTarget = homeSectionTarget
     }
 
     @State private var showCheckout = false
@@ -243,11 +262,11 @@ struct DashboardView: View {
     private var pathwayTitle: String {
         switch pathwayLessons.source {
         case .activePath:
-            return pathwayPath.map { "Your active path: \($0.title)" } ?? "Your active path"
+            return pathwayPath.map { "Your journey: \($0.title)" } ?? "Your journey"
         case .roleRoutePath, .roleRouteSessions:
-            return roleRoute.map { "Your role route: \($0.title)" } ?? "Your role route"
+            return roleRoute.map { "Your role journey: \($0.title)" } ?? "Your role journey"
         case .none:
-            return "No pathway chosen yet"
+            return "No journey chosen yet"
         }
     }
 
@@ -548,7 +567,7 @@ struct DashboardView: View {
                 title: "No progress yet",
                 message: "Complete your first lesson and your progress and streak will appear here. Learning time appears once listening or lesson time has been recorded.",
                 actionTitle: "Start learning",
-                action: { selectedTab?.wrappedValue = 1 }
+                action: { startLearning() }
             )
             // A new learner still gets a next action, a pathway and
             // the certificate rules, so the screen is useful before
@@ -642,7 +661,7 @@ struct DashboardView: View {
     /// says so instead of showing 0 percent.
     private var pathwaySection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: "Your pathway")
+            PFSectionHeader(title: "Your journey")
             if contentService.searchIndex == nil {
                 PFCard {
                     PFLoadingView(message: "Loading your pathway...")
@@ -654,7 +673,7 @@ struct DashboardView: View {
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Choose a learning path to work through, or complete onboarding to get a route for your role. Your progress is counted per lesson either way, and choosing a path later never clears it.")
+                        Text("Choose a learning journey to work through, or complete onboarding to get a journey for your role. Your progress is counted per lesson either way, and choosing a journey later never clears it.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -686,7 +705,7 @@ struct DashboardView: View {
                                 }
                             }
                             Divider()
-                            Text("Demonstrated on quizzes in this pathway: \(pathwayInsight.demonstratedLessonCount) of \(pathwayInsight.total) lessons at 80% or above on their best quiz score. \(pathwayInsight.quizAttemptedLessonCount) lessons have a quiz attempt recorded.")
+                            Text("Demonstrated on quizzes in this journey: \(pathwayInsight.demonstratedLessonCount) of \(pathwayInsight.total) lessons at 80% or above on their best quiz score. \(pathwayInsight.quizAttemptedLessonCount) lessons have a quiz attempt recorded.")
                                 .font(.pfBody)
                                 .foregroundColor(.pfSecondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -696,7 +715,7 @@ struct DashboardView: View {
                                     .font(.pfCardTitle)
                                     .foregroundColor(.pfNavy)
                                     .fixedSize(horizontal: false, vertical: true)
-                                Text("No lessons completed on this pathway yet.")
+                                Text("No lessons completed on this journey yet.")
                                     .font(.pfBody)
                                     .foregroundColor(.pfSecondaryText)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -733,7 +752,7 @@ struct DashboardView: View {
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("This pathway has no lessons in the loaded catalogue, so no completion can be shown yet.")
+                        Text("This journey has no lessons in the loaded catalogue, so no completion can be shown yet.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1043,7 +1062,7 @@ struct DashboardView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             if let tabBinding = selectedTab {
                                 PFPrimaryButton(title: "Start learning") {
-                                    tabBinding.wrappedValue = 1
+                                    startLearning()
                                 }
                                 .accessibilityLabel("Start learning")
                             }
@@ -1134,7 +1153,7 @@ struct DashboardView: View {
                 title: "No activity yet",
                 message: "Your daily activity will appear here once you start learning. Each day you learn adds to your streak.",
                 actionTitle: "Start learning",
-                action: { selectedTab?.wrappedValue = 1 }
+                action: { startLearning() }
             )
         } else {
             weeklyActivitySection
@@ -1252,7 +1271,7 @@ struct DashboardView: View {
     }
 
     /// "About 9 weeks left at 5 lessons a week · About 38 hrs of
-    /// lessons to go", from the lessons still to finish and the
+    /// listening to go", from the lessons still to finish and the
     /// weekly goal. Nil when everything is complete or the goal
     /// is not set.
     private var paceLine: String? {
@@ -1262,10 +1281,10 @@ struct DashboardView: View {
         let weekText = weeks == 1 ? "About 1 week left" : "About \(weeks) weeks left"
         let goalText = "at \(progressStore.weeklyGoal) lessons a week"
         let remainingSeconds = remaining.reduce(0) { $0 + (LessonDurations.seconds(for: $1.id) ?? 0) }
-        guard let total = LessonDurations.totalLabel(seconds: remainingSeconds) else {
+        guard remainingSeconds > 0 else {
             return "\(weekText) \(goalText)."
         }
-        return "\(weekText) \(goalText) · \(total) of lessons to go."
+        return "\(weekText) \(goalText) · About \(LessonDurations.durationText(remainingSeconds)) of listening to go."
     }
 
     private var weeklyGoalSection: some View {
@@ -1347,7 +1366,7 @@ struct DashboardView: View {
                 title: "No assessments yet",
                 message: "Take a lesson quiz, a competency assessment, a Final Assessment or an investigation lab case and your scores will appear here. Quizzes, competency scores, Final Assessments and lab scores are shown in separate sections.",
                 actionTitle: "Start learning",
-                action: { selectedTab?.wrappedValue = 1 }
+                action: { startLearning() }
             )
         } else {
             quizSection
@@ -1874,7 +1893,7 @@ struct DashboardView: View {
 
     private var pathwaysSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: "Learning Paths")
+            PFSectionHeader(title: "Learning Journeys")
             PFCard {
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
                     ForEach(LearningPath.all) { path in

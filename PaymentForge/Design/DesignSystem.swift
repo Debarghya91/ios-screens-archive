@@ -6,6 +6,19 @@
 
 import SwiftUI
 import WebKit
+import os
+
+/// Diagnostics for thumbnail loading. Thumbnail failures are
+/// otherwise silent: a failed raster load shows the placeholder
+/// tile and a failed SVG load showed a blank frame, with nothing
+/// recorded anywhere. These logs make a failure diagnosable in
+/// Console without changing what the learner sees, beyond the
+/// fallback tile. Each thumbnail view loads independently: there
+/// is no shared thumbnail store, cache, or lock, so one failed
+/// fetch can never poison the others or block a row.
+enum PFThumbnailLog {
+    static let logger = Logger(subsystem: "PaymentsTrainingHub", category: "Thumbnails")
+}
 
 // MARK: - Colors
 
@@ -1004,7 +1017,12 @@ struct PFThumbnailView: View {
 /// so it scales to the frame with object-fit cover and a
 /// transparent background. Loads once per URL: updateUIView
 /// reloads only when the URL changes, so list scrolling never
-/// re-fetches the same thumbnail.
+/// re-fetches the same thumbnail. A failed image load reports
+/// through a script message handler (a subresource failure does
+/// not reach WKNavigationDelegate), is logged for diagnosis,
+/// and swaps in the neutral fallback tile, so a failed SVG
+/// never leaves a blank frame. Each view owns its own web view
+/// and handler: failures stay per thumbnail.
 private struct PFThumbnailSVGView: UIViewRepresentable {
     let url: URL
 
@@ -1013,12 +1031,15 @@ private struct PFThumbnailSVGView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> WKWebView {
-        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.add(context.coordinator, name: "pfThumbnailFailed")
+        let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.isScrollEnabled = false
         webView.scrollView.bounces = false
         webView.isUserInteractionEnabled = false
+        webView.navigationDelegate = context.coordinator
         webView.loadHTMLString(Self.wrappedHTML(for: url), baseURL: nil)
         return webView
     }
@@ -1026,6 +1047,7 @@ private struct PFThumbnailSVGView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {
         guard context.coordinator.loadedURL != url else { return }
         context.coordinator.loadedURL = url
+        context.coordinator.didShowFallback = false
         webView.loadHTMLString(Self.wrappedHTML(for: url), baseURL: nil)
     }
 
@@ -1044,16 +1066,59 @@ private struct PFThumbnailSVGView: UIViewRepresentable {
         img { display: block; width: 100%; height: 100%; object-fit: cover; }
         </style>
         </head>
-        <body><img src="\(escaped)" alt=""></body>
+        <body><img src="\(escaped)" alt="" onerror="window.webkit.messageHandlers.pfThumbnailFailed.postMessage('failed')"></body>
         </html>
         """
     }
 
-    final class Coordinator {
+    /// The neutral tile shown when the SVG fails to load: the
+    /// same royal tint as the raster placeholder, filling the
+    /// frame, with no broken-image glyph.
+    static func fallbackHTML() -> String {
+        """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <style>
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: rgba(23, 64, 140, 0.10); }
+        </style>
+        </head>
+        <body></body>
+        </html>
+        """
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var loadedURL: URL
+        var didShowFallback = false
 
         init(loadedURL: URL) {
             self.loadedURL = loadedURL
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == "pfThumbnailFailed",
+                  let webView = message.webView,
+                  !didShowFallback else { return }
+            didShowFallback = true
+            PFThumbnailLog.logger.error("Thumbnail failed to load: \(self.loadedURL.absoluteString, privacy: .public)")
+            webView.loadHTMLString(PFThumbnailSVGView.fallbackHTML(), baseURL: nil)
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            handleNavigationFailure(webView: webView, error: error)
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            handleNavigationFailure(webView: webView, error: error)
+        }
+
+        private func handleNavigationFailure(webView: WKWebView, error: Error) {
+            guard !didShowFallback else { return }
+            didShowFallback = true
+            PFThumbnailLog.logger.error("Thumbnail page failed to load: \(self.loadedURL.absoluteString, privacy: .public) \(error.localizedDescription, privacy: .public)")
+            webView.loadHTMLString(PFThumbnailSVGView.fallbackHTML(), baseURL: nil)
         }
     }
 }

@@ -5,6 +5,7 @@
 
 import Foundation
 import Combine
+import os
 
 /// Where a loaded lesson detail came from. `live` means the lesson
 /// page was fetched from the website (or, for supplemental lessons,
@@ -608,7 +609,7 @@ final class ContentService: ObservableObject {
                 if text.hasSuffix(";") { text = String(text.dropLast()) }
                 guard let jsonData = text.data(using: .utf8) else { throw ContentError.badResponse }
                 let decoded = try JSONDecoder().decode([FullSituationItem].self, from: jsonData)
-                fullSituations = decoded
+                fullSituations = Self.dedupedSituations(decoded)
                 Self.saveCache(data, fileName: Self.situationsCacheFile)
                 // Do not clear isShowingCachedContent here: the flag
                 // belongs to the catalogue load, which may have fallen
@@ -629,7 +630,7 @@ final class ContentService: ObservableObject {
                 if text.hasSuffix(";") { text = String(text.dropLast()) }
                 if let jsonData = text.data(using: .utf8),
                    let decoded = try? JSONDecoder().decode([FullSituationItem].self, from: jsonData) {
-                    fullSituations = decoded
+                    fullSituations = Self.dedupedSituations(decoded)
                     isShowingCachedContent = true
                 }
             }
@@ -672,7 +673,7 @@ final class ContentService: ObservableObject {
             do {
                 let data = try await SupabaseClient.shared.request(url: url, method: "GET", accessToken: accessToken)
                 let decoded = try JSONDecoder().decode(AuthenticatedSituationsResponse.self, from: data)
-                fullSituations = decoded.items
+                fullSituations = Self.dedupedSituations(decoded.items)
                 Self.saveCache(data, fileName: Self.authenticatedSituationsCacheFile)
                 // Do not clear isShowingCachedContent here: the flag
                 // belongs to the catalogue load, which may have fallen
@@ -684,7 +685,7 @@ final class ContentService: ObservableObject {
         }
         if let cached = Self.loadCache(fileName: Self.authenticatedSituationsCacheFile),
            let decoded = try? JSONDecoder().decode(AuthenticatedSituationsResponse.self, from: cached) {
-            fullSituations = decoded.items
+            fullSituations = Self.dedupedSituations(decoded.items)
             isShowingCachedContent = true
         }
         // Otherwise fullSituations stays nil and callers fall back
@@ -792,6 +793,15 @@ final class ContentService: ObservableObject {
            let decoded = try? JSONDecoder().decode(AgendasDocument.self, from: cached) {
             agendas = decoded
             applyAgendasToIndex()
+        } else {
+            // The failure stays silent in the UI (agendas are
+            // enrichment, never the catalogue), but it is logged
+            // so a missing-agendas report can be diagnosed: an
+            // agendas fetch that fails with no cached copy leaves
+            // every agenda block and chapter/course thumbnail
+            // empty, and nothing else records why.
+            Logger(subsystem: "PaymentsTrainingHub", category: "Content")
+                .error("Agendas failed to load after retries and no cached copy was available.")
         }
         isLoadingAgendas = false
     }
@@ -1667,14 +1677,40 @@ final class ContentService: ObservableObject {
 
     // MARK: - Audio URLs
 
-    /// The primary audio URL for a lesson file.
-    static func primaryAudioURL(fileName: String) -> URL {
-        URL(string: primaryAudioBase + fileName)!
+    /// The primary audio URL for a lesson file, or nil when the
+    /// file name cannot form a valid URL. The file name is
+    /// percent-encoded as a single path segment: it is derived
+    /// from remote catalogue ids, so it must never be trusted
+    /// raw, and a force unwrap here would crash playback on any
+    /// id carrying URL-invalid characters. Callers treat nil as
+    /// a load failure, never a crash.
+    static func primaryAudioURL(fileName: String) -> URL? {
+        audioURL(base: primaryAudioBase, fileName: fileName)
     }
 
-    /// The fallback audio URL for a lesson file.
-    static func fallbackAudioURL(fileName: String) -> URL {
-        URL(string: fallbackAudioBase + fileName)!
+    /// The fallback audio URL for a lesson file, or nil when the
+    /// file name cannot form a valid URL. See primaryAudioURL.
+    static func fallbackAudioURL(fileName: String) -> URL? {
+        audioURL(base: fallbackAudioBase, fileName: fileName)
+    }
+
+    private static func audioURL(base: String, fileName: String) -> URL? {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._")
+        let encoded = fileName.addingPercentEncoding(withAllowedCharacters: allowed) ?? fileName
+        guard !encoded.isEmpty else { return nil }
+        return URL(string: base + encoded)
+    }
+
+    /// First-wins dedupe of the full situations file by id. The
+    /// file is remote data, and the case lists render it through
+    /// ForEach keyed by id: a repeated id would show the same case
+    /// twice under one identity and corrupt row state. The live
+    /// file carries no duplicates today; this guards the join if
+    /// it ever does. Order is preserved.
+    static func dedupedSituations(_ items: [FullSituationItem]) -> [FullSituationItem] {
+        var seen: Set<String> = []
+        return items.filter { seen.insert($0.id).inserted }
     }
 }
 

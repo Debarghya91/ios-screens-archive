@@ -32,7 +32,8 @@ private func openSupportEmail() {
 // Week, one free payment case a week, never a tab.
 // communityChallenge is a sheet destination too: it opens the
 // weekly community challenge, never a tab. myLearning is kept
-// for the Keep Learning card at the bottom, and also switches to Learn.
+// for the Keep Learning card at the bottom, and also lands on
+// Home's browsing section.
 enum DrawerDestination: String, Identifiable, Hashable {
     case home
     case learn
@@ -57,22 +58,23 @@ enum DrawerDestination: String, Identifiable, Hashable {
     var id: String { rawValue }
 
     /// The tab index this destination switches to, if it is a tab
-    /// destination. Home 0, Learn 1, Search 2, Payment Cases 3,
-    /// My Progress 4. Sheet destinations return nil: they are never
-    /// the current tab, so they never show the active row state.
+    /// destination. Home 0, Search 1, Payment Cases 2, My Progress
+    /// 3. Learn and Keep Learning land on Home's browsing section,
+    /// so they return nil: the Home row shows the active state, and
+    /// no row claims a tab that does not exist. Sheet destinations
+    /// return nil too: they are never the current tab, so they
+    /// never show the active row state.
     var tabIndex: Int? {
         switch self {
         case .home:
             return 0
-        case .learn, .myLearning:
-            return 1
         case .search:
-            return 2
+            return 1
         case .paymentCases:
-            return 3
+            return 2
         case .myProgress:
-            return 4
-        case .practice, .weeklyFreeCase, .communityChallenge, .simulator, .isoExplorer, .exceptionLab, .baStudio, .myPurchases, .profile, .appearance, .helpAndSupport, .about, .startTour:
+            return 3
+        case .learn, .myLearning, .practice, .weeklyFreeCase, .communityChallenge, .simulator, .isoExplorer, .exceptionLab, .baStudio, .myPurchases, .profile, .appearance, .helpAndSupport, .about, .startTour:
             return nil
         }
     }
@@ -161,7 +163,7 @@ struct SideDrawerView: View {
                 id: .learn,
                 icon: "book.fill",
                 title: "Learn",
-                subtitle: "Learning paths, courses and all chapters"
+                subtitle: "Courses, learning journeys and all chapters, on Home"
             ),
             DrawerRowModel(
                 id: .search,

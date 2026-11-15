@@ -124,7 +124,7 @@ private struct DailyObjectiveHabitCard: View {
                             .font(.pfCaption)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
-                        if let duration = LessonDurations.label(for: objective.lesson.id) {
+                        if let duration = LessonDurations.listenLabel(for: objective.lesson.id) {
                             Text(duration)
                                 .font(.pfCaption)
                                 .foregroundColor(.pfSecondaryText)

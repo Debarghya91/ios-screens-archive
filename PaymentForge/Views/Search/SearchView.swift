@@ -1040,13 +1040,20 @@ struct SearchView: View {
         let title = PFChapterHelper.chapterTitle(for: lessons, number: chapterNumber)
         let completed = lessons.filter { progressStore.isLessonComplete($0.id) }.count
         let bookNumber = PFBookModeReadingOrder.bookNumber(forInternalNumber: chapterNumber)
+        let thumbnailPath = PFChapterHelper.chapterThumbnailPath(forChapter: chapterNumber, in: contentService)
         return HStack(alignment: .top, spacing: PFSpacing.md) {
-            Text(bookNumber.map(String.init) ?? "•")
-                .font(.pfCardTitle.weight(.bold))
-                .foregroundColor(.white)
-                .frame(width: 40, height: 40)
-                .background(Color.pfRoyal)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+            // The chapter thumbnail sits beside the title when the
+            // website exposes one; the number tile otherwise.
+            if thumbnailPath != nil {
+                PFThumbnailView(thumbnailPath: thumbnailPath, size: 40, cornerRadius: 10)
+            } else {
+                Text(bookNumber.map(String.init) ?? "•")
+                    .font(.pfCardTitle.weight(.bold))
+                    .foregroundColor(.white)
+                    .frame(width: 40, height: 40)
+                    .background(Color.pfRoyal)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
             VStack(alignment: .leading, spacing: PFSpacing.xs) {
                 if let bookNumber {
                     Text("Chapter \(bookNumber)")
@@ -1277,13 +1284,13 @@ private struct SearchResultRow: View {
     }
 
     /// Approximate time for this result: the narration length
-    /// for a lesson when the manifest knows it, else the read
-    /// time of the indexed text. Nil shows nothing.
+    /// for a lesson when the manifest knows it, labelled as listen
+    /// time. Other types show no time: the indexed text is a
+    /// truncated excerpt, and timing it stamps a fake read time.
+    /// Nil shows nothing.
     private var timeLabel: String? {
-        if entry.type == .lesson, let label = LessonDurations.label(for: entry.id) {
-            return "About " + label
-        }
-        return ReadTime.label(for: entry.text)
+        guard entry.type == .lesson else { return nil }
+        return LessonDurations.listenLabel(for: entry.id)
     }
 
     /// The full situation for this row's entry, from the lookup

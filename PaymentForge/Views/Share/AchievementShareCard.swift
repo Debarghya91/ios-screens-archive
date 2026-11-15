@@ -49,7 +49,7 @@ enum AchievementKind: Hashable {
 
     var heading: String {
         switch self {
-        case .pathCompletion: return "Path completed"
+        case .pathCompletion: return "Journey completed"
         case .challengeCompletion: return "Challenge completed"
         case .assessmentPass: return "Assessment passed"
         case .certificate: return "Certificate of Completion"
@@ -102,7 +102,7 @@ struct AchievementShareContent: Hashable {
         AchievementShareContent(
             kind: .certificate,
             title: certificate.pathTitle,
-            detail: "Learning path completed",
+            detail: "Learning journey completed",
             learnerName: certificate.learnerName,
             earnedOn: certificate.issuedAt,
             scoreLine: certificate.overallScore.map { "Overall score: \(Int($0.rounded()))%" },
@@ -245,7 +245,7 @@ struct AchievementShareContent: Hashable {
         var paragraphs: [String] = []
         switch kind {
         case .pathCompletion:
-            paragraphs.append("I completed the \(title) learning path on Payments Training Hub.")
+            paragraphs.append("I completed the \(title) learning journey on Payments Training Hub.")
         case .challengeCompletion:
             paragraphs.append("I completed a practical payments challenge on Payments Training Hub: \(title).")
         case .assessmentPass:

@@ -1,29 +1,44 @@
 // HomeView.swift
-// Payments Training Hub iOS - Home tab, personalised to the mockup.
-// Native SwiftUI only, no WebView. Uses the shared DesignSystem.
-// No em dashes in any user-facing text.
+// Payments Training Hub iOS - Home: the one place for browsing and
+// starting lessons. Native SwiftUI only, no WebView. Uses the shared
+// DesignSystem. No em dashes in any user-facing text.
 //
-// Section order on this screen: greeting, then a dashboard that
-// depends on the learner. A new learner (no completed lessons)
-// sees a welcome with their chosen objective, one recommended
-// lesson with its reason, a recommended route card, the daily
-// challenge, one practical exercise, and progress. A returning
-// learner sees resume learning first, then the active path, the
-// daily challenge, weak areas from real evidence, and progress.
-// Both then get one collapsed "Explore" disclosure holding the
-// guided sessions, interview questions, daily revision,
-// the practice experiences, recent lessons and
-// certification (plus Practice Mode
-// for returning learners, who do not see it above Explore).
-// Home never overwhelms: the dashboard is the path, Explore is
-// one tap away. The learning habit section sits between progress
-// and Explore for both new and returning learners. Guest is the default: the screen works fully as
-// a guest and never blocks on sign-in. The greeting shows a name
-// only when a user is actually signed in
-// (AuthService.currentUser); as a guest it says "Learner".
+// Section order on this screen: greeting, then the Continue learning
+// block (where you left off plus your next lesson, one tap to
+// continue), then the full course browsing (courses, learning
+// journeys, catalogue), then Everything inside (the depth of the
+// course and every capability, each linked). A returning learner
+// then sees the daily challenge, weak areas from real evidence,
+// progress and the learning habit; a new learner sees the progress
+// starter state. Both end with one collapsed "Explore" disclosure.
+// There is no separate Learn page: browsing lives here, and every
+// route that used to open Learn lands on the browsing section below
+// through HomeSectionTarget. The "path" abstraction is gone
+// user-facing: journeys are called learning journeys, the chosen
+// one is "Your journey", and the primary affordance names no
+// concept at all, just the next lesson. Home never overwhelms: the
+// dashboard is the next lesson, browsing is one scroll away.
+// Guest is the default: the screen works fully as a guest and never
+// blocks on sign-in. The greeting shows a name only when a user is
+// actually signed in (AuthService.currentUser); as a guest it says
+// "Learner".
 
 import SwiftUI
 import Foundation
+
+// MARK: - Home section target
+
+/// A Home section a route can land on. Drawer entries, the My
+/// Progress "Start learning" actions, the tour's final step and the
+/// Keep Learning card all route through MainTabView, which sets this
+/// target and switches to the Home tab; Home scrolls to the section
+/// and clears the target. `.learn` also selects the browsing
+/// section, so "Choose your journey" lands on Learning Journeys.
+/// User-facing wording only: code identifiers stay unchanged.
+enum HomeSectionTarget: Equatable {
+    case top
+    case learn(LearnSection)
+}
 
 // MARK: - Home
 
@@ -41,8 +56,8 @@ struct HomeView: View {
     /// the recommendation and the route.
     @ObservedObject private var onboardingStore = OnboardingStore.shared
 
-    /// The learner's active path, when one is set. Home only reads
-    /// it; the paths screens set it.
+    /// The learner's chosen journey, when one is chosen. Home only
+    /// reads it; the journey screens set it.
     @ObservedObject private var activePathStore = ActivePathStore.shared
 
     /// Recorded competency scores, for the weak areas section. A
@@ -70,75 +85,195 @@ struct HomeView: View {
     /// comment saying it did not pass it yet was stale.)
     var selectedTab: Binding<Int>?
 
-    init(isDrawerOpen: Binding<Bool>, selectedTab: Binding<Int>? = nil) {
+    /// The Home section an outside route wants to land on, set by
+    /// MainTabView together with the tab switch. Home scrolls to it
+    /// and clears it. Nil when no route is landing.
+    var homeSectionTarget: Binding<HomeSectionTarget?>?
+
+    /// Replays the guided tour, passed in from MainTabView. Home
+    /// passes it to the Help sheet so Replay tour works from the
+    /// capabilities list exactly as it does from the drawer.
+    var onReplayTour: (() -> Void)?
+
+    /// The browsing section selected in the embedded course
+    /// browsing below. Owned here so capability rows, the journey
+    /// buttons and outside routes can land on a chosen section.
+    @State private var learnSection: LearnSection = .courses
+
+    /// A scroll request raised inside Home (capability rows, journey
+    /// buttons, section switches). The body observes it next to the
+    /// ScrollViewReader proxy, scrolls, and clears it, so no view
+    /// below the body ever holds a proxy.
+    @State private var pendingScrollTarget: HomeSectionTarget?
+
+    /// The capability sheet currently presented, if any: the
+    /// destinations that own their own NavigationStack and so must
+    /// be sheets, never pushes. Profile keeps its own bool below.
+    @State private var capabilitySheet: CapabilitySheet?
+
+    init(
+        isDrawerOpen: Binding<Bool>,
+        selectedTab: Binding<Int>? = nil,
+        homeSectionTarget: Binding<HomeSectionTarget?>? = nil,
+        onReplayTour: (() -> Void)? = nil
+    ) {
         self._isDrawerOpen = isDrawerOpen
         self.selectedTab = selectedTab
+        self.homeSectionTarget = homeSectionTarget
+        self.onReplayTour = onReplayTour
+    }
+
+    /// The Home section an outside route asked for, flattened from
+    /// the optional binding for onChange observation.
+    private var externalTarget: HomeSectionTarget? {
+        homeSectionTarget?.wrappedValue ?? nil
+    }
+
+    /// Scroll to a Home section through the reader proxy, deferred
+    /// one runloop turn like PFScrollToTopModifier so the layout
+    /// for a just-selected browsing section exists first.
+    private func scrollToTarget(_ target: HomeSectionTarget, proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            switch target {
+            case .top:
+                proxy.scrollTo("homeTop", anchor: .top)
+            case .learn:
+                proxy.scrollTo("learnTop", anchor: .top)
+            }
+        }
+    }
+
+    /// Apply a landing target: select its browsing section when it
+    /// names one, then scroll. Used for both outside routes and
+    /// inside-Home requests, so every landing behaves the same.
+    private func applyTarget(_ target: HomeSectionTarget, proxy: ScrollViewProxy) {
+        if case .learn(let section) = target {
+            learnSection = section
+        }
+        scrollToTarget(target, proxy: proxy)
+    }
+
+    /// Request a landing from inside Home: a capability row, a
+    /// journey button, or the browse button. The body observes the
+    /// pending target and scrolls to it.
+    private func requestHomeSection(_ target: HomeSectionTarget) {
+        pendingScrollTarget = target
+    }
+
+    /// Capability destinations that own their own NavigationStack
+    /// and so present as sheets from Home, never as pushes.
+    private enum CapabilitySheet: String, Identifiable {
+        case checkout
+        case appearance
+        case about
+        case help
+
+        var id: String { rawValue }
     }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: PFSpacing.xxl) {
-                    loadStateView
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: PFSpacing.xxl) {
+                        loadStateView
 
-                    greetingSection
+                        greetingSection
 
-                    if isReturningLearner {
-                        resumeLessonSection
+                        // One Home for every learner: the next lesson
+                        // first, then browsing, then everything
+                        // inside. Returning learners add challenge,
+                        // weak areas, progress and habit below;
+                        // newcomers get the progress starter state.
+                        // No branch shows a second "next lesson"
+                        // pointer: the Continue learning block is
+                        // the only one.
+                        continueLearningSection
 
-                        activePathSection
+                        browseSection
 
-                        dailyChallengeSection
+                        everythingInsideSection
 
-                        reviewWeakAreasSection
+                        if isReturningLearner {
+                            dailyChallengeSection
 
-                        yourProgressSection
+                            reviewWeakAreasSection
 
-                        habitSection
+                            yourProgressSection
 
-                        exploreSection(includePractice: true)
+                            habitSection
+
+                            exploreSection(includePractice: true)
+                        } else {
+                            yourProgressSection
+
+                            exploreSection(includePractice: false)
+                        }
+                    }
+                    .padding(20)
+                    .id("homeTop")
+                }
+                .background(Color.pfBackground)
+                // Extra scrollable space at the bottom so the last card clears
+                // the tab bar on every iPhone size.
+                .pfTabBarClearance()
+                .onAppear {
+                    // The scroll rule: every entry opens at the top,
+                    // unless an outside route asked for a section,
+                    // in which case the landing wins over the top.
+                    if let target = externalTarget {
+                        applyTarget(target, proxy: proxy)
+                        homeSectionTarget?.wrappedValue = nil
                     } else {
-                        // Newcomer home: greeting above, then one
-                        // obvious first action (the recommended
-                        // first lesson), the progress starter
-                        // state, and the Explore disclosure for
-                        // everything else. The route card, daily
-                        // challenge, practice exercise, and
-                        // habit sections stay on the returning
-                        // learner's home: a newcomer who has not
-                        // finished anything yet does not need
-                        // seven competing options.
-                        primaryRecommendationSection
-
-                        yourProgressSection
-
-                        exploreSection(includePractice: false)
+                        scrollToTarget(.top, proxy: proxy)
                     }
                 }
-                .padding(20)
-                .id("homeTop")
-            }
-            .pfScrollToTopOnAppear("homeTop")
-            .background(Color.pfBackground)
-            // Extra scrollable space at the bottom so the last card clears
-            // the tab bar on every iPhone size.
-            .pfTabBarClearance()
-            .navigationTitle("Payments Training Hub")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    DrawerMenuButton(isDrawerOpen: $isDrawerOpen)
+                .onChange(of: externalTarget) { _, newTarget in
+                    guard let newTarget else { return }
+                    applyTarget(newTarget, proxy: proxy)
+                    homeSectionTarget?.wrappedValue = nil
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button { showProfileSheet = true } label: {
-                        avatarView
+                .onChange(of: pendingScrollTarget) { _, newTarget in
+                    guard let newTarget else { return }
+                    applyTarget(newTarget, proxy: proxy)
+                    pendingScrollTarget = nil
+                }
+                .onChange(of: learnSection) { _, _ in
+                    // Switching browsing sections returns to the
+                    // browsing anchor, so the new section's content
+                    // is visible at once instead of hidden below the
+                    // previous scroll position.
+                    scrollToTarget(.learn(learnSection), proxy: proxy)
+                }
+                .navigationTitle("Payments Training Hub")
+                .navigationBarTitleDisplayMode(.large)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        DrawerMenuButton(isDrawerOpen: $isDrawerOpen)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Open your profile").accessibilityHint("Opens your profile, separate from My Progress")
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button { showProfileSheet = true } label: {
+                            avatarView
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Open your profile").accessibilityHint("Opens your profile, separate from My Progress")
+                    }
                 }
-            }
-            .sheet(isPresented: $showProfileSheet) {
-                ProfileView()
+                .sheet(isPresented: $showProfileSheet) {
+                    ProfileView()
+                }
+                .sheet(item: $capabilitySheet) { sheet in
+                    switch sheet {
+                    case .checkout:
+                        CheckoutView()
+                    case .appearance:
+                        AppearanceSettingsView()
+                    case .about:
+                        AboutPaymentForgeView()
+                    case .help:
+                        HelpSupportView(onReplayTour: onReplayTour)
+                    }
+                }
             }
         }
     }
@@ -315,7 +450,7 @@ struct HomeView: View {
     /// number and its own progress, so the plan never reads as a
     /// single "Session 1". The current session is marked; tapping
     /// any session opens it. The next lesson itself lives in the
-    /// Resume or Recommended card above, so this section is the
+    /// Continue learning block above, so this section is the
     /// plan only, not a second Continue button.
     private var learningPlanSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
@@ -330,11 +465,11 @@ struct HomeView: View {
             } else if nextGuidedLesson == nil {
                 PFHomeStripeCard(accent: .royal) {
                     VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                        Text("You have finished the guided path")
+                        Text("You have finished the guided sessions")
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Revisit any lesson from Learn, or practise with the Payment Cases.")
+                        Text("Revisit any lesson in the browsing above, or practise with the Payment Cases.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -463,74 +598,137 @@ struct HomeView: View {
         return progressStore.weeklyGoal
     }
 
-    // MARK: - Primary recommendation (new learners)
+    // MARK: - Continue learning (every learner)
 
-    /// The one primary recommendation for a new learner: the engine's
-    /// pick when a chosen profile exists, otherwise the next guided
-    /// lesson with a plain statement of where it sits in the path.
-    /// The reason is always shown next to the lesson, never hidden.
-    private var primaryRecommendation: (lesson: SearchEntry, reason: String)? {
-        if let profile = effectiveProfile,
-           let pick = RecommendationEngine.nextLesson(for: profile, progress: progressStore, competency: competencyStore, service: contentService) {
-            return (lesson: pick.lesson, reason: pick.reason)
-        }
-        if let entry = continueEntry {
-            return (lesson: entry, reason: "Start here: the first unfinished lesson of the guided path.")
-        }
-        return nil
+    /// The one next lesson for every learner, from a single
+    /// authority: the journey order's next unfinished lesson when a
+    /// journey resolves (the chosen journey, else the role route's
+    /// journey, else the current guided session), then the most
+    /// recent unfinished lesson, then the guided head. One pointer
+    /// only: nothing else on Home names a next lesson, so a
+    /// recommendation and the journey can never disagree.
+    private var continueNextLesson: SearchEntry? {
+        if let next = activePathNextLesson { return next }
+        if let entry = resumeEntry { return entry }
+        return continueEntry
     }
 
-    /// The single primary recommendation card for a new learner, with
-    /// the reason shown in full. Tapping opens the lesson; when the
-    /// lesson is locked, the lesson screen's own lock handling
-    /// applies and nothing here bypasses it.
-    private var primaryRecommendationSection: some View {
+    /// The lesson the learner left unfinished, shown only when it
+    /// differs from the next lesson, so "where you left off" and
+    /// "your next lesson" never name the same lesson twice.
+    private var leftOffLesson: SearchEntry? {
+        guard let recent = recentUnfinishedLessons.first,
+              recent.id != continueNextLesson?.id else { return nil }
+        return recent
+    }
+
+    /// The journey the learner chose, when one is chosen. Home only
+    /// reads it; choosing happens in the journey detail.
+    private var chosenJourney: LearningPath? {
+        activePathStore.activePath
+    }
+
+    /// The line under the next lesson, naming the authority in plain
+    /// words: the chosen journey when one is chosen, the role
+    /// journey when the onboarding role picked one, the first
+    /// lesson for a newcomer, and the guided sessions otherwise.
+    /// Never a bare recommendation with no reason.
+    private var continueReason: String {
+        if let journey = chosenJourney {
+            return "Next in your journey: \(journey.title). Work through it in order."
+        }
+        if let journey = activeLearningPath {
+            return "Next in the \(journey.title) journey, chosen for your role. Work through it in order."
+        }
+        if isNewLearner {
+            return "Start here: the first lesson. Work through in order. Your progress saves as you go."
+        }
+        return "Next in the guided sessions, in order."
+    }
+
+    /// The single Continue learning block: where you left off plus
+    /// your next lesson, one tap to continue, with the journey
+    /// choice secondary underneath. It replaces the old separate
+    /// recommendation, resume and path cards: one block, one next
+    /// lesson, no competing pointers. When the lesson is locked,
+    /// the lesson screen's own lock handling applies and nothing
+    /// here bypasses it.
+    private var continueLearningSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFHomeSectionHeader(title: "Recommended for you", systemImage: "sparkles", accent: .gold)
-            if let recommendation = primaryRecommendation {
-                NavigationLink(destination: LessonView(entry: recommendation.lesson)) {
-                    PFHomeTabCard(accent: .gold) {
-                        VStack(alignment: .leading, spacing: PFSpacing.md) {
-                            HStack(spacing: PFSpacing.md) {
-                                if recommendation.lesson.thumbnail != nil {
-                                    PFThumbnailView(thumbnailPath: recommendation.lesson.thumbnail, size: 52, cornerRadius: 12)
-                                } else {
-                                    PFIconTile(systemImage: "play.fill", size: 52)
-                                }
-                                VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                                    Text(recommendation.lesson.title)
-                                        .font(.pfCardTitle)
-                                        .foregroundColor(.pfNavy)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    Text(PFChapterHelper.chapterTitle(for: recommendation.lesson))
-                                        .font(.pfCaption)
-                                        .foregroundColor(.pfSecondaryText)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    if let duration = LessonDurations.label(for: recommendation.lesson.id) {
-                                        Text(duration)
+            PFHomeSectionHeader(title: "Continue learning", systemImage: "play.fill", accent: .gold)
+            if contentService.searchIndex == nil && contentService.allLessons.isEmpty {
+                PFHomeTabCard(accent: .gold) {
+                    Text("Your next lesson will appear here once the catalogue loads.")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else if let next = continueNextLesson {
+                PFHomeTabCard(accent: .gold) {
+                    VStack(alignment: .leading, spacing: PFSpacing.md) {
+                        if let leftOff = leftOffLesson {
+                            NavigationLink(destination: LessonView(entry: leftOff)) {
+                                HStack(spacing: PFSpacing.md) {
+                                    if leftOff.thumbnail != nil {
+                                        PFThumbnailView(thumbnailPath: leftOff.thumbnail, size: 44, cornerRadius: 12)
+                                    } else {
+                                        PFIconTile(systemImage: "clock.fill", size: 44)
+                                    }
+                                    VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                                        Text("Where you left off")
+                                            .font(.pfCaptionBold)
+                                            .foregroundColor(.pfRoyal)
+                                        Text(leftOff.title)
+                                            .font(.pfCardTitle)
+                                            .foregroundColor(.pfNavy)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        Text(PFChapterHelper.chapterTitle(for: leftOff))
                                             .font(.pfCaption)
                                             .foregroundColor(.pfSecondaryText)
+                                            .fixedSize(horizontal: false, vertical: true)
                                     }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    Image(systemName: "chevron.right")
+                                        .foregroundColor(.pfSecondaryText)
+                                        .pfDecorative()
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            Text(recommendation.reason)
-                                .font(.pfBody)
-                                .foregroundColor(.pfSecondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                            // Learners who skipped onboarding never
-                            // answered the setup questions, so the
-                            // journey line from the explanation
-                            // screen repeats here: start at Course
-                            // 1, or pick the course that matches
-                            // the gap.
-                            if effectiveProfile == nil {
-                                Text("Start with Course 1 and work through in order, or pick the course that matches the gap you need to close. Your progress saves as you go.")
-                                    .font(.pfBody)
+                            .buttonStyle(PFCardButtonStyle())
+                            .accessibilityLabel("Where you left off: \(leftOff.title)")
+                            .accessibilityHint("Opens the lesson you left off")
+                        }
+                        HStack(spacing: PFSpacing.md) {
+                            if next.thumbnail != nil {
+                                PFThumbnailView(thumbnailPath: next.thumbnail, size: 52, cornerRadius: 12)
+                            } else {
+                                PFIconTile(systemImage: "play.fill", size: 52)
+                            }
+                            VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                                Text("Your next lesson")
+                                    .font(.pfCaptionBold)
+                                    .foregroundColor(.pfRoyal)
+                                Text(next.title)
+                                    .font(.pfCardTitle)
+                                    .foregroundColor(.pfNavy)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text(PFChapterHelper.chapterTitle(for: next))
+                                    .font(.pfCaption)
                                     .foregroundColor(.pfSecondaryText)
                                     .fixedSize(horizontal: false, vertical: true)
+                                if let duration = LessonDurations.listenLabel(for: next.id) {
+                                    Text(duration)
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfSecondaryText)
+                                }
                             }
-                            Text("Start this lesson")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        Text(continueReason)
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        NavigationLink(destination: LessonView(entry: next)) {
+                            Text(isNewLearner ? "Start this lesson" : "Continue")
                                 .font(.pfBody.weight(.semibold))
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
@@ -538,194 +736,288 @@ struct HomeView: View {
                                 .background(Color.pfRoyal)
                                 .cornerRadius(PFSpacing.cornerRadius)
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(isNewLearner ? "Start this lesson" : "Continue"): \(next.title)")
+                        .accessibilityHint("Opens your next lesson")
+                        journeyRow
                     }
                 }
-                .buttonStyle(PFCardButtonStyle())
-                .accessibilityLabel("Recommended lesson: \(recommendation.lesson.title)")
-                .accessibilityHint("Opens the recommended lesson")
             } else {
                 PFHomeTabCard(accent: .gold) {
-                    Text("Your first recommendation will appear here once the catalogue loads.")
-                        .font(.pfBody)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    // MARK: - Recommended route (new learners)
-
-    /// The role route for the learner's chosen role, when one exists.
-    private var roleRoute: RoleRoute? {
-        guard let profile = effectiveProfile else { return nil }
-        return RoleRouteCatalogue.route(for: profile.role)
-    }
-
-    /// The guided path the route card points at: the route's path
-    /// when it names one that exists, otherwise the fundamentals
-    /// path for learners with no chosen profile.
-    private var recommendedPath: LearningPath? {
-        if let pathID = roleRoute?.pathID,
-           let path = LearningPath.all.first(where: { $0.id == pathID }) {
-            return path
-        }
-        if effectiveProfile == nil {
-            return LearningPath.all.first(where: { $0.id == "fundamentals" }) ?? LearningPath.all.first
-        }
-        return nil
-    }
-
-    /// The guided sessions the route card points at when no path
-    /// resolves: the route's sessions when it names any that exist,
-    /// otherwise the first guided session.
-    private var recommendedSessions: [GuidedSession] {
-        if let route = roleRoute, !route.sessionIDs.isEmpty {
-            let found = ContentService.guidedSessions.filter { route.sessionIDs.contains($0.id) }
-            if !found.isEmpty { return found }
-        }
-        if let first = ContentService.guidedSessions.first {
-            return [first]
-        }
-        return []
-    }
-
-    /// Every lesson the recommended route covers, in order, from the
-    /// live catalogue. Empty while the catalogue is loading.
-    private var recommendedRouteLessons: [SearchEntry] {
-        if let path = recommendedPath {
-            return path.lessons(in: contentService)
-        }
-        var seen: Set<String> = []
-        var result: [SearchEntry] = []
-        for session in recommendedSessions {
-            for lesson in PFChapterHelper.lessons(forSession: session, in: contentService) {
-                if seen.insert(lesson.id).inserted { result.append(lesson) }
-            }
-        }
-        return result
-    }
-
-    /// The first unfinished lesson of the recommended route, or the
-    /// first lesson when the route is complete. Nil while the
-    /// catalogue is loading.
-    private var recommendedRouteEntryLesson: SearchEntry? {
-        let lessons = recommendedRouteLessons
-        return lessons.first(where: { !progressStore.isLessonComplete($0.id) }) ?? lessons.first
-    }
-
-    /// Whole weeks the route takes at the learner's weekly target,
-    /// rounded up. Nil when the count or the target is not known.
-    private var recommendedRouteWeeks: Int? {
-        let total = recommendedRouteLessons.count
-        let target = weeklyTargetForEstimates
-        guard total > 0, target > 0 else { return nil }
-        return (total + target - 1) / target
-    }
-
-    private var recommendedRouteWeeksText: String? {
-        guard let weeks = recommendedRouteWeeks else { return nil }
-        let target = weeklyTargetForEstimates
-        let weekWord = weeks == 1 ? "week" : "weeks"
-        let lessonWord = target == 1 ? "lesson" : "lessons"
-        return "About \(weeks) \(weekWord) at \(target) \(lessonWord) a week"
-    }
-
-    private var recommendedRouteTitle: String {
-        if let path = recommendedPath { return path.title }
-        if let route = roleRoute { return route.title }
-        return recommendedSessions.first?.title ?? "Your learning path"
-    }
-
-    private var recommendedRouteDescription: String {
-        if let path = recommendedPath { return path.description }
-        if let route = roleRoute { return route.description }
-        return recommendedSessions.first?.description ?? ""
-    }
-
-    /// The recommended route card for a new learner: the role route
-    /// for a chosen profile, otherwise the fundamentals path. The
-    /// lesson count comes from the live catalogue and the weeks
-    /// estimate from that count and the weekly target. Tapping the
-    /// card opens the route detail.
-    private var recommendedRouteSection: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFHomeSectionHeader(title: "Your recommended route", systemImage: "map.fill", accent: .royal)
-            if contentService.searchIndex == nil && contentService.allLessons.isEmpty {
-                PFHomeStripeCard(accent: .royal) {
-                    Text("Your recommended route will appear here once the catalogue loads.")
-                        .font(.pfBody)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            } else if let path = recommendedPath {
-                NavigationLink(destination: PathDetailView(path: path)) {
-                    recommendedRouteCardContent
-                }
-                .buttonStyle(PFCardButtonStyle())
-                .accessibilityLabel("Recommended route: \(recommendedRouteTitle)")
-                .accessibilityHint("Opens the \(recommendedRouteTitle) path")
-            } else if let session = recommendedSessions.first {
-                NavigationLink(destination: GuidedPathDetailView(session: session)) {
-                    recommendedRouteCardContent
-                }
-                .buttonStyle(PFCardButtonStyle())
-                .accessibilityLabel("Recommended route: \(recommendedRouteTitle)")
-                .accessibilityHint("Opens Session \(session.id), \(session.title)")
-            } else {
-                PFHomeStripeCard(accent: .royal) {
-                    Text("Your recommended route will appear here once the catalogue loads.")
-                        .font(.pfBody)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    private var recommendedRouteCardContent: some View {
-        PFHomeStripeCard(accent: .royal) {
-            HStack(alignment: .top, spacing: PFSpacing.md) {
-                PFIconTile(systemImage: "map.fill", size: 44)
-                VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                    Text(recommendedRouteTitle)
-                        .font(.pfCardTitle)
-                        .foregroundColor(.pfNavy)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if !recommendedRouteDescription.isEmpty {
-                        Text(recommendedRouteDescription)
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text("You have finished your journey")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Revisit any lesson in the browsing below, or practise with the Payment Cases.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if recommendedRouteLessons.count > 0 {
-                        Text("\(recommendedRouteLessons.count) lessons")
-                            .font(.pfCaptionBold)
-                            .foregroundColor(.pfRoyal)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let weeksText = recommendedRouteWeeksText {
-                        Text(weeksText)
-                            .font(.pfCaption)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let entry = recommendedRouteEntryLesson {
-                        Text("Start with: \(entry.title)")
-                            .font(.pfCaption)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
+                        PFSecondaryButton(title: "Browse the full course") {
+                            requestHomeSection(.learn(.courses))
+                        }
                     }
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .foregroundColor(.pfSecondaryText)
-                    .padding(.top, PFSpacing.xs)
             }
         }
     }
 
-    // MARK: - Resume learning (returning learners)
+    /// The journey line inside the Continue block, secondary to the
+    /// next lesson: the chosen journey with Change journey, or
+    /// Choose your journey with a one-line explanation of what a
+    /// journey is. Both land on Learning Journeys below.
+    private var journeyRow: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.sm) {
+            if let journey = chosenJourney {
+                HStack(spacing: PFSpacing.sm) {
+                    Text("Your journey: \(journey.title)")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Change journey") { requestHomeSection(.learn(.learningPaths)) }
+                        .font(.pfBody.weight(.semibold))
+                        .foregroundColor(.pfRoyal)
+                        .accessibilityLabel("Change journey")
+                        .accessibilityHint("Opens Learning Journeys to choose a different journey")
+                }
+            } else {
+                Text("A learning journey is a set order of chapters for one goal. Choose one and this block shows its next lesson first.")
+                    .font(.pfBody)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Choose your journey") { requestHomeSection(.learn(.learningPaths)) }
+                    .font(.pfBody.weight(.semibold))
+                    .foregroundColor(.pfRoyal)
+                    .accessibilityLabel("Choose your journey")
+                    .accessibilityHint("Opens Learning Journeys")
+            }
+        }
+    }
+
+    // MARK: - Browse the full course
+
+    /// The course browsing embedded in Home: courses, learning
+    /// journeys and the catalogue, with the learnTop anchor on the
+    /// wrapper so outside routes and capability rows land with the
+    /// header visible. No separate Learn page exists any more.
+    private var browseSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFHomeSectionHeader(title: "Browse the full course", systemImage: "book.fill", accent: .royal)
+            LearnSectionsView(selectedSection: $learnSection)
+        }
+        .id("learnTop")
+    }
+
+    // MARK: - Everything inside
+
+    /// One depth stat: a real catalogue count and its label. Counts
+    /// come from ContentManifest, never hardcoded here.
+    private func depthStat(value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.pfScreenTitle)
+                .foregroundColor(.pfNavy)
+            Text(label)
+                .font(.pfCaption)
+                .foregroundColor(.pfSecondaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The depth of the course, stated once with real counts, plus
+    /// the mastery arc: courses in order, then Final Assessments
+    /// and certificates, with narration called out as part of the
+    /// lesson experience rather than a separate product.
+    private var depthStatsCard: some View {
+        PFCard {
+            VStack(alignment: .leading, spacing: PFSpacing.md) {
+                HStack(spacing: PFSpacing.lg) {
+                    depthStat(value: "\(ProductCatalogue.partProducts.count)", label: "courses")
+                    depthStat(value: "\(ContentManifest.chapterCount)", label: "chapters")
+                    depthStat(value: "\(ContentManifest.lessonCount)", label: "lessons")
+                }
+                HStack(spacing: PFSpacing.lg) {
+                    depthStat(value: "\(ContentManifest.situationCount)", label: "payment cases")
+                    depthStat(value: "\(ContentManifest.interviewQuestionCount)", label: "interview questions")
+                    depthStat(value: "\(ContentManifest.faqCount)", label: "FAQs")
+                }
+                Text("Work from Course 1 to Course 10, then prove it with Final Assessments and certificates. Many lessons have narration: tap Play in a lesson to listen as you read, and download lessons to listen offline.")
+                    .font(.pfBody)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Everything inside: the depth card plus the complete,
+    /// structured list of every capability that exists, each linked
+    /// to where the user reaches it. Nothing is listed that does
+    /// not exist: no video lessons, no chat assistant, no
+    /// bookmarks list, no referral offer. Push destinations use
+    /// NavigationLink, tabs switch tabs, Home sections scroll to
+    /// the browsing below, and stack-owning destinations present
+    /// as sheets. The tour is not listed here: replaying it needs
+    /// MainTabView, and it stays reachable from Help and Support.
+    private var everythingInsideSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFHomeSectionHeader(title: "Everything inside", systemImage: "square.grid.2x2.fill", accent: .navy)
+            Text("The full course in one place. Start with the next lesson at the top of this page; everything below is here when you need it.")
+                .font(.pfBody)
+                .foregroundColor(.pfSecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            depthStatsCard
+            capabilityGroup(title: "Learn") {
+                capabilityActionRow(icon: "book.fill", title: "Courses", detail: "10 courses, 100 chapters, 881 lessons, in reading order.") {
+                    requestHomeSection(.learn(.courses))
+                }
+                capabilityActionRow(icon: "map.fill", title: "Learning journeys", detail: "Set orders of chapters for one goal, plus the eight guided sessions. Choose your journey.") {
+                    requestHomeSection(.learn(.learningPaths))
+                }
+                capabilityActionRow(icon: "list.bullet", title: "Catalogue", detail: "Every chapter in one table, with guides, labs and tests.") {
+                    requestHomeSection(.learn(.catalogue))
+                }
+                if let tabBinding = selectedTab {
+                    capabilityActionRow(icon: "magnifyingglass", title: "Search", detail: "Find any lesson, case, guide or answer.") {
+                        tabBinding.wrappedValue = 1
+                    }
+                    capabilityActionRow(icon: "briefcase.fill", title: "Payment Cases", detail: "564 real payment problems, in six stages, with free samples.") {
+                        tabBinding.wrappedValue = 2
+                    }
+                }
+                capabilityPushRow(icon: "questionmark.bubble.fill", title: "Interview Questions", detail: "500 situation-based questions, each with a model answer.") {
+                    InterviewQuestionsView()
+                }
+                capabilityPushRow(icon: "arrow.clockwise", title: "Revision Centre", detail: "Daily revision and the concepts you keep getting wrong.") {
+                    RevisionCentreView()
+                }
+                capabilityPushRow(icon: "note.text", title: "My Notes", detail: "Your notes, kept on this device.") {
+                    NotesView()
+                }
+                capabilityActionRow(icon: "headphones", title: "Audio lessons", detail: "Narration on many lessons. Tap Play in a lesson to listen, and download lessons to listen offline.") {
+                    requestHomeSection(.learn(.courses))
+                }
+            }
+            capabilityGroup(title: "Practise") {
+                if let situation = firstPracticeSituation {
+                    capabilityPushRow(icon: "checklist", title: "Practice Mode", detail: "Practise payment cases as questions.") {
+                        PracticeModeView(situation: situation, allSituations: practiceSituations)
+                    }
+                }
+                capabilityPushRow(icon: "arrow.triangle.2.circlepath", title: "Payment Simulator", detail: "Follow a payment through its lifecycle, step by step.") {
+                    PaymentLifecycleSimulatorView()
+                }
+                capabilityPushRow(icon: "doc.text.magnifyingglass", title: "ISO 20022 Explorer", detail: "Look up ISO 20022 messages and their fields.") {
+                    ISO20022ExplorerView()
+                }
+                capabilityPushRow(icon: "exclamationmark.triangle.fill", title: "Exception Lab", detail: "Investigate payment exceptions and trace what went wrong, with the Investigation Experience.") {
+                    ExceptionInvestigationLabView()
+                }
+                capabilityPushRow(icon: "square.and.pencil", title: "BA/PO Studio", detail: "Draft BA and PO deliverables for payment work.") {
+                    BAProductStudioView()
+                }
+                capabilityPushRow(icon: "bolt.fill", title: "Daily Challenge", detail: "One question a day.") {
+                    DailyChallengeView()
+                }
+                capabilityPushRow(icon: "trophy.fill", title: "Weekly Challenge", detail: "The weekly community challenge.") {
+                    CommunityChallengeView()
+                }
+                capabilityPushRow(icon: "gift.fill", title: "Free Case of the Week", detail: "One free payment case a week.") {
+                    WeeklyFreeCaseView()
+                }
+                capabilityPushRow(icon: "doc.text.fill", title: "Guides", detail: "Step-by-step guides for payment work.") {
+                    GuideListView()
+                }
+                capabilityPushRow(icon: "flask.fill", title: "Labs", detail: "Hands-on lab exercises.") {
+                    LabListView()
+                }
+                capabilityPushRow(icon: "checkmark.circle.fill", title: "Tests", detail: "Tests that check what you learned.") {
+                    TestListView()
+                }
+                capabilityPushRow(icon: "checkmark.seal.fill", title: "Certificates", detail: "Certificates you have earned, and Final Assessments.") {
+                    CertificatesListView()
+                }
+            }
+            capabilityGroup(title: "Your progress and account") {
+                if let tabBinding = selectedTab {
+                    capabilityActionRow(icon: "chart.bar.fill", title: "My Progress", detail: "Progress, streaks, scores and activity.") {
+                        tabBinding.wrappedValue = 3
+                    }
+                }
+                capabilityActionRow(icon: "bag.fill", title: "My Purchases", detail: "Buy a course or the full academy. 1 year of access.") {
+                    capabilitySheet = .checkout
+                }
+                capabilityActionRow(icon: "person.crop.circle.fill", title: "Profile", detail: "Sign in, cloud sync, reminders and preferences.") {
+                    showProfileSheet = true
+                }
+                capabilityActionRow(icon: "moon.fill", title: "Appearance", detail: "Dark mode and larger text.") {
+                    capabilitySheet = .appearance
+                }
+                capabilityActionRow(icon: "questionmark.circle.fill", title: "Help and FAQs", detail: "320 FAQs, email support, and replay the tour.") {
+                    capabilitySheet = .help
+                }
+                capabilityActionRow(icon: "info.circle.fill", title: "About", detail: "About Payments Training Hub.") {
+                    capabilitySheet = .about
+                }
+            }
+        }
+    }
+
+    /// One capability group: a header plus its rows.
+    private func capabilityGroup<Content: View>(title: String, @ViewBuilder rows: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: title)
+            VStack(alignment: .leading, spacing: PFSpacing.md) {
+                rows()
+            }
+        }
+    }
+
+    /// One capability row: icon tile, title, detail and chevron.
+    private func capabilityRow(icon: String, title: String, detail: String) -> some View {
+        HStack(spacing: PFSpacing.md) {
+            PFIconTile(systemImage: icon, size: 44)
+            VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                Text(title)
+                    .font(.pfCardTitle)
+                    .foregroundColor(.pfNavy)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(detail)
+                    .font(.pfBody)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .foregroundColor(.pfSecondaryText)
+                .pfDecorative()
+        }
+        .contentShape(Rectangle())
+    }
+
+    /// A capability row that pushes a destination on Home's stack.
+    /// Only destinations without their own NavigationStack use this.
+    private func capabilityPushRow<Destination: View>(icon: String, title: String, detail: String, @ViewBuilder destination: () -> Destination) -> some View {
+        NavigationLink(destination: destination()) {
+            capabilityRow(icon: icon, title: title, detail: detail)
+        }
+        .buttonStyle(PFCardButtonStyle())
+        .accessibilityLabel(title)
+        .accessibilityHint(detail)
+    }
+
+    /// A capability row that runs an action: a tab switch, a scroll
+    /// to the browsing below, or a sheet.
+    private func capabilityActionRow(icon: String, title: String, detail: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            capabilityRow(icon: icon, title: title, detail: detail)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityHint(detail)
+    }
+
+    // MARK: - Continue helpers: resume and journey order
 
     /// The lesson a returning learner resumes: the most recent
     /// unfinished lesson they opened, otherwise the next unfinished
@@ -769,79 +1061,29 @@ struct HomeView: View {
         return recentUnfinishedLessons.first?.id == entry.id
     }
 
-    /// The first card for a returning learner: the lesson to resume,
-    /// with its session, position and session progress. This is the
-    /// old "Up next" hero, moved first for returning learners and
-    /// pointed at the most recent unfinished lesson when there is
-    /// one.
-    private var resumeLessonSection: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFHomeSectionHeader(title: "Resume learning", systemImage: "play.fill", accent: .gold)
-            if let entry = resumeEntry {
-                NavigationLink(destination: LessonView(entry: entry)) {
-                    PFHomeTabCard(accent: .gold) {
-                        VStack(alignment: .leading, spacing: PFSpacing.md) {
-                            HStack(spacing: PFSpacing.md) {
-                                PFIconTile(systemImage: "play.fill", size: 52)
-                                VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                                    if let session = resumeSession {
-                                        Text("Session \(session.id) of \(ContentService.guidedSessions.count): \(session.title)")
-                                            .font(.pfCaptionBold)
-                                            .foregroundColor(.pfRoyal)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
-                                    Text(entry.title)
-                                        .font(.pfCardTitle)
-                                        .foregroundColor(.pfNavy)
-                                        .lineLimit(2)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    Text(PFChapterHelper.chapterTitle(for: entry))
-                                        .font(.pfCaption)
-                                        .foregroundColor(.pfSecondaryText)
-                                        .lineLimit(1)
-                                    if resumeSessionProgress.total > 0 {
-                                        Text("Lesson \(resumeLessonPosition) of \(resumeSessionProgress.total) in this session")
-                                            .font(.pfCaptionBold)
-                                            .foregroundColor(.pfRoyal)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            if resumeSessionProgress.total > 0 {
-                                PFProgressBar(progress: Double(resumeSessionProgress.completed) / Double(resumeSessionProgress.total))
-                            }
-                            Text(isResumingOpenedLesson ? "Resume lesson" : "Continue")
-                                .font(.pfBody.weight(.semibold))
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .background(Color.pfRoyal)
-                                .cornerRadius(PFSpacing.cornerRadius)
-                        }
-                    }
-                }
-                .buttonStyle(PFCardButtonStyle())
-                .accessibilityLabel("Resume learning: \(entry.title)")
-                .accessibilityHint("Opens the lesson to continue learning")
-            } else {
-                PFHomeTabCard(accent: .gold) {
-                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                        Text("Your next lesson is on its way")
-                            .font(.pfCardTitle)
-                            .foregroundColor(.pfNavy)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("The course catalogue is still loading. Once it appears, your next lesson will show here.")
-                            .font(.pfBody)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-        }
+    // MARK: - Continue helpers: journey and session order
+
+    /// The onboarding role's route, when the learner chose a
+    /// profile. Its journey is the fallback order when no journey
+    /// has been chosen.
+    private var roleRoute: RoleRoute? {
+        guard let profile = effectiveProfile else { return nil }
+        return RoleRouteCatalogue.route(for: profile.role)
     }
 
-    // MARK: - Continue the active path (returning learners)
+    /// The guided sessions the role route names, otherwise the
+    /// first guided session. The fallback order when no journey
+    /// resolves.
+    private var recommendedSessions: [GuidedSession] {
+        if let route = roleRoute, !route.sessionIDs.isEmpty {
+            let found = ContentService.guidedSessions.filter { route.sessionIDs.contains($0.id) }
+            if !found.isEmpty { return found }
+        }
+        if let first = ContentService.guidedSessions.first {
+            return [first]
+        }
+        return []
+    }
 
     /// The learning path the returning learner is continuing: the
     /// active path when one is set, otherwise the path named by the
@@ -895,134 +1137,13 @@ struct HomeView: View {
     private var activePathTitle: String {
         if let path = activeLearningPath { return path.title }
         if let session = activeGuidedSession { return "Session \(session.id): \(session.title)" }
-        return "Your learning path"
+        return "Your journey"
     }
 
     private var activePathPercentText: String {
         guard activePathProgress.total > 0 else { return "0%" }
         let fraction = Double(activePathProgress.completed) / Double(activePathProgress.total)
         return "\(Int((fraction * 100).rounded()))%"
-    }
-
-    /// The active path card for a returning learner: the path or
-    /// session title, the next incomplete lesson, and the progress
-    /// fraction from live data. The card opens the path detail; the
-    /// button below it opens the next lesson directly.
-    private var activePathSection: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFHomeSectionHeader(title: "Continue your path", systemImage: "arrow.right.circle.fill", accent: .royal)
-            if contentService.searchIndex == nil && contentService.allLessons.isEmpty {
-                PFHomeTopBarCard(accent: .royal) {
-                    Text("Your path will appear here once the catalogue loads.")
-                        .font(.pfBody)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            } else if activeLearningPath == nil && activeGuidedSession == nil {
-                PFHomeTopBarCard(accent: .royal) {
-                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                        Text("You have finished the guided path")
-                            .font(.pfCardTitle)
-                            .foregroundColor(.pfNavy)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("Revisit any lesson from Learn, or practise with the Payment Cases.")
-                            .font(.pfBody)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            } else {
-                activePathDetailCard
-                if let next = activePathNextLesson {
-                    NavigationLink(destination: LessonView(entry: next)) {
-                        Text("Start next lesson: \(next.title)")
-                            .font(.pfBody.weight(.semibold))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(Color.pfRoyal)
-                            .cornerRadius(PFSpacing.cornerRadius)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Start next lesson: \(next.title)")
-                    .accessibilityHint("Opens the next lesson on your path")
-                }
-            }
-        }
-    }
-
-    /// The active path card, linking to the path or session detail.
-    @ViewBuilder
-    private var activePathDetailCard: some View {
-        if let path = activeLearningPath {
-            NavigationLink(destination: PathDetailView(path: path)) {
-                activePathCardContent
-            }
-            .buttonStyle(PFCardButtonStyle())
-            .accessibilityLabel("Continue your path: \(path.title)")
-            .accessibilityHint("Opens the \(path.title) path")
-        } else if let session = activeGuidedSession {
-            NavigationLink(destination: GuidedPathDetailView(session: session)) {
-                activePathCardContent
-            }
-            .buttonStyle(PFCardButtonStyle())
-            .accessibilityLabel("Continue your path: Session \(session.id), \(session.title)")
-            .accessibilityHint("Opens Session \(session.id), \(session.title)")
-        } else {
-            EmptyView()
-        }
-    }
-
-    private var activePathCardContent: some View {
-        PFHomeTopBarCard(accent: .royal) {
-            VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                HStack(alignment: .top, spacing: PFSpacing.md) {
-                    PFIconTile(systemImage: "map.fill", size: 44)
-                    VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                        Text(activePathTitle)
-                            .font(.pfCardTitle)
-                            .foregroundColor(.pfNavy)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if activePathProgress.total > 0 {
-                            if activePathProgress.completed > 0 {
-                                Text("\(activePathProgress.completed) of \(activePathProgress.total) lessons complete")
-                                    .font(.pfBody)
-                                    .foregroundColor(.pfSecondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            } else {
-                                Text("\(activePathProgress.total) lessons · Not started yet")
-                                    .font(.pfBody)
-                                    .foregroundColor(.pfSecondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.pfSecondaryText)
-                        .padding(.top, PFSpacing.xs)
-                }
-                if activePathProgress.total > 0 && activePathProgress.completed > 0 {
-                    HStack(spacing: PFSpacing.sm) {
-                        PFProgressBar(progress: Double(activePathProgress.completed) / Double(activePathProgress.total), height: 6)
-                        Text(activePathPercentText)
-                            .font(.pfCaptionBold)
-                            .foregroundColor(.pfNavy)
-                    }
-                }
-                if let next = activePathNextLesson {
-                    Text("Next: \(next.title)")
-                        .font(.pfCaption)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else if activePathProgress.total > 0 {
-                    Text("Every lesson on this path is complete.")
-                        .font(.pfCaption)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
     }
 
     // MARK: - Review weak areas (returning learners)
@@ -1143,7 +1264,11 @@ struct HomeView: View {
                         NavigationLink(destination: LessonView(entry: lesson)) {
                             PFHomeTopBarCard(accent: .navy) {
                                 HStack(spacing: PFSpacing.md) {
-                                    PFIconTile(systemImage: "arrow.clockwise", size: 44)
+                                    if lesson.thumbnail != nil {
+                                        PFThumbnailView(thumbnailPath: lesson.thumbnail, size: 44, cornerRadius: 12)
+                                    } else {
+                                        PFIconTile(systemImage: "arrow.clockwise", size: 44)
+                                    }
                                     VStack(alignment: .leading, spacing: PFSpacing.xs) {
                                         Text(lesson.title)
                                             .font(.pfCardTitle)
@@ -1203,7 +1328,11 @@ struct HomeView: View {
         return NavigationLink(destination: LessonView(entry: lesson)) {
             PFHomeTopBarCard(accent: .navy) {
                 HStack(spacing: PFSpacing.md) {
-                    PFIconTile(systemImage: "questionmark.circle.fill", size: 44)
+                    if lesson.thumbnail != nil {
+                        PFThumbnailView(thumbnailPath: lesson.thumbnail, size: 44, cornerRadius: 12)
+                    } else {
+                        PFIconTile(systemImage: "questionmark.circle.fill", size: 44)
+                    }
                     VStack(alignment: .leading, spacing: PFSpacing.xs) {
                         Text(lesson.title)
                             .font(.pfCardTitle)
@@ -1556,7 +1685,7 @@ struct HomeView: View {
                     systemImage: "chart.bar.fill",
                     accent: .navy,
                     actionTitle: "My Progress",
-                    action: { tabBinding.wrappedValue = 4 }
+                    action: { tabBinding.wrappedValue = 3 }
                 )
             } else {
                 PFHomeSectionHeader(title: "Your Progress", systemImage: "chart.bar.fill", accent: .navy)
@@ -1643,7 +1772,7 @@ struct HomeView: View {
                 .font(.pfBody)
                 .foregroundColor(.pfSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
-            if let firstLesson = primaryRecommendation?.lesson ?? contentService.readingOrderLessons.first {
+            if let firstLesson = continueNextLesson ?? contentService.readingOrderLessons.first {
                 NavigationLink(destination: LessonView(entry: firstLesson)) {
                     Text("Start with the first lesson")
                         .font(.pfBody.weight(.semibold))
@@ -1669,7 +1798,7 @@ struct HomeView: View {
         if let session = currentGuidedSession {
             return "Session \(session.id) of \(ContentService.guidedSessions.count)"
         }
-        return "Guided path complete"
+        return "All sessions complete"
     }
 
     /// "2 of 12 lessons" for the current session, or "Not
@@ -1684,7 +1813,7 @@ struct HomeView: View {
         return "\(progress.completed) of \(progress.total) lessons"
     }
 
-    // MARK: - Pick up where you left off
+    // MARK: - Recent lessons
 
     /// The top 3 most recently opened lessons that are not marked
     /// complete, most recent first. Only real catalogue entries,
@@ -1700,7 +1829,7 @@ struct HomeView: View {
 
     private var recentLessonsSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFHomeSectionHeader(title: "Pick up where you left off", systemImage: "clock.fill", accent: .navy)
+            PFHomeSectionHeader(title: "Recent lessons", systemImage: "clock.fill", accent: .navy)
             if recentUnfinishedLessons.isEmpty {
                 PFCard {
                     Text("Open a lesson and it will show up here so you can pick it up later.")
@@ -2195,23 +2324,34 @@ struct GuidedPathDetailView: View {
         lessons.first(where: { !progressStore.isLessonComplete($0.id) }) ?? lessons.first
     }
 
+    /// The session thumbnail: the first lesson in the session
+    /// that carries one. Nil keeps the header text on its own.
+    private var thumbnailPath: String? {
+        lessons.compactMap(\.thumbnail).first
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PFSpacing.lg) {
-                VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                    Text(session.description)
-                        .font(.pfBody)
-                        .foregroundColor(.pfSecondaryText)
-                    if !lessons.isEmpty {
-                        if completedCount > 0 {
-                            Text("\(completedCount) of \(lessons.count) lessons complete")
-                                .font(.pfCaptionBold)
-                                .foregroundColor(.pfRoyal)
-                            PFProgressBar(progress: Double(completedCount) / Double(lessons.count))
-                        } else {
-                            Text("\(lessons.count) lessons · Not started yet")
-                                .font(.pfCaptionBold)
-                                .foregroundColor(.pfSecondaryText)
+                HStack(alignment: .top, spacing: PFSpacing.md) {
+                    if thumbnailPath != nil {
+                        PFThumbnailView(thumbnailPath: thumbnailPath, size: 56, cornerRadius: 12)
+                    }
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text(session.description)
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                        if !lessons.isEmpty {
+                            if completedCount > 0 {
+                                Text("\(completedCount) of \(lessons.count) lessons complete")
+                                    .font(.pfCaptionBold)
+                                    .foregroundColor(.pfRoyal)
+                                PFProgressBar(progress: Double(completedCount) / Double(lessons.count))
+                            } else {
+                                Text("\(lessons.count) lessons · Not started yet")
+                                    .font(.pfCaptionBold)
+                                    .foregroundColor(.pfSecondaryText)
+                            }
                         }
                     }
                 }
@@ -2361,7 +2501,7 @@ struct LessonRow: View {
                         .foregroundColor(.pfSecondaryText)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let duration = LessonDurations.label(for: entry.id) {
+                    if let duration = LessonDurations.listenLabel(for: entry.id) {
                         HStack(spacing: PFSpacing.xs) {
                             Image(systemName: "clock")
                                 .font(.pfCaption.weight(.semibold))

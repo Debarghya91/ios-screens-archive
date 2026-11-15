@@ -260,3 +260,123 @@ final class SearchAndPracticeTests: XCTestCase {
         XCTAssertEqual(uncapped.count, 70)
     }
 }
+
+// MARK: - Wave 2: pagination and level filter at catalogue scale
+//
+// UNEXECUTED: written on a Linux VM with no Xcode. Never compiled
+// or run. Statically checked only.
+//
+// The search and case lists page at 20 with an explicit Load More
+// action; these tests exercise the rules behind that paging with
+// full-size generated fixtures (881 lessons, 616 cases), the same
+// shapes the live catalogue carries. The views' @State page counts
+// themselves are SwiftUI state and are statically checked only:
+// what is proven here is that the search, the filter, and the
+// 20-item slicing cover every result exactly once, and that the
+// wave-1 all-selected filter rule holds at full size.
+
+final class Wave2PaginationTests: XCTestCase {
+
+    private func lessonEntries(_ count: Int) -> [SearchEntry] {
+        (1...count).map { n in
+            SearchEntry(
+                id: "ch\(n % 100 + 1)s\(n)",
+                title: "Lesson \(n) on payment settlement",
+                url: "/ch\(n % 100 + 1)s\(n)",
+                type: .lesson,
+                text: "Payment settlement lesson \(n) covering clearing, nostro reconciliation and exception handling."
+            )
+        }
+    }
+
+    private func situationEntries(_ count: Int) -> [SearchEntry] {
+        let levels = ["foundation", "core", "advanced"]
+        return (1...count).map { n in
+            SearchEntry(
+                id: "sit-\(String(format: "%03d", n))",
+                title: "Case \(n): payment stuck in investigation",
+                url: "/case-\(n)",
+                type: .situation,
+                text: "A \(levels[n % 3]) payment case about an MT103 stuck in investigation with a missing cover payment."
+            )
+        }
+    }
+
+    func testSearchOverFullCatalogueScaleReturnsEveryEntryOnce() {
+        let entries = lessonEntries(881) + situationEntries(616)
+        let hits = SearchService.search(entries: entries, query: "payment", limit: 2000)
+        XCTAssertEqual(hits.count, entries.count)
+        XCTAssertEqual(Set(hits.map(\.id)).count, hits.count)
+    }
+
+    func testDefaultSearchLimitCapsResults() {
+        let entries = lessonEntries(881) + situationEntries(616)
+        let hits = SearchService.search(entries: entries, query: "payment")
+        XCTAssertEqual(hits.count, 60)
+    }
+
+    func testTwentyItemPagingCoversAllResultsExactlyOnce() {
+        let entries = situationEntries(616)
+        let hits = SearchService.search(entries: entries, query: "payment", limit: 2000)
+        var shown = 0
+        var seen: Set<String> = []
+        var pages = 0
+        while shown < hits.count {
+            let page = Array(hits[shown..<min(shown + 20, hits.count)])
+            pages += 1
+            for hit in page {
+                XCTAssertTrue(seen.insert(hit.id).inserted, "Duplicate id \(hit.id) across pages")
+            }
+            shown += page.count
+        }
+        XCTAssertEqual(shown, 616)
+        XCTAssertEqual(pages, 31)
+        XCTAssertEqual(seen.count, 616)
+    }
+
+    func testAllLevelsSelectedLeavesFullResultsUnfiltered() {
+        let entries = situationEntries(616)
+        let hits = SearchService.search(entries: entries, query: "payment", limit: 2000)
+        let levelsByID = Dictionary(uniqueKeysWithValues: entries.enumerated().map { index, entry in
+            (entry.id, ["foundation", "core", "advanced"][(index + 1) % 3])
+        })
+        let filtered = SearchService.applyLevelFilter(
+            hits,
+            selectedLevels: Set(SearchService.allLevels),
+            situationLevelsByID: levelsByID
+        )
+        XCTAssertEqual(filtered.map(\.id), hits.map(\.id))
+    }
+
+    func testEmptyLevelSelectionLeavesResultsUnfiltered() {
+        let entries = situationEntries(616)
+        let hits = SearchService.search(entries: entries, query: "payment", limit: 2000)
+        let filtered = SearchService.applyLevelFilter(
+            hits,
+            selectedLevels: [],
+            situationLevelsByID: [:]
+        )
+        XCTAssertEqual(filtered.map(\.id), hits.map(\.id))
+    }
+
+    func testPartialLevelSelectionKeepsOnlyThatLevel() {
+        let entries = situationEntries(616)
+        let hits = SearchService.search(entries: entries, query: "payment", limit: 2000)
+        let levelsByID = Dictionary(uniqueKeysWithValues: entries.enumerated().map { index, entry in
+            (entry.id, ["foundation", "core", "advanced"][(index + 1) % 3])
+        })
+        let filtered = SearchService.applyLevelFilter(
+            hits,
+            selectedLevels: [.foundation],
+            situationLevelsByID: levelsByID
+        )
+        XCTAssertFalse(filtered.isEmpty)
+        XCTAssertTrue(filtered.count < hits.count)
+        for hit in filtered {
+            XCTAssertEqual(
+                SearchService.levelForEntry(hit.entry, situationLevelsByID: levelsByID),
+                .foundation
+            )
+        }
+    }
+}

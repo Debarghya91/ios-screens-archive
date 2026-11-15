@@ -111,28 +111,26 @@ struct PaymentForgeApp: App {
     }
 }
 
-/// The main tab bar, exactly five tabs: Home (0), Learn (1),
-/// Search (2), Payment Cases (3), My Progress (4). Learn hosts the
-/// existing CoursesView, Payment Cases hosts the existing
+/// The main tab bar, four tabs: Home (0), Search (1), Payment
+/// Cases (2), My Progress (3). Home is the one place for browsing
+/// and starting lessons: the courses, learning journeys and
+/// catalogue live on Home, and there is no separate Learn tab.
+/// Routes that used to open Learn (drawer entries, the Keep
+/// Learning card, the tour's final step, My Progress actions)
+/// switch to Home and land on the browsing section through
+/// homeSectionTarget. Payment Cases hosts the existing
 /// SituationsView, My Progress hosts the existing DashboardView
 /// rebuilt as a progress screen. There is no chat or helper
 /// feature: search returns links to lessons, and the lesson
 /// quizzes explain every answer in the lesson itself.
-/// No tab is removed, only renamed:
-/// Courses becomes Learn, Situations becomes Payment Cases,
-/// Dashboard becomes My Progress. Profile is NOT a tab: it is
-/// reached from the Home avatar and from the account drawer, and
-/// opens as a sheet, so it can never be confused with My Progress.
-/// The navigation review kept these five tabs unchanged: the
-/// brief bars a radical navigation change without a demonstrably
-/// better structure, and none was found. The tabs match the design
-/// reference and the guided tour, each tab names one job the
-/// learner already understands, and Practice stays reachable as a
-/// sheet from the drawer, Learn and Home rather than as a sixth
-/// tab, so the tab bar keeps one job per tab. The four practice
+/// Profile is NOT a tab: it is reached from the Home avatar and
+/// from the account drawer, and opens as a sheet, so it can never
+/// be confused with My Progress. Practice stays reachable as a
+/// sheet from the drawer and Home, rather than as a fifth tab, so
+/// the tab bar keeps one job per tab. The four practice
 /// experiences (Payment Simulator, ISO 20022 Explorer, Exception
-/// Lab, BA/PO Studio) are sheets too, reached from the drawer,
-/// Home Explore and Learn, never new tabs.
+/// Lab, BA/PO Studio) are sheets too, reached from the drawer and
+/// Home, never new tabs.
 /// Wrapped in the side drawer container: a menu button in the
 /// navigation bar of each root tab screen, or a swipe right from
 /// the left edge, opens the drawer, which slides in over the tabs.
@@ -156,6 +154,12 @@ struct MainTabView: View {
 
     @State private var isDrawerOpen = false
     @State private var selectedTab = 0
+    /// The Home section an outside route wants to land on, set
+    /// together with the tab switch by handleDrawerSelection, the
+    /// tour's Keep Learning step and the Dashboard's Start learning
+    /// actions (through the Dashboard's binding). Home scrolls to
+    /// it and clears it.
+    @State private var homeSectionTarget: HomeSectionTarget? = nil
     @State private var presentedSheet: DrawerDestination? = nil
     /// Guards delayed tour destination opens: bumped on every
     /// tour destination request, so a stale delayed open can
@@ -270,38 +274,40 @@ struct MainTabView: View {
                 tourScrollTarget: tourScrollTarget
             ) {
                 TabView(selection: $selectedTab) {
-                    HomeView(isDrawerOpen: $isDrawerOpen, selectedTab: $selectedTab)
+                    HomeView(
+                        isDrawerOpen: $isDrawerOpen,
+                        selectedTab: $selectedTab,
+                        homeSectionTarget: $homeSectionTarget,
+                        onReplayTour: replayTour
+                    )
                         .tag(0)
                         .tabItem {
                             tabLabel(title: "Home", systemImage: "house.fill", index: 0)
                         }
                         .accessibilityLabel("Home")
 
-                    CoursesView(isDrawerOpen: $isDrawerOpen)
+                    SearchView(isDrawerOpen: $isDrawerOpen)
                         .tag(1)
                         .tabItem {
-                            tabLabel(title: "Learn", systemImage: "book.fill", index: 1)
-                        }
-                        .accessibilityLabel("Learn")
-
-                    SearchView(isDrawerOpen: $isDrawerOpen)
-                        .tag(2)
-                        .tabItem {
-                            tabLabel(title: "Search", systemImage: "magnifyingglass", index: 2)
+                            tabLabel(title: "Search", systemImage: "magnifyingglass", index: 1)
                         }
                         .accessibilityLabel("Search")
 
                     SituationsView(isDrawerOpen: $isDrawerOpen)
-                        .tag(3)
+                        .tag(2)
                         .tabItem {
-                            tabLabel(title: "Payment Cases", systemImage: "briefcase.fill", index: 3)
+                            tabLabel(title: "Payment Cases", systemImage: "briefcase.fill", index: 2)
                         }
                         .accessibilityLabel("Payment Cases")
 
-                    DashboardView(isDrawerOpen: $isDrawerOpen, selectedTab: $selectedTab)
-                        .tag(4)
+                    DashboardView(
+                        isDrawerOpen: $isDrawerOpen,
+                        selectedTab: $selectedTab,
+                        homeSectionTarget: $homeSectionTarget
+                    )
+                        .tag(3)
                         .tabItem {
-                            tabLabel(title: "My Progress", systemImage: "chart.bar.fill", index: 4)
+                            tabLabel(title: "My Progress", systemImage: "chart.bar.fill", index: 3)
                         }
                         .accessibilityLabel("My Progress")
                 }
@@ -520,19 +526,29 @@ struct MainTabView: View {
     /// Route a drawer row tap to a tab switch or a sheet.
     /// Profile is a separate destination from My Progress: it opens
     /// ProfileView as a sheet, it never switches to the My Progress
-    /// tab, and My Progress never opens Profile.
+    /// tab, and My Progress never opens Profile. Learn entries land
+    /// on Home's browsing section: there is no Learn tab any more,
+    /// so the row switches to Home and sets the section target.
     private func handleDrawerSelection(_ destination: DrawerDestination) {
         switch destination {
         case .home:
             selectedTab = 0
-        case .myLearning, .learn:
-            selectedTab = 1
+            homeSectionTarget = .top
+        case .myLearning:
+            // The Keep Learning card promises Continue/Start, so
+            // it lands on the top of Home, where the Continue
+            // learning block names the next lesson.
+            selectedTab = 0
+            homeSectionTarget = .top
+        case .learn:
+            selectedTab = 0
+            homeSectionTarget = .learn(.courses)
         case .search:
-            selectedTab = 2
+            selectedTab = 1
         case .paymentCases:
-            selectedTab = 3
+            selectedTab = 2
         case .myProgress:
-            selectedTab = 4
+            selectedTab = 3
         case .practice:
             // Practice Mode as a sheet, for the first
             // practice-eligible situation. See PracticeSheetView.
@@ -601,11 +617,13 @@ struct MainTabView: View {
     }
 
     /// Open the Keep Learning card's target from the tour's final
-    /// step: close the drawer and land on the Learn tab, the same
+    /// step: close the drawer and land on the top of Home, where
+    /// the Continue learning block names the next lesson, the same
     /// routing as tapping the card itself.
     private func openKeepLearningFromTour() {
         isDrawerOpen = false
-        selectedTab = 1
+        selectedTab = 0
+        homeSectionTarget = .top
     }
 
     /// Show the guided tour only when onboarding has finished and

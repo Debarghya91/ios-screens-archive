@@ -406,8 +406,15 @@ final class AudioPlayerService: ObservableObject {
            let downloadedURL = LessonDownloadStore.shared.downloadedAudioURL(for: lessonID, fileName: fileName) {
             isPlayingDownloadedCopy = true
             startPlayback(url: downloadedURL)
+        } else if let url = ContentService.primaryAudioURL(fileName: fileName) {
+            startPlayback(url: url)
         } else {
-            startPlayback(url: ContentService.primaryAudioURL(fileName: fileName))
+            // The file name cannot form a valid audio URL: a load
+            // failure, shown like any other, never a crash.
+            pendingPlay = false
+            errorMessage = "Audio could not be loaded from either audio host. Check your connection and try again, or read the transcript below."
+            isPlaying = false
+            isLoading = false
         }
     }
 
@@ -557,16 +564,31 @@ final class AudioPlayerService: ObservableObject {
         if isPlayingDownloadedCopy {
             // The downloaded file could not be played: fall back to
             // streaming from the primary host, with the full
-            // primary to fallback chain still ahead of it.
+            // primary to fallback chain still ahead of it. When no
+            // valid primary URL can be built, the load is exhausted
+            // exactly as if both hosts had failed.
             isPlayingDownloadedCopy = false
             resumePosition = currentTime
-            startPlayback(url: ContentService.primaryAudioURL(fileName: fileName))
+            if let url = ContentService.primaryAudioURL(fileName: fileName) {
+                startPlayback(url: url)
+                return
+            }
+            pendingPlay = false
+            errorMessage = "Audio could not be loaded from either audio host. Check your connection and try again, or read the transcript below."
+            isPlaying = false
+            isLoading = false
             return
         }
         failoverAttempted = true
         isUsingFallback = true
         resumePosition = currentTime
-        let fallbackURL = ContentService.fallbackAudioURL(fileName: fileName)
+        guard let fallbackURL = ContentService.fallbackAudioURL(fileName: fileName) else {
+            pendingPlay = false
+            errorMessage = "Audio could not be loaded from either audio host. Check your connection and try again, or read the transcript below."
+            isPlaying = false
+            isLoading = false
+            return
+        }
         startPlayback(url: fallbackURL)
     }
 

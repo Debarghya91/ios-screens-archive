@@ -105,7 +105,7 @@ struct CertificateView: View {
                 .foregroundColor(.pfNavy)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("has completed the learning path")
+            Text("has completed the learning journey")
                 .font(.pfBody)
                 .foregroundColor(.pfSecondaryText)
             Text(certificate.pathTitle)
@@ -183,7 +183,7 @@ struct CertificateView: View {
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("Certificate of Completion. This certifies completion of the named learning path. It is not an accredited qualification.")
+                Text("Certificate of Completion. This certifies completion of the named learning journey. It is not an accredited qualification.")
                     .font(.pfBody)
                     .foregroundColor(.pfNavy)
                     .fixedSize(horizontal: false, vertical: true)

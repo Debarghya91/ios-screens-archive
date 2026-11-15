@@ -352,18 +352,41 @@ struct LessonView: View {
         return detail?.durationSec ?? 0
     }
 
-    /// Approximate time for this lesson, from the real audio
-    /// length when known, else the bundled narration manifest.
-    /// Nil when neither knows it: no time is shown, never a
-    /// guessed number.
+    /// The honest time for this lesson, showing both formats when
+    /// both exist: the listen time from the real audio length
+    /// (player, then lesson data, then the bundled narration
+    /// manifest) together with the read time from the full
+    /// readable text (transcript, takeaways, checklist). The read
+    /// time appears only once the full detail has loaded: before
+    /// that the only text is the truncated catalogue excerpt, and
+    /// timing it would stamp a fake read time. Lessons without
+    /// narration show the read time alone; lessons with neither
+    /// show nothing, never a guessed number.
     private var lessonTimeLabel: String? {
-        if audioDuration > 0 {
-            return "About " + LessonDurations.durationText(Int(audioDuration))
+        let listenText: String? = {
+            guard !audioFileName.isEmpty else { return nil }
+            if audioDuration > 0 {
+                return LessonDurations.durationText(Int(audioDuration))
+            }
+            guard let sec = LessonDurations.seconds(for: entry.id), sec > 0 else { return nil }
+            return LessonDurations.durationText(sec)
+        }()
+        let readMinutes: Int? = {
+            guard let detail else { return nil }
+            let fullText = ([detail.transcript] + detail.takeaways + detail.doThisAtWork)
+                .joined(separator: " ")
+            return ReadTime.minutes(for: fullText)
+        }()
+        switch (listenText, readMinutes) {
+        case let (listen?, read?):
+            return "Listen about \(listen) · Read about \(read) min"
+        case let (listen?, nil):
+            return "About \(listen) listen"
+        case let (nil, read?):
+            return "About \(read) min read"
+        case (nil, nil):
+            return nil
         }
-        if let label = LessonDurations.label(for: entry.id) {
-            return "About " + label
-        }
-        return nil
     }
 
     private var correctCount: Int {
@@ -2043,6 +2066,9 @@ struct LessonView: View {
                             ForEach(relatedLessons) { lesson in
                                 NavigationLink(destination: LessonView(entry: lesson)) {
                                     HStack(spacing: PFSpacing.md) {
+                                        if lesson.thumbnail != nil {
+                                            PFThumbnailView(thumbnailPath: lesson.thumbnail, size: 36, cornerRadius: 8)
+                                        }
                                         Text(lesson.title)
                                             .font(.pfBody)
                                             .foregroundColor(.pfNavy)

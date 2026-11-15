@@ -300,7 +300,11 @@ final class LessonDownloadStore: ObservableObject {
             return
         }
         await MainActor.run { states[entry.id] = .downloading }
-        let hosts = [ContentService.primaryAudioURL(fileName: fileName), ContentService.fallbackAudioURL(fileName: fileName)]
+        let hosts = [ContentService.primaryAudioURL(fileName: fileName), ContentService.fallbackAudioURL(fileName: fileName)].compactMap { $0 }
+        guard !hosts.isEmpty else {
+            await MainActor.run { states[entry.id] = .failed(message: "This lesson audio could not be saved on this device.") }
+            return
+        }
         for url in hosts {
             do {
                 let (tempURL, response) = try await URLSession.shared.download(from: url)

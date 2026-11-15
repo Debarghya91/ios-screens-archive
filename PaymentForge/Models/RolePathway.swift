@@ -1,6 +1,6 @@
 // RolePathway.swift
 // Payments Training Hub iOS - Role-based pathway engine: one route per learner
-// role, resolved live from the guided paths and guided sessions, plus
+// role, resolved live from the learning journeys and guided sessions, plus
 // the learner's active path selection.
 //
 // A route never hardcodes lessons. Its path lessons come from
@@ -8,7 +8,7 @@
 // PFChapterHelper.lessons(forSession:in:), so every lesson shown is
 // a real catalogue entry and every count is the real count.
 //
-// Eight roles, six guided paths: four roles have no dedicated path.
+// Eight roles, six learning journeys: four roles have no dedicated path.
 // Those routes follow guided sessions directly, or pair sessions
 // with the nearest existing path, and say so in their description.
 // See the route catalogue below and the discrepancy report.
@@ -19,7 +19,7 @@ import Combine
 
 // MARK: - Role route
 
-/// One role's route through the course: a guided path when one fits,
+/// One role's route through the course: a learning journey when one fits,
 /// plus the guided sessions that cover the role's work. Chapters and
 /// lessons are always resolved live from the catalogue, never listed
 /// here: only path ids and session ids are stored.
@@ -29,7 +29,7 @@ struct RoleRoute: Identifiable, Hashable {
     let title: String
     let description: String
     let entryExpectations: String
-    /// The guided path this route follows, nil when no existing path
+    /// The learning journey this route follows, nil when no existing path
     /// fits the role and the route follows sessions only.
     let pathID: String?
     /// Guided session ids, in the order the route follows them.
@@ -37,7 +37,7 @@ struct RoleRoute: Identifiable, Hashable {
 
     var displayTitle: String { title }
 
-    /// The guided path this route names, resolved live. Nil when the
+    /// The learning journey this route names, resolved live. Nil when the
     /// route names no path, or when the named path no longer exists.
     func learningPath() -> LearningPath? {
         guard let pathID else { return nil }
@@ -90,7 +90,7 @@ enum RoleRouteCatalogue {
             id: "route-new-to-payments",
             role: .newToPayments,
             title: "New to payments",
-            description: "The Payments Fundamentals guided path, followed by guided sessions 1 and 2: what a payment is, and how money moves.",
+            description: "The Payments Fundamentals learning journey, followed by guided sessions 1 and 2: what a payment is, and how money moves.",
             entryExpectations: "No prior payments knowledge is assumed. Nothing is enforced: any lesson can be opened at any time.",
             pathID: "fundamentals",
             sessionIDs: [1, 2]
@@ -99,7 +99,7 @@ enum RoleRouteCatalogue {
             id: "route-business-analyst",
             role: .businessAnalyst,
             title: "Business analyst",
-            description: "The Payments Business Analyst guided path, plus guided session 8 for practice and interview preparation.",
+            description: "The Payments Business Analyst learning journey, plus guided session 8 for practice and interview preparation.",
             entryExpectations: "It helps to be comfortable with payments fundamentals. No prior business analysis experience is assumed. Nothing is enforced: any lesson can be opened at any time.",
             pathID: "business-analyst",
             sessionIDs: [8]
@@ -108,7 +108,7 @@ enum RoleRouteCatalogue {
             id: "route-technical-analyst",
             role: .technicalAnalyst,
             title: "Technical analyst",
-            description: "There is no dedicated guided path for this role, so the route follows guided sessions directly: foundations, rails, ISO 20022 in depth, and exceptions, risk and compliance.",
+            description: "There is no dedicated learning journey for this role, so the journey follows guided sessions directly: foundations, rails, ISO 20022 in depth, and exceptions, risk and compliance.",
             entryExpectations: "It helps to be comfortable with payments fundamentals. The route starts with foundations before moving to messaging and exceptions. Nothing is enforced: any lesson can be opened at any time.",
             pathID: nil,
             sessionIDs: [1, 2, 4, 6]
@@ -117,7 +117,7 @@ enum RoleRouteCatalogue {
             id: "route-product-owner",
             role: .productOwner,
             title: "Product owner",
-            description: "The Payments Business Analyst guided path, plus guided sessions 1 and 5: what a payment is, and schemes and rails.",
+            description: "The Payments Business Analyst learning journey, plus guided sessions 1 and 5: what a payment is, and schemes and rails.",
             entryExpectations: "It helps to be comfortable with payments fundamentals. No prior product ownership experience is assumed. Nothing is enforced: any lesson can be opened at any time.",
             pathID: "business-analyst",
             sessionIDs: [1, 5]
@@ -126,7 +126,7 @@ enum RoleRouteCatalogue {
             id: "route-tester",
             role: .tester,
             title: "Tester",
-            description: "There is no dedicated guided path for this role, so the route pairs guided sessions 1, 6 and 8 with the Payment Operations and Reconciliation guided path: foundations, exceptions, and practice.",
+            description: "There is no dedicated learning journey for this role, so the journey pairs guided sessions 1, 6 and 8 with the Payment Operations and Reconciliation learning journey: foundations, exceptions, and practice.",
             entryExpectations: "It helps to be comfortable with payments fundamentals. No prior payments testing experience is assumed. Nothing is enforced: any lesson can be opened at any time.",
             pathID: "operations-reconciliation",
             sessionIDs: [1, 6, 8]
@@ -135,7 +135,7 @@ enum RoleRouteCatalogue {
             id: "route-cross-border-specialist",
             role: .crossBorderSpecialist,
             title: "Cross-border specialist",
-            description: "There is no dedicated guided path for this role, so the route pairs guided sessions 2, 3 and 4 with the Payments Interview Preparation guided path: rails, SWIFT and messages, and ISO 20022 in depth.",
+            description: "There is no dedicated learning journey for this role, so the journey pairs guided sessions 2, 3 and 4 with the Payments Interview Preparation learning journey: rails, SWIFT and messages, and ISO 20022 in depth.",
             entryExpectations: "It helps to be comfortable with payments fundamentals and with how money moves across borders. The route starts with the rails sessions before messaging. Nothing is enforced: any lesson can be opened at any time.",
             pathID: "interview-preparation",
             sessionIDs: [2, 3, 4]
@@ -144,7 +144,7 @@ enum RoleRouteCatalogue {
             id: "route-sme",
             role: .sme,
             title: "Subject matter expert",
-            description: "The Payments Interview Preparation guided path, plus every guided session, 1 through 8, for depth across the whole course.",
+            description: "The Payments Interview Preparation learning journey, plus every guided session, 1 through 8, for depth across the whole course.",
             entryExpectations: "This route covers every guided session. It helps to already be comfortable with payments fundamentals and the main rails and message types. Nothing is enforced: any lesson can be opened at any time.",
             pathID: "interview-preparation",
             sessionIDs: [1, 2, 3, 4, 5, 6, 7, 8]
@@ -153,7 +153,7 @@ enum RoleRouteCatalogue {
             id: "route-solution-architect",
             role: .solutionArchitect,
             title: "Solution architect",
-            description: "There is no dedicated guided path for this role, so the route pairs guided sessions 2, 4 and 6 with the Payment Operations and Reconciliation guided path: rails, ISO 20022 in depth, and exceptions, risk and compliance.",
+            description: "There is no dedicated learning journey for this role, so the journey pairs guided sessions 2, 4 and 6 with the Payment Operations and Reconciliation learning journey: rails, ISO 20022 in depth, and exceptions, risk and compliance.",
             entryExpectations: "An advanced route. It helps to be comfortable with payments fundamentals, rails, and messaging before starting. Nothing is enforced: any lesson can be opened at any time.",
             pathID: "operations-reconciliation",
             sessionIDs: [2, 4, 6]
@@ -168,7 +168,7 @@ enum RoleRouteCatalogue {
         routes.first { $0.role == role } ?? routes[0]
     }
 
-    /// The first route that names a guided path id, or nil when no
+    /// The first route that names a learning journey id, or nil when no
     /// route names it. Several routes share one path, so this is a
     /// lookup, not a one to one mapping: the first route in
     /// catalogue order wins.
@@ -179,7 +179,7 @@ enum RoleRouteCatalogue {
 
 // MARK: - Active path
 
-/// The learner's active guided path: the one they picked to work
+/// The learner's active learning journey: the one they picked to work
 /// through. Stored in UserDefaults, namespaced per account through
 /// AccountScopedStorage, following the PathBookmarkStore pattern.
 ///
@@ -210,7 +210,7 @@ final class ActivePathStore: ObservableObject {
         work()
     }
 
-    /// Select a guided path as the active path, or pass nil to clear
+    /// Select a learning journey as the active path, or pass nil to clear
     /// the selection. The id is stored as given; whether it names a
     /// path that exists is resolved live by `activePath`, so a
     /// stored id for a removed path simply resolves to nil.
@@ -218,7 +218,7 @@ final class ActivePathStore: ObservableObject {
         activePathID = pathID
     }
 
-    /// The active guided path, resolved live. Nil when no path is
+    /// The active learning journey, resolved live. Nil when no path is
     /// selected, or when the stored id names no existing path.
     var activePath: LearningPath? {
         guard let activePathID else { return nil }

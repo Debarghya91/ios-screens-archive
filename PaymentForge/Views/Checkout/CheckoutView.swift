@@ -42,6 +42,7 @@ import StoreKit
 struct CheckoutView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var storeManager: StoreManager
+    @EnvironmentObject private var contentService: ContentService
     @ObservedObject private var finalAssessmentStore = FinalAssessmentStore.shared
 
     @State private var showTransactionHistory = false
@@ -344,6 +345,11 @@ struct CheckoutView: View {
         PFCard {
             VStack(alignment: .leading, spacing: PFSpacing.md) {
                 HStack(alignment: .top, spacing: PFSpacing.md) {
+                    // The course thumbnail sits beside the name
+                    // when the website exposes one for the course.
+                    if let thumbnailPath = PFChapterHelper.courseThumbnailPath(for: course, in: contentService) {
+                        PFThumbnailView(thumbnailPath: thumbnailPath, size: 52, cornerRadius: 12)
+                    }
                     VStack(alignment: .leading, spacing: PFSpacing.xs) {
                         Text(course.name)
                             .font(.pfCardTitle)

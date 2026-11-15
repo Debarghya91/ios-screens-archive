@@ -1,6 +1,6 @@
 // NavigationTourOverlay.swift
 // Payments Training Hub iOS - Interactive navigation tour overlay.
-// A guided tour of the five tabs and the key drawer rows: a dimmed
+// A guided tour of the four tabs and the key drawer rows: a dimmed
 // interface with a spotlight cutout and a gold ring around the
 // highlighted control, plus a navy tooltip card. The tour never
 // blocks the app: the dim and the ring ignore every tap, so the
@@ -232,7 +232,7 @@ final class TabBarFrameReaderView: UIView {
     /// seen twice (an animating copy or a stale layout), so the
     /// largest rect of the cluster wins. The result is sorted
     /// left to right. When more than five clusters survive, the
-    /// five largest win: this app has five tabs, so any extra
+    /// four largest win: this app has four tabs, so any extra
     /// cluster is a spurious view, never a sixth tab.
     private static func mergedButtonRects(_ rects: [CGRect]) -> [CGRect] {
         let sorted = rects.sorted { $0.midX < $1.midX }
@@ -247,8 +247,8 @@ final class TabBarFrameReaderView: UIView {
         var merged = clusters.map { cluster in
             cluster.max(by: { $0.width * $0.height < $1.width * $1.height }) ?? cluster[0]
         }
-        if merged.count > 5 {
-            merged = Array(merged.sorted(by: { $0.width * $0.height > $1.width * $1.height }).prefix(5))
+        if merged.count > 4 {
+            merged = Array(merged.sorted(by: { $0.width * $0.height > $1.width * $1.height }).prefix(4))
         }
         return merged.sorted { $0.minX < $1.minX }
     }
@@ -483,7 +483,7 @@ private struct TourHandCursor: View {
 
 // MARK: - The tour overlay
 
-/// The interactive navigation tour: a start card, eight steps, and
+/// The interactive navigation tour: a start card, seven steps, and
 /// a completion screen. The overlay manages its own step state and
 /// calls onFinish when the user taps Skip Tour at any point or
 /// "Explore the Platform" on the completion screen. The parent
@@ -533,7 +533,7 @@ struct NavigationTourOverlay: View {
     /// completion steps pass nil so a sheet opened by an
     /// earlier step never covers the next step.
     private let onOpenDestination: (DrawerDestination?) -> Void
-    /// Opens the Keep Learning card's target (the Learn tab)
+    /// Opens the Keep Learning card's target (the top of Home)
     /// from the final step. Kept separate from
     /// onOpenDestination because the card is a tab switch, not
     /// a drawer destination.
@@ -631,7 +631,7 @@ struct NavigationTourOverlay: View {
         case tapping
     }
 
-    /// The tour phases: the start card, one of the eight steps
+    /// The tour phases: the start card, one of the seven steps
     /// (zero based index), or the completion screen.
     private enum TourPhase: Equatable {
         case start
@@ -693,56 +693,49 @@ struct NavigationTourOverlay: View {
     private static let steps: [TourStep] = [
         TourStep(
             title: "Home",
-            body: "Your personal learning dashboard. Pick up where you left off and continue learning.",
+            body: "Home is your starting point and your course browser. It shows your next lesson first, so you can pick up where you left off. Scroll down for the full course: 10 courses, 100 chapters, 881 lessons, and the learning journeys.",
             symbol: "house.fill",
             tabIndex: 0,
             destination: nil
         ),
         TourStep(
-            title: "Learn",
-            body: "Structured learning paths, courses and lessons, in the order to follow.",
-            symbol: "book.fill",
+            title: "Search",
+            body: "Search finds any lesson, guide or case. Type a word like MT103 or chargeback. Use the difficulty pills above the search box to narrow the results.",
+            symbol: "magnifyingglass",
             tabIndex: 1,
             destination: nil
         ),
         TourStep(
-            title: "Search",
-            body: "Search and filter the full learning library to find any lesson, guide or case.",
-            symbol: "magnifyingglass",
+            title: "Payment Cases",
+            body: "Payment Cases are real payment problems, worked step by step. Read the case, see what went wrong, and learn the fix. A few cases are free to try.",
+            symbol: "briefcase.fill",
             tabIndex: 2,
             destination: nil
         ),
         TourStep(
-            title: "Payment Cases",
-            body: "Real-world payment situations, worked the way a senior BA handles them.",
-            symbol: "briefcase.fill",
+            title: "My Progress",
+            body: "My Progress shows what you finished, your streak and your quiz scores. Your progress appears here once you finish your first chapter.",
+            symbol: "chart.bar.fill",
             tabIndex: 3,
             destination: nil
         ),
         TourStep(
-            title: "My Progress",
-            body: "Your learning analytics, streak and achievements, all in one place.",
-            symbol: "chart.bar.fill",
-            tabIndex: 4,
-            destination: nil
-        ),
-        TourStep(
             title: "Payment Simulator",
-            body: "Follow a payment through its whole lifecycle, inject a fault, and see where it stops.",
+            body: "The simulator shows one payment moving through every stage. Add a fault and see where the payment stops, and why.",
             symbol: "arrow.triangle.2.circlepath",
             tabIndex: nil,
             destination: .simulator
         ),
         TourStep(
             title: "Profile and Purchases",
-            body: "Profile holds your account and settings. My Purchases sits just below Profile in the menu, with your courses and access.",
+            body: "Profile holds your account and settings. My Purchases sits just below Profile in the menu. To take a course, scroll down on Home, open the course, and buy it with your App Store account. Buying unlocks its lessons for 1 year. To follow a set order of chapters, choose a learning journey on Home.",
             symbol: "person.fill",
             tabIndex: nil,
             destination: .profile
         ),
         TourStep(
             title: "Start Learning",
-            body: "Your streak and weekly goal live here, with one tap to jump into your next lesson.",
+            body: "This card takes you straight to your next lesson. Your journey decides which lesson it is. Lessons use words and diagrams that show how the payment flows. Many lessons also have narration: tap Play and listen as you read.",
             symbol: "flame.fill",
             tabIndex: nil,
             destination: nil,
@@ -771,12 +764,12 @@ struct NavigationTourOverlay: View {
     }
 
     /// The floating pill rect, in overlay space: the union of
-    /// the five measured buttons when the reader found them,
+    /// the four measured buttons when the reader found them,
     /// else the strip estimate measured from the device
     /// screenshot (iPhone 17 Pro Max, 12 Nov 2026): 19.5pt side
     /// margins, a 63pt tall pill, 21pt above the screen bottom.
     private func pillRect(proxy: GeometryProxy) -> CGRect {
-        if tabButtonRects.count == 5, isTabBarFrameValid {
+        if tabButtonRects.count == 4, isTabBarFrameValid {
             return localRect(tabBarFrame, proxy: proxy)
         }
         let size = proxy.size
@@ -784,13 +777,15 @@ struct NavigationTourOverlay: View {
         return CGRect(x: 19.5, y: size.height - 84, width: max(0, size.width - 39), height: 63)
     }
 
-    /// Tab centres as fractions of the pill width, measured
-    /// from the device screenshot. The tabs are NOT equally
-    /// spaced: the long Payment Cases and My Progress labels
-    /// widen their buttons, so equal fifths put the highlight
-    /// up to 31pt off the icon. Home 0.115, Learn 0.269,
-    /// Search 0.424, Payment Cases 0.627, My Progress 0.857.
-    private static let tabCenterFractions: [CGFloat] = [0.115, 0.269, 0.424, 0.627, 0.857]
+    /// Tab centres as fractions of the pill width, used only when
+    /// the frame reader has not reported measured button rects.
+    /// The tabs are NOT equally spaced: the long Payment Cases and
+    /// My Progress labels widen their buttons. These four values
+    /// are estimates for the four-tab bar (Home, Search, Payment
+    /// Cases, My Progress); the measured rects are preferred
+    /// whenever they exist, and the estimates need a device
+    /// screenshot re-measure to be exact.
+    private static let tabCenterFractions: [CGFloat] = [0.12, 0.35, 0.62, 0.87]
 
     /// True once the frame reader has reported a real frame.
     private var isTabBarFrameValid: Bool {
@@ -899,7 +894,7 @@ struct NavigationTourOverlay: View {
     private func spotlightLayer(proxy: GeometryProxy, stepIndex: Int) -> some View {
         let spotlight = currentSpotlightRect(proxy: proxy, stepIndex: stepIndex)
         let isTabStep = Self.steps.indices.contains(stepIndex) && Self.steps[stepIndex].tabIndex != nil
-        let isSearchStep = Self.steps.indices.contains(stepIndex) && Self.steps[stepIndex].tabIndex == 2
+        let isSearchStep = Self.steps.indices.contains(stepIndex) && Self.steps[stepIndex].tabIndex == 1
         let isCircleStep = Self.steps.indices.contains(stepIndex) && (Self.steps[stepIndex].destination != nil || Self.steps[stepIndex].highlightsCard)
         let showingFieldDemo = isSearchStep && searchDemoFieldActive && searchFieldSpotlightRect(proxy: proxy) != nil
         let radius = showingFieldDemo ? spotlightCornerRadius : (spotlight?.height ?? 0) / 2
@@ -1028,7 +1023,7 @@ struct NavigationTourOverlay: View {
         guard Self.steps.indices.contains(stepIndex) else { return nil }
         let step = Self.steps[stepIndex]
         if let tabIndex = step.tabIndex {
-            if tabIndex == 2, searchDemoFieldActive, let fieldRect = searchFieldSpotlightRect(proxy: proxy) {
+            if tabIndex == 1, searchDemoFieldActive, let fieldRect = searchFieldSpotlightRect(proxy: proxy) {
                 return fieldRect
             }
             return tabSpotlightRect(tabIndex: tabIndex, proxy: proxy)
@@ -1062,7 +1057,7 @@ struct NavigationTourOverlay: View {
         let pill = pillRect(proxy: proxy)
         guard pill.width > 0, pill.height > 0, Self.tabCenterFractions.indices.contains(tabIndex) else { return nil }
         let centerX: CGFloat
-        if tabButtonRects.count == 5, tabButtonRects.indices.contains(tabIndex) {
+        if tabButtonRects.count == 4, tabButtonRects.indices.contains(tabIndex) {
             centerX = localRect(tabButtonRects[tabIndex], proxy: proxy).midX
         } else {
             centerX = pill.minX + Self.tabCenterFractions[tabIndex] * pill.width
@@ -1367,7 +1362,7 @@ struct NavigationTourOverlay: View {
                         .foregroundColor(.white)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
-                    Text("\(stepIndex + 1) of 8")
+                    Text("\(stepIndex + 1) of \(Self.steps.count)")
                         .font(.pfCaptionBold)
                         .foregroundColor(.white.opacity(0.8))
                 }
@@ -1377,7 +1372,7 @@ struct NavigationTourOverlay: View {
                             .fill(Color.white.opacity(0.2))
                         Capsule()
                             .fill(Color.pfGold)
-                            .frame(width: barProxy.size.width * CGFloat(stepIndex + 1) / 8)
+                            .frame(width: barProxy.size.width * CGFloat(stepIndex + 1) / CGFloat(Self.steps.count))
                     }
                 }
                 .frame(height: 4)
@@ -1432,7 +1427,7 @@ struct NavigationTourOverlay: View {
                     .foregroundColor(.white)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Take a quick tour of the key areas of the app. It only takes a minute. The app stays fully usable while the tour runs.")
+                Text("Take a quick tour of the key areas of the app, in plain words: your learning journey, your lessons, listening to lessons, and how to buy a course. It only takes a minute. The app stays fully usable while the tour runs.")
                     .font(.pfCaption)
                     .foregroundColor(.white.opacity(0.85))
                     .multilineTextAlignment(.center)
@@ -1479,7 +1474,7 @@ struct NavigationTourOverlay: View {
                     .foregroundColor(.white)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("You've explored the key areas of Payments Training Hub. You can revisit this tour anytime from Help & Support.")
+                Text("You have explored the key areas of Payments Training Hub. Start with your next lesson from Home, in the Continue learning block. You can revisit this tour anytime from Help & Support.")
                     .font(.pfCaption)
                     .foregroundColor(.white.opacity(0.85))
                     .multilineTextAlignment(.center)
@@ -1619,14 +1614,14 @@ struct NavigationTourOverlay: View {
                     withAnimation(.easeInOut(duration: 0.15)) { clickTap = false }
                     showClickRipple()
                     selectedTab = tabIndex
-                    if tabIndex == 2 {
+                    if tabIndex == 1 {
                         // Search step: the typing demo runs
                         // against the live Search page, typing
                         // the demo query and submitting it, so
                         // the step shows a real search, not an
                         // empty field. No scroll showcase here.
                         runSearchDemo(generation: myGeneration)
-                    } else if tabIndex == 3 {
+                    } else if tabIndex == 2 {
                         // Payment Cases: the list renders its
                         // ContentManifest.situationCount rows lazily, so a full traverse
                         // outruns the rendering and flashes
@@ -1762,7 +1757,7 @@ struct NavigationTourOverlay: View {
             let cardGeneration = transitionGeneration
             // The hand points at the circled card icon from the
             // live frame once the drawer slide settles. Then
-            // the step opens the card's target (the Learn tab)
+            // the step opens the card's target (the top of Home)
             // for real, guarded like the drawer activation.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
                 guard cardGeneration == transitionGeneration, phase == .step(index) else { return }

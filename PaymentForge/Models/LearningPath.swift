@@ -190,8 +190,8 @@ extension LearningPath {
             capstoneSituationID: "ABH-10",
             assessmentDimension: .architecture,
             certificateTitle: "Payments Fundamentals",
-            entryExpectations: "No prior knowledge of payments is assumed. This foundation path starts with what a payment is and builds from there, so it is the right starting point for a complete beginner.",
-            completionCriteria: "Complete every required lesson in this path to earn the Payments Fundamentals certificate. No exam or assessment is required; the assessment checkpoint is optional practice."
+            entryExpectations: "No prior knowledge of payments is assumed. This foundation journey starts with what a payment is and builds from there, so it is the right starting point for a complete beginner.",
+            completionCriteria: "Complete every required lesson in this journey to earn the Payments Fundamentals certificate. No exam or assessment is required; the assessment checkpoint is optional practice."
         ),
         LearningPath(
             id: "business-analyst",
@@ -210,8 +210,8 @@ extension LearningPath {
             capstoneSituationID: "ABH-18",
             assessmentDimension: .businessAnalysis,
             certificateTitle: "Payments Business Analyst Foundations",
-            entryExpectations: "An intermediate path. It helps to already be comfortable with payments fundamentals, such as what a payment is and how one moves. No prior business analysis experience is assumed. Nothing here is enforced and any lesson can be opened at any time.",
-            completionCriteria: "Complete every required lesson in this path to earn the Payments Business Analyst Foundations certificate. No exam or assessment is required; the assessment checkpoint is optional practice."
+            entryExpectations: "An intermediate journey. It helps to already be comfortable with payments fundamentals, such as what a payment is and how one moves. No prior business analysis experience is assumed. Nothing here is enforced and any lesson can be opened at any time.",
+            completionCriteria: "Complete every required lesson in this journey to earn the Payments Business Analyst Foundations certificate. No exam or assessment is required; the assessment checkpoint is optional practice."
         ),
         LearningPath(
             id: "upi-specialist",
@@ -230,8 +230,8 @@ extension LearningPath {
             capstoneSituationID: "SCN-36",
             assessmentDimension: .lifecycle,
             certificateTitle: "UPI Professional Foundations",
-            entryExpectations: "An intermediate path. It helps to already be comfortable with payments fundamentals. No prior knowledge of Indian payment systems is assumed. Nothing here is enforced and any lesson can be opened at any time.",
-            completionCriteria: "Complete every required lesson in this path to earn the UPI Professional Foundations certificate. No exam or assessment is required; the assessment checkpoint is optional practice."
+            entryExpectations: "An intermediate journey. It helps to already be comfortable with payments fundamentals. No prior knowledge of Indian payment systems is assumed. Nothing here is enforced and any lesson can be opened at any time.",
+            completionCriteria: "Complete every required lesson in this journey to earn the UPI Professional Foundations certificate. No exam or assessment is required; the assessment checkpoint is optional practice."
         ),
         LearningPath(
             id: "cards-digital",
@@ -250,8 +250,8 @@ extension LearningPath {
             capstoneSituationID: "RUN5-003",
             assessmentDimension: .lifecycle,
             certificateTitle: "Card Payments Fundamentals",
-            entryExpectations: "An intermediate path. It helps to already be comfortable with payments fundamentals. No prior knowledge of card payments is assumed. Nothing here is enforced and any lesson can be opened at any time.",
-            completionCriteria: "Complete every required lesson in this path to earn the Card Payments Fundamentals certificate. No exam or assessment is required; the assessment checkpoint is optional practice."
+            entryExpectations: "An intermediate journey. It helps to already be comfortable with payments fundamentals. No prior knowledge of card payments is assumed. Nothing here is enforced and any lesson can be opened at any time.",
+            completionCriteria: "Complete every required lesson in this journey to earn the Card Payments Fundamentals certificate. No exam or assessment is required; the assessment checkpoint is optional practice."
         ),
         LearningPath(
             id: "operations-reconciliation",
@@ -270,8 +270,8 @@ extension LearningPath {
             capstoneSituationID: "SCN-19",
             assessmentDimension: .reconciliation,
             certificateTitle: "Payment Operations and Reconciliation",
-            entryExpectations: "An advanced path. It helps to already be comfortable with payments fundamentals and with how payments move and fail. Nothing here is enforced and any lesson can be opened at any time.",
-            completionCriteria: "Complete every required lesson in this path to earn the Payment Operations and Reconciliation certificate. No exam or assessment is required; the assessment checkpoint is optional practice."
+            entryExpectations: "An advanced journey. It helps to already be comfortable with payments fundamentals and with how payments move and fail. Nothing here is enforced and any lesson can be opened at any time.",
+            completionCriteria: "Complete every required lesson in this journey to earn the Payment Operations and Reconciliation certificate. No exam or assessment is required; the assessment checkpoint is optional practice."
         ),
         LearningPath(
             id: "interview-preparation",
@@ -290,8 +290,8 @@ extension LearningPath {
             capstoneSituationID: "ABH-37",
             assessmentDimension: .exceptionHandling,
             certificateTitle: nil,
-            entryExpectations: "An advanced path for learners preparing to talk about payments work in interviews. It helps to have covered payments fundamentals first. Nothing here is enforced and any lesson can be opened at any time.",
-            completionCriteria: "Complete every required lesson in this path. This path has no certificate, and no exam or assessment is required; the assessment checkpoint is optional practice."
+            entryExpectations: "An advanced journey for learners preparing to talk about payments work in interviews. It helps to have covered payments fundamentals first. Nothing here is enforced and any lesson can be opened at any time.",
+            completionCriteria: "Complete every required lesson in this journey. This journey has no certificate, and no exam or assessment is required; the assessment checkpoint is optional practice."
         )
     ]
 
@@ -399,7 +399,7 @@ struct PFCertificate: Identifiable, Codable {
         if let overallScore {
             lines.append("Overall score: \(Int(overallScore.rounded()))%")
         }
-        lines.append("Certificate of Completion. This certifies completion of the named learning path. It is not an accredited qualification.")
+        lines.append("Certificate of Completion. This certifies completion of the named learning journey. It is not an accredited qualification.")
         return lines.joined(separator: "\n")
     }
 }

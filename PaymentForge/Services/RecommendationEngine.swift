@@ -224,7 +224,7 @@ enum RecommendationEngine {
         if results.count < limit {
             for lesson in guidedOrderLessons(in: service) where !progress.isLessonComplete(lesson.id) {
                 guard results.count < limit else { break }
-                append(lesson, kind: .nextInPath, reason: "Next in the guided path, in session order.")
+                append(lesson, kind: .nextInPath, reason: "Next in the guided sessions, in order.")
             }
         }
         if results.count < limit {
@@ -244,12 +244,12 @@ enum RecommendationEngine {
     /// the guided path for a nil profile.
     private static func routeLabel(for route: RoleRoute?) -> String {
         if let route, let path = route.learningPath() {
-            return "the \(path.title) path"
+            return "the \(path.title) journey"
         }
         if let route {
             return "your \(route.title) route"
         }
-        return "the guided path"
+        return "the guided sessions"
     }
 
     /// Every guided-session lesson in session order, deduped. Used

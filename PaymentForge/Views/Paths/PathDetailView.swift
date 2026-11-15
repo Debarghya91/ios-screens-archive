@@ -15,6 +15,7 @@ struct GuidedPathCardView: View {
     @EnvironmentObject private var contentService: ContentService
     @EnvironmentObject private var progressStore: ProgressStore
     @ObservedObject private var bookmarks = PathBookmarkStore.shared
+    @ObservedObject private var activePathStore = ActivePathStore.shared
     let path: LearningPath
 
     private var lessons: [SearchEntry] {
@@ -59,6 +60,13 @@ struct GuidedPathCardView: View {
                         .font(.pfCaptionBold)
                         .foregroundColor(.pfRoyal)
                         .fixedSize(horizontal: false, vertical: true)
+                    if activePathStore.activePathID == path.id {
+                        PFPill(
+                            text: "Your journey",
+                            background: Color.pfRoyal.opacity(0.10),
+                            foreground: .pfRoyal
+                        )
+                    }
                     if completedCount > 0 {
                         HStack(spacing: PFSpacing.sm) {
                             PFProgressBar(progress: progress, height: 6)
@@ -91,7 +99,7 @@ struct GuidedPathCardView: View {
                         .foregroundColor(bookmarks.isBookmarked(path.id) ? .pfGold : .pfSecondaryText)
                 }
                 .buttonStyle(.borderless)
-                .accessibilityLabel(bookmarks.isBookmarked(path.id) ? "Remove bookmark" : "Bookmark this path")
+                .accessibilityLabel(bookmarks.isBookmarked(path.id) ? "Remove bookmark" : "Bookmark this journey")
             }
         }
     }
@@ -125,6 +133,20 @@ struct PathDetailView: View {
 
     private var isActivePath: Bool {
         activePathStore.activePathID == path.id
+    }
+
+    /// The choose button reads "Choose your journey" before any
+    /// journey is chosen and "Change journey" once one is: the
+    /// action is the same select, only the wording names the
+    /// learner's situation.
+    private var chooseButtonTitle: String {
+        activePathStore.activePathID == nil ? "Choose your journey" : "Change journey"
+    }
+
+    private var chooseButtonAccessibilityLabel: String {
+        activePathStore.activePathID == nil
+            ? "Choose \(path.title) as your journey"
+            : "Change your journey to \(path.title)"
     }
 
     private var chapterBlocks: [(number: Int, title: String)] {
@@ -205,40 +227,44 @@ struct PathDetailView: View {
         }
     }
 
-    // MARK: - Active path
+    // MARK: - Your journey
 
     private var activePathSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: "Your active path")
+            PFSectionHeader(title: "Your journey")
             PFCard {
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
+                    Text("A learning journey is a set order of chapters for one goal. Your journey decides which lesson Home shows next in the Continue learning block, so you always know what to do next. You can follow only one journey at a time.")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                     if isActivePath {
-                        Label("This is your active path.", systemImage: "checkmark.circle.fill")
+                        Label("This is your journey.", systemImage: "checkmark.circle.fill")
                             .font(.pfBody.weight(.semibold))
                             .foregroundColor(.pfNavy)
                             .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityLabel("This is your active path.")
-                        Text("Switching paths never loses completed-lesson progress. Progress is kept per lesson, so everything you have completed stays complete.")
+                            .accessibilityLabel("This is your journey.")
+                        Text("Changing journeys never loses completed-lesson progress. Progress is kept per lesson, so everything you have completed stays complete.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
-                        PFSecondaryButton(title: "Remove as my active path") {
+                        PFSecondaryButton(title: "Remove as my journey") {
                             activePathStore.select(nil)
                         }
-                        .accessibilityLabel("Remove \(path.title) as my active path")
+                        .accessibilityLabel("Remove \(path.title) as my journey")
                     } else {
-                        Text("Set this path as your active path to pick up where you left off.")
+                        Text("Choose this journey, and Home will show its next lesson first in the Continue learning block.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Switching paths never loses completed-lesson progress. Progress is kept per lesson, so everything you have completed stays complete.")
+                        Text("Changing journeys never loses completed-lesson progress. Progress is kept per lesson, so everything you have completed stays complete.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
-                        PFPrimaryButton(title: "Set as my active path") {
+                        PFPrimaryButton(title: chooseButtonTitle) {
                             activePathStore.select(path.id)
                         }
-                        .accessibilityLabel("Set \(path.title) as my active path")
+                        .accessibilityLabel(chooseButtonAccessibilityLabel)
                     }
                 }
             }
@@ -531,7 +557,13 @@ struct SituationRow: View {
     var body: some View {
         PFCard {
             HStack(spacing: PFSpacing.md) {
-                PFIconTile(systemImage: "briefcase.fill", size: 44)
+                // The thumbnail sits beside the title when the
+                // website exposes one; the briefcase tile otherwise.
+                if situation.thumbnail != nil {
+                    PFThumbnailView(thumbnailPath: situation.thumbnail, size: 44, cornerRadius: 12)
+                } else {
+                    PFIconTile(systemImage: "briefcase.fill", size: 44)
+                }
                 VStack(alignment: .leading, spacing: PFSpacing.xs) {
                     Text(situation.title)
                         .font(.pfCardTitle)

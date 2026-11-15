@@ -1,7 +1,16 @@
 // CoursesView.swift
-// Payments Training Hub iOS - Learn tab: the courses index, learning pathways and the catalogue.
+// Payments Training Hub iOS - the course browsing sections that live
+// on Home: the courses index, learning journeys and the catalogue.
 // Native SwiftUI only, no WebView. Uses the shared DesignSystem.
 // No em dashes in any user-facing text.
+//
+// This view has no NavigationStack and no ScrollView of its own: Home
+// owns the single scroll, and this view is one section inside it, so
+// browsing and starting lessons happen in one place. The scroll
+// anchor for landing on this section (learnTop) lives on Home's
+// wrapper, and Home scrolls to it when the section picker changes or
+// a route lands here. Pushed detail views (course, chapter, journey,
+// session) open from Home's NavigationStack as before.
 //
 // Adaptive layout: every screen here uses flexible stacks and frames
 // (maxWidth: .infinity, no fixed widths), text that wraps instead of
@@ -34,30 +43,34 @@
 import SwiftUI
 import Foundation
 
-// MARK: - Courses
+// MARK: - Learn sections (on Home)
 
-struct CoursesView: View {
+/// The three browsing sections, shared by Home. The selected section
+/// is owned by Home so routes and capability links can land on a
+/// chosen section (for example, "Choose your journey" lands on
+/// Learning Journeys). The raw values are the picker labels.
+enum LearnSection: String, CaseIterable {
+    case courses = "Courses"
+    case learningPaths = "Learning Journeys"
+    case catalogue = "Catalogue"
+}
+
+/// The course browsing sections embedded in Home: the picker plus the
+/// section content, with no stack or scroll of its own. Home owns the
+/// scroll and the learnTop anchor; switching sections scrolls Home to
+/// that anchor through the shared selected-section binding.
+struct LearnSectionsView: View {
     @EnvironmentObject private var contentService: ContentService
     @EnvironmentObject private var progressStore: ProgressStore
     @EnvironmentObject private var storeManager: StoreManager
 
-    /// Opens the side drawer. Passed in from the tab bar so the menu
-    /// button can sit in this screen's navigation bar, and only here:
-    /// pushed detail views have no menu button and keep a clean back button.
-    @Binding var isDrawerOpen: Bool
+    @Binding var selectedSection: LearnSection
 
-    @State private var selectedSection: LearnSection = .courses
-
-    /// The level filter for the guided paths on the Learning Paths
-    /// section only. It never filters the sessions or the Catalogue
-    /// section. The level strings match LearningPath.level exactly.
+    /// The level filter for the guided journeys on the Learning
+    /// Journeys section only. It never filters the sessions or the
+    /// Catalogue section. The level strings match LearningPath.level
+    /// exactly.
     @State private var selectedPathLevel: PathLevelFilter = .all
-
-    private enum LearnSection: String, CaseIterable {
-        case courses = "Courses"
-        case learningPaths = "Learning Paths"
-        case catalogue = "Catalogue"
-    }
 
     private enum PathLevelFilter: String, CaseIterable {
         case all = "All"
@@ -67,85 +80,49 @@ struct CoursesView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: PFSpacing.xl) {
-                        loadStateView
+        VStack(alignment: .leading, spacing: PFSpacing.xl) {
+            loadStateView
 
-                        Picker("Learn section", selection: $selectedSection) {
-                            ForEach(LearnSection.allCases, id: \.self) { section in
-                                Text(section.rawValue).tag(section)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .accessibilityLabel("Learn section")
-                        .id("learnTop")
-
-                        // The section content comes first, directly
-                        // under the picker, so switching sections
-                        // visibly changes the first screen. The
-                        // shared interview and practice cards below
-                        // it appear on the Learning Paths and
-                        // Catalogue sections only: the Courses
-                        // section stays uncluttered, with nothing
-                        // on screen but the course index itself.
-                        if contentService.isLoadingIndex && contentService.searchIndex == nil {
-                            VStack(alignment: .leading, spacing: PFSpacing.md) {
-                                PFSkeletonView()
-                                PFSkeletonView()
-                                PFSkeletonView()
-                            }
-                            .accessibilityElement(children: .ignore)
-                            .accessibilityLabel("Loading chapters")
-                        } else if selectedSection == .courses {
-                            coursesSection
-                        } else if selectedSection == .learningPaths {
-                            learningPathsIntroSection
-                            levelFilterSection
-                            guidedPathsSection
-                            pathwaysSection
-                        } else {
-                            catalogueSection
-                            librarySection
-                        }
-
-                        if selectedSection != .courses {
-                            interviewSection
-
-                            practiceSection
-
-                            practiceExperiencesSection
-                        }
-                    }
-                    .padding(PFSpacing.lg)
+            Picker("Browse section", selection: $selectedSection) {
+                ForEach(LearnSection.allCases, id: \.self) { section in
+                    Text(section.rawValue).tag(section)
                 }
-                .background(Color.pfBackground)
-                // Extra scrollable space at the bottom so the last card clears
-                // the tab bar on every iPhone size.
-                .pfTabBarClearance()
-                .onChange(of: selectedSection) { _, _ in
-                    // Switching sections returns to the top, so the
-                    // new section's content is visible at once
-                    // instead of hidden below the previous scroll
-                    // position. The Dashboard segment picker uses
-                    // the same scroll-to-top pattern.
-                    withAnimation {
-                        proxy.scrollTo("learnTop", anchor: .top)
-                    }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("Browse section")
+
+            // The section content comes first, directly under the
+            // picker, so switching sections visibly changes the
+            // first screen. The shared interview and practice cards
+            // below it appear on the Learning Journeys and Catalogue
+            // sections only: the Courses section stays uncluttered,
+            // with nothing on screen but the course index itself.
+            if contentService.isLoadingIndex && contentService.searchIndex == nil {
+                VStack(alignment: .leading, spacing: PFSpacing.md) {
+                    PFSkeletonView()
+                    PFSkeletonView()
+                    PFSkeletonView()
                 }
-                .onAppear {
-                    // The scroll rule: Back and tab switches land
-                    // at the top, never at the restored offset.
-                    proxy.scrollTo("learnTop", anchor: .top)
-                }
-                .navigationTitle("Learn")
-                .navigationBarTitleDisplayMode(.large)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        DrawerMenuButton(isDrawerOpen: $isDrawerOpen)
-                    }
-                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Loading chapters")
+            } else if selectedSection == .courses {
+                coursesSection
+            } else if selectedSection == .learningPaths {
+                learningPathsIntroSection
+                levelFilterSection
+                guidedPathsSection
+                pathwaysSection
+            } else {
+                catalogueSection
+                librarySection
+            }
+
+            if selectedSection != .courses {
+                interviewSection
+
+                practiceSection
+
+                practiceExperiencesSection
             }
         }
     }
@@ -332,19 +309,23 @@ struct CoursesView: View {
 
     // MARK: - Learning Paths section
 
-    /// The Learning Paths intro: the purpose of this section, stated
-    /// directly under the picker so it reads differently from the
-    /// All Courses section at once. This section is a journey:
-    /// paths by role and level, then sessions in order. It uses the
-    /// same lessons as All Courses, arranged as a journey instead
-    /// of a catalogue.
+    /// The Learning Journeys intro: the purpose of this section,
+    /// stated directly under the picker so it reads differently from
+    /// the Courses section at once. A journey is a set order of
+    /// chapters for one goal. It uses the same lessons as Courses,
+    /// arranged as a journey instead of a catalogue, followed by the
+    /// eight guided sessions in order.
     private var learningPathsIntroSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            Text("Guided paths and sessions")
+            Text("Learning journeys and guided sessions")
                 .font(.pfScreenTitle)
                 .foregroundColor(.pfNavy)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Follow a guided path for one role, or work through the eight sessions in order. Pick a path or a session to see its lessons and practice situations.")
+            Text("A learning journey is a set order of chapters for one goal, such as becoming a payments business analyst. Follow one journey, or work through the eight guided sessions in order. Pick a journey or a session to see its lessons and practice situations.")
+                .font(.pfBody)
+                .foregroundColor(.pfSecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Your journey decides which lesson Home shows next. Choose a journey inside it, and the Continue learning block at the top of Home shows that journey's next lesson first. Change your journey any time: your completed lessons stay complete.")
                 .font(.pfBody)
                 .foregroundColor(.pfSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -395,16 +376,16 @@ struct CoursesView: View {
     /// the same PathDetailView as before.
     private var guidedPathsSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: "Guided paths")
-            Text("Showing \(filteredPaths.count) of \(LearningPath.all.count) paths")
+            PFSectionHeader(title: "Learning journeys")
+            Text("Showing \(filteredPaths.count) of \(LearningPath.all.count) journeys")
                 .font(.pfCaption)
                 .foregroundColor(.pfSecondaryText)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if filteredPaths.isEmpty {
-                Text("No paths at this level yet.")
+                Text("No journeys at this level yet.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
-                PFSecondaryButton(title: "Show all paths") {
+                PFSecondaryButton(title: "Show all journeys") {
                     selectedPathLevel = .all
                 }
             } else {
@@ -420,20 +401,14 @@ struct CoursesView: View {
 
     // MARK: - Courses section
 
-    /// The first lesson in reading order the learner has not
-    /// completed yet, or nil when every lesson is complete.
-    private var nextLessonToRead: SearchEntry? {
-        contentService.readingOrderLessons.first { !progressStore.isLessonComplete($0.id) }
-    }
-
     /// The courses index: ten courses in reading order, chapters
     /// numbered 1 to 99, then the chapter held outside the main
-    /// reading path. The index behaves like a navigation pane:
+    /// reading order. The index behaves like a navigation pane:
     /// every course is a row, no course starts open, and tapping
-    /// a course opens its chapter list. A Continue reading card
-    /// sits above the courses. Nothing else shares this screen:
-    /// no interview, practice or experience cards, so the index
-    /// reads like an index.
+    /// a course opens its chapter list. There is no second
+    /// "continue" card here: Home's Continue learning block at the
+    /// top is the one place that names the next lesson, so the
+    /// index never points at a different lesson from Home.
     private var coursesSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
             Text("Courses")
@@ -451,7 +426,6 @@ struct CoursesView: View {
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
             } else {
-                continueReadingCard
                 ForEach(Array(ProductCatalogue.partProducts.enumerated()), id: \.element.id) { index, product in
                     NavigationLink(destination: CourseDetailView(product: product, courseNumber: index + 1, chapterNumbers: PFChapterHelper.readingOrderChapterNumbers(for: product))) {
                         CourseIndexRow(product: product, courseNumber: index + 1, chapterNumbers: PFChapterHelper.readingOrderChapterNumbers(for: product))
@@ -464,58 +438,6 @@ struct CoursesView: View {
         }
     }
 
-    /// Continue reading: the next unread lesson in reading order,
-    /// with its chapter and lesson numbers. When every lesson is
-    /// complete, a finished note instead of a dead card.
-    private var continueReadingCard: some View {
-        Group {
-            if let lesson = nextLessonToRead {
-                NavigationLink(destination: LessonView(entry: lesson)) {
-                    PFCard {
-                        HStack(spacing: PFSpacing.md) {
-                            PFIconTile(systemImage: "book.fill", size: 44)
-                            VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                                Text("Continue reading")
-                                    .font(.pfCaptionBold)
-                                    .foregroundColor(.pfRoyal)
-                                Text(lesson.title)
-                                    .font(.pfCardTitle)
-                                    .foregroundColor(.pfNavy)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                if let position = PFChapterHelper.readingPositionLabel(for: lesson, in: contentService) {
-                                    Text(position)
-                                        .font(.pfCaption)
-                                        .foregroundColor(.pfSecondaryText)
-                                }
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .foregroundColor(.pfSecondaryText)
-                                .pfDecorative()
-                        }
-                    }
-                }
-                .buttonStyle(PFCardButtonStyle())
-                .accessibilityLabel("Continue reading: \(lesson.title)")
-            } else {
-                PFCard {
-                    HStack(spacing: PFSpacing.md) {
-                        PFIconTile(systemImage: "checkmark.seal.fill", size: 44)
-                        VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                            Text("You have finished the full course")
-                                .font(.pfCardTitle)
-                                .foregroundColor(.pfNavy)
-                            Text("Every lesson is complete. Revisit any chapter, or try the tests and practice experiences.")
-                                .font(.pfBody)
-                                .foregroundColor(.pfSecondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     /// Chapters held outside the main reading path, listed after
     /// the parts by title, with no book number. Hidden while the
     /// catalogue has no lessons for them.
@@ -524,7 +446,7 @@ struct CoursesView: View {
         return Group {
             if !heldOut.isEmpty {
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
-                    PFSectionHeader(title: "Outside the main reading path")
+                    PFSectionHeader(title: "Outside the main reading order")
                     Text("Extra reading, outside the numbered chapters. Read it any time; it is not part of the sequence.")
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
@@ -674,7 +596,7 @@ struct CoursesView: View {
         HStack(spacing: PFSpacing.sm) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(product.name)
-                    .font(.pfCaptionBold)
+                    .font(.pfCardTitle)
                     .foregroundColor(.white)
                     .fixedSize(horizontal: false, vertical: true)
                 Text("\(PFChapterHelper.readingOrderChapterNumbers(for: product).count) chapters")
@@ -794,16 +716,27 @@ struct PathwayCardView: View {
         return Double(completedCount) / Double(lessons.count)
     }
 
+    /// The session thumbnail: the first lesson in the session
+    /// that carries one. The number badge shows when no lesson
+    /// in the session has a thumbnail yet.
+    private var thumbnailPath: String? {
+        lessons.compactMap(\.thumbnail).first
+    }
+
     var body: some View {
         PFCard {
             HStack(alignment: .top, spacing: PFSpacing.md) {
-                Text("\(session.id)")
-                    .font(.pfCardTitle.weight(.bold))
-                    .foregroundColor(.white)
-                    .frame(width: 40, height: 40)
-                    .background(Color.pfRoyal)
-                    .clipShape(Circle())
-                    .shadow(color: Color.pfRoyal.opacity(0.35), radius: 6, x: 0, y: 3)
+                if thumbnailPath != nil {
+                    PFThumbnailView(thumbnailPath: thumbnailPath, size: 40, cornerRadius: 12)
+                } else {
+                    Text("\(session.id)")
+                        .font(.pfCardTitle.weight(.bold))
+                        .foregroundColor(.white)
+                        .frame(width: 40, height: 40)
+                        .background(Color.pfRoyal)
+                        .clipShape(Circle())
+                        .shadow(color: Color.pfRoyal.opacity(0.35), radius: 6, x: 0, y: 3)
+                }
                 VStack(alignment: .leading, spacing: PFSpacing.xs) {
                     Text(session.title)
                         .font(.pfCardTitle)
@@ -904,6 +837,14 @@ struct CourseIndexRow: View {
         PFChapterHelper.courseThumbnailPath(for: product, in: contentService)
     }
 
+    /// The why line for the row: the course agenda from the agendas
+    /// document when it has loaded, otherwise the product's own
+    /// description. Shown truncated to two lines; the full text is
+    /// on the course detail. Never a placeholder.
+    private var whyPreview: String {
+        PFChapterHelper.courseAgenda(for: product, in: contentService) ?? product.description
+    }
+
     var body: some View {
         PFCard {
             HStack(alignment: .top, spacing: PFSpacing.md) {
@@ -924,12 +865,17 @@ struct CourseIndexRow: View {
                         .foregroundColor(.pfRoyal)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(product.name)
-                        .font(.pfCardTitle)
+                        .font(.pfSectionTitle)
                         .foregroundColor(.pfNavy)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(product.tagline)
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(whyPreview)
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(summaryLine)
                         .font(.pfCaptionBold)
@@ -1008,6 +954,43 @@ struct CourseDetailView: View {
         PFChapterHelper.courseThumbnailPath(for: product, in: contentService)
     }
 
+    /// The learning journeys that include at least one of this
+    /// course's chapters, by title, in journey order. Derived from
+    /// the journey chapter lists and this course's chapters only:
+    /// no audience claim is invented. Empty when no journey covers
+    /// this course (the last course).
+    private var journeyTitles: [String] {
+        let wanted = Set(chapterNumbers)
+        return LearningPath.all
+            .filter { !Set($0.chapterNumbers).isDisjoint(with: wanted) }
+            .map { $0.title }
+    }
+
+    /// Who this course is for, from existing content only: the
+    /// journeys it belongs to, or, for the last course in reading
+    /// order (covered by no journey), its position after the
+    /// earlier courses. Nil when neither applies, so no block
+    /// renders with invented copy.
+    private var audienceText: String? {
+        if !journeyTitles.isEmpty {
+            let joined = journeyTitles.joined(separator: ", ")
+            let journeyWord = journeyTitles.count == 1 ? "journey" : "journeys"
+            return "This course is part of the \(joined) learning \(journeyWord)."
+        }
+        if courseNumber == ProductCatalogue.partProducts.count {
+            return "Learners who have worked through the earlier courses: this is the last course in reading order."
+        }
+        return nil
+    }
+
+    /// The course agenda when the agendas document has loaded, so
+    /// the detail can show the product description as a separate
+    /// "What it covers" block instead of duplicating it as the
+    /// agenda fallback.
+    private var courseAgendaText: String? {
+        PFChapterHelper.courseAgenda(for: product, in: contentService)
+    }
+
     private var courseIndex: Int {
         courseNumber - 1
     }
@@ -1045,7 +1028,31 @@ struct CourseDetailView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                PFAgendaBlock(title: "Why take this course", agenda: PFChapterHelper.courseAgenda(for: product, in: contentService) ?? product.description)
+                PFAgendaBlock(title: "Why take this course", agenda: courseAgendaText ?? product.description)
+                if courseAgendaText != nil {
+                    VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                        Text("What it covers")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(product.description)
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                if let audience = audienceText {
+                    VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                        Text("Who it is for")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(audience)
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 HStack(spacing: PFSpacing.sm) {
                     if isUnlocked {
                         PFPill(
@@ -1316,7 +1323,7 @@ struct ChapterRow: View {
                             .foregroundColor(.pfRoyal)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
-                        Text("Outside the main reading path")
+                        Text("Outside the main reading order")
                             .font(.pfCaptionBold)
                             .foregroundColor(.pfRoyal)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1390,9 +1397,10 @@ struct ChapterDetailView: View {
         lessons.filter { progressStore.isLessonComplete($0.id) }.count
     }
 
-    /// "About 1 hr 20 min in total, 45 min left", or just the
-    /// total when the chapter is finished. Nil when no durations
-    /// are known.
+    /// "About 1 hr 20 min of listening in total, 45 min left", or
+    /// just the total when the chapter is finished. Nil when no
+    /// durations are known. Listening totals: the seconds are
+    /// narration length, never read time.
     private var timeLine: String? {
         guard let total = LessonDurations.totalLabel(for: lessons) else { return nil }
         let remaining = lessons.filter { !progressStore.isLessonComplete($0.id) }

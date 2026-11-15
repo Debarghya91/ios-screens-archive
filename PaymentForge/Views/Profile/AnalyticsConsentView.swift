@@ -55,7 +55,7 @@ struct AnalyticsConsentView: View {
         [
             "Which lessons are opened and completed, as counts and lesson names, never your notes or answers.",
             "Quiz and assessment scores as numbers, so we can see whether scores improve over time.",
-            "Which features are used: learning paths, the Daily Challenge, practice exercises, and searches with no results. Search words are never recorded.",
+            "Which features are used: learning journeys, the Daily Challenge, practice exercises, and searches with no results. Search words are never recorded.",
             "Purchase funnel counts: paywall views, purchases, restores, and failures. No payment details are recorded.",
             "Error counts: failed lesson loads, audio failures, and sync failures, so faults get fixed.",
         ]

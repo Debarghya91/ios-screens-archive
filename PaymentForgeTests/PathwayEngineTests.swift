@@ -331,3 +331,116 @@ final class PathwayEngineTests: XCTestCase {
         XCTAssertEqual(RecommendationKind.freshStart.rawValue, "freshStart")
     }
 }
+
+// MARK: - Wave 2: journey selection and course audience derivation
+//
+// UNEXECUTED: written on a Linux VM with no Xcode. Never compiled
+// or run. Statically checked only.
+//
+// The Home "Continue learning" block shows the chosen journey's
+// next lesson first, and the course detail derives "Who it is for"
+// from journey chapter overlap. These tests exercise the rules
+// behind both with the real journey and catalogue data: selection
+// resolves live, chapter lists are valid, and every course but
+// the last in reading order belongs to at least one journey.
+// The SwiftUI blocks themselves are statically checked only.
+
+@MainActor
+final class Wave2JourneyRuleTests: XCTestCase {
+
+    private let namespace = "test-wave2-journey-rule"
+
+    override func setUp() {
+        super.setUp()
+        AccountScopedStorage.setCurrentNamespace(namespace)
+        AccountScopedStorage.removeAllKeys(in: namespace)
+    }
+
+    override func tearDown() {
+        AccountScopedStorage.removeAllKeys(in: namespace)
+        AccountScopedStorage.setCurrentNamespace(nil)
+        super.tearDown()
+    }
+
+    func testJourneySelectionResolvesAndClears() {
+        let store = ActivePathStore()
+        XCTAssertNil(store.activePathID)
+        XCTAssertNil(store.activePath)
+
+        store.select("business-analyst")
+        XCTAssertEqual(store.activePathID, "business-analyst")
+        XCTAssertEqual(store.activePath?.id, "business-analyst")
+
+        store.select("upi-specialist")
+        XCTAssertEqual(store.activePath?.id, "upi-specialist")
+
+        store.select(nil)
+        XCTAssertNil(store.activePathID)
+        XCTAssertNil(store.activePath)
+    }
+
+    func testUnknownJourneyIDResolvesToNil() {
+        let store = ActivePathStore()
+        store.select("no-such-journey")
+        XCTAssertEqual(store.activePathID, "no-such-journey")
+        XCTAssertNil(store.activePath)
+    }
+
+    func testJourneyChapterListsAreValidAndUnique() {
+        XCTAssertEqual(LearningPath.all.count, 6)
+        for path in LearningPath.all {
+            XCTAssertFalse(path.chapterNumbers.isEmpty, "\(path.id) has no chapters")
+            XCTAssertTrue(
+                path.chapterNumbers.allSatisfy { (1...ContentManifest.chapterCount).contains($0) },
+                "\(path.id) names a chapter outside 1...\(ContentManifest.chapterCount)"
+            )
+            XCTAssertEqual(
+                Set(path.chapterNumbers).count, path.chapterNumbers.count,
+                "\(path.id) repeats a chapter"
+            )
+        }
+        XCTAssertEqual(Set(LearningPath.all.map(\.id)).count, LearningPath.all.count)
+    }
+
+    func testJourneyOrderAndTitlesAreStable() {
+        // The Continue block and the journeys list both read
+        // LearningPath.all in order; the declared order is the
+        // contract. firstIncompleteLesson itself needs a loaded
+        // ContentService (private init, shared singleton, no
+        // injectable seam), so it stays statically checked only.
+        XCTAssertEqual(
+            LearningPath.all.map(\.id),
+            ["fundamentals", "business-analyst", "upi-specialist", "cards-digital", "operations-reconciliation", "interview-preparation"]
+        )
+        for path in LearningPath.all {
+            XCTAssertFalse(path.title.isEmpty)
+        }
+    }
+
+    func testEveryCourseButTheLastBelongsToAJourney() {
+        let products = ProductCatalogue.partProducts
+        XCTAssertFalse(products.isEmpty)
+        var uncovered: [CourseProduct] = []
+        for product in products {
+            let wanted = Set(PFChapterHelper.readingOrderChapterNumbers(for: product))
+            XCTAssertFalse(wanted.isEmpty, "\(product.productID) names no chapters")
+            let overlaps = LearningPath.all.filter { !Set($0.chapterNumbers).isDisjoint(with: wanted) }
+            if overlaps.isEmpty { uncovered.append(product) }
+        }
+        XCTAssertLessThanOrEqual(uncovered.count, 1)
+        if let only = uncovered.first {
+            XCTAssertEqual(only.productID, products.last?.productID)
+        }
+    }
+
+    func testEveryJourneyOverlapsAtLeastOneCourse() {
+        let products = ProductCatalogue.partProducts
+        for path in LearningPath.all {
+            let wanted = Set(path.chapterNumbers)
+            let overlaps = products.filter {
+                !Set(PFChapterHelper.readingOrderChapterNumbers(for: $0)).isDisjoint(with: wanted)
+            }
+            XCTAssertFalse(overlaps.isEmpty, "\(path.id) overlaps no course")
+        }
+    }
+}
