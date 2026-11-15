@@ -27,6 +27,7 @@ final class ContentService: ObservableObject {
     static let searchIndexURL = URL(string: "https://www.paymentstraininghub.com/assets/search-index.json")!
     static let situationsDataURL = URL(string: "https://www.paymentstraininghub.com/assets/situations-data.js")!
     static let weeklyCasesDataURL = URL(string: "https://www.paymentstraininghub.com/assets/weekly-cases-data.js")!
+    static let agendasURL = URL(string: "https://www.paymentstraininghub.com/assets/agendas.json")!
     static let primaryAudioBase = "https://paymentforge-audio.pages.dev/audio/"
     static let fallbackAudioBase = "https://paymentforge-audio-backup.pages.dev/audio/"
 
@@ -75,6 +76,7 @@ final class ContentService: ObservableObject {
     static let searchIndexCacheFile = "pf-search-index.json"
     static let situationsCacheFile = "pf-situations-data.js"
     static let weeklyCasesCacheFile = "pf-weekly-cases-data.js"
+    static let agendasCacheFile = "pf-agendas.json"
 
     /// Authenticated situations delivery, OFF by default. While
     /// false, loadFullSituations behaves exactly as before: the
@@ -144,6 +146,14 @@ final class ContentService: ObservableObject {
     @Published private(set) var weeklyCases: [FullSituationItem]? = nil
     @Published private(set) var isLoadingWeeklyCases = false
 
+    /// The agendas document (agendas.json), when it has loaded.
+    /// Nil until the fetch or the cache succeeds; lesson, chapter,
+    /// and course views read through it and show no agenda block
+    /// and no thumbnail while it is nil, so the feature never
+    /// breaks before the asset loads or when it fails.
+    @Published private(set) var agendas: AgendasDocument? = nil
+    @Published private(set) var isLoadingAgendas = false
+
     private init() {}
 
     // MARK: - Search index
@@ -174,6 +184,7 @@ final class ContentService: ObservableObject {
                 }
                 let decoded = try await Self.decodeSearchIndexOffMainThread(data)
                 searchIndex = decoded
+                applyAgendasToIndex()
                 await Self.saveCacheOffMainThread(data, fileName: Self.searchIndexCacheFile)
                 isShowingCachedContent = false
                 isLoadingIndex = false
@@ -187,6 +198,7 @@ final class ContentService: ObservableObject {
         if let cached = await Self.loadCacheOffMainThread(fileName: Self.searchIndexCacheFile),
            let decoded = try? await Self.decodeSearchIndexOffMainThread(cached) {
             searchIndex = decoded
+            applyAgendasToIndex()
             isShowingCachedContent = true
             indexError = nil
         } else {
@@ -733,6 +745,95 @@ final class ContentService: ObservableObject {
             }
         }
         isLoadingWeeklyCases = false
+    }
+
+    // MARK: - Agendas and thumbnails
+
+    /// Load the agendas document (agendas.json): the agenda
+    /// ("why take it") and thumbnail path for every lesson,
+    /// chapter, and course, keyed by lesson id (ch1s1), chapter
+    /// id (ch1), and course bundle id (integrated, part-1 to
+    /// part-10). Mirrors loadWeeklyCases: bounded retry (3
+    /// attempts, exponential backoff) with a disk-cache fallback,
+    /// and silent failure throughout: when the fetch and the
+    /// cache both fail, agendas stays nil and the app works
+    /// exactly as before, with no agenda blocks and no
+    /// thumbnails. Nothing here sets indexError or the cached
+    /// content flag: agendas are enrichment, never the catalogue.
+    /// The `cases` map in the file is intentionally not decoded:
+    /// case agendas and thumbnails flow through the situations
+    /// data file, and that path is untouched. On success the
+    /// lesson join runs immediately, so lesson, chapter, and
+    /// course views pick the data up through the published
+    /// state they already read.
+    @MainActor
+    func loadAgendas() async {
+        if agendas != nil || isLoadingAgendas { return }
+        isLoadingAgendas = true
+        for attempt in 0..<3 {
+            do {
+                let (data, response) = try await URLSession.shared.data(from: Self.agendasURL)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    throw ContentError.badResponse
+                }
+                let decoded = try JSONDecoder().decode(AgendasDocument.self, from: data)
+                agendas = decoded
+                Self.saveCache(data, fileName: Self.agendasCacheFile)
+                applyAgendasToIndex()
+                isLoadingAgendas = false
+                return
+            } catch {
+                if attempt < 2 {
+                    try? await Task.sleep(nanoseconds: UInt64(500_000_000 * (1 << attempt)))
+                }
+            }
+        }
+        if let cached = Self.loadCache(fileName: Self.agendasCacheFile),
+           let decoded = try? JSONDecoder().decode(AgendasDocument.self, from: cached) {
+            agendas = decoded
+            applyAgendasToIndex()
+        }
+        isLoadingAgendas = false
+    }
+
+    /// Join the loaded agendas onto the catalogue entries: each
+    /// lesson entry takes the agenda and thumbnail of the
+    /// agendas lesson with its own id. Entries with no agendas
+    /// row (supplemental lessons) keep whatever the catalogue
+    /// itself carried, and a blank agendas field never clears a
+    /// value the entry already had. Runs whenever either side
+    /// loads, whichever finishes last; a no-op until both the
+    /// index and the agendas are present, and a no-op when
+    /// nothing would change, so the published index is only
+    /// reassigned when the join adds data.
+    @MainActor
+    private func applyAgendasToIndex() {
+        guard let agendas, let index = searchIndex, !agendas.lessons.isEmpty else { return }
+        var changed = false
+        let entries = index.entries.map { entry -> SearchEntry in
+            guard let item = agendas.lessons[entry.id] else { return entry }
+            let agenda = Self.nonEmpty(item.agenda) ?? entry.agenda
+            let thumbnail = Self.nonEmpty(item.thumbnail) ?? entry.thumbnail
+            guard agenda != entry.agenda || thumbnail != entry.thumbnail else { return entry }
+            changed = true
+            return SearchEntry(
+                id: entry.id,
+                title: entry.title,
+                url: entry.url,
+                type: entry.type,
+                text: entry.text,
+                agenda: agenda,
+                thumbnail: thumbnail
+            )
+        }
+        guard changed else { return }
+        searchIndex = SearchIndex(counts: index.counts, entries: entries)
+    }
+
+    /// A string trimmed of whitespace, nil when blank or absent.
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
     }
 
     /// Stage names, the same six learning stages as the website.

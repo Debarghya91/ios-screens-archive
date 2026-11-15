@@ -288,6 +288,37 @@ struct SearchCounts: Codable {
     let total: Int
 }
 
+// MARK: - Agendas and thumbnails
+
+/// One agenda and thumbnail pair from the agendas document.
+/// Both fields are optional: a missing or blank field means the
+/// caller shows no agenda block or keeps its icon tile, never a
+/// placeholder and never a broken image.
+struct AgendaEntry: Decodable, Hashable {
+    /// The agenda ("why take it") text.
+    let agenda: String?
+    /// The thumbnail path, relative to the site root (for example
+    /// "assets/thumbs/ch1s1.svg"). Resolve with PFThumbnailURL.
+    let thumbnail: String?
+}
+
+/// The agendas document
+/// (https://www.paymentstraininghub.com/assets/agendas.json):
+/// the agenda and thumbnail for every lesson, chapter, and course.
+/// Key scheme, verified against the deployed file and the app's own
+/// ids: lessons keyed by search-index lesson id ("ch1s1"), chapters
+/// by chapter id ("ch1" to "ch100"), courses by catalogue bundle id
+/// ("integrated", "part-1" to "part-10"). Each map defaults to
+/// empty when the file omits it, so a partial document degrades to
+/// missing agendas, never a failed decode. The file's `cases` map
+/// is intentionally not decoded here: case agendas and thumbnails
+/// flow through the situations data file, and that path is untouched.
+struct AgendasDocument: Decodable {
+    let lessons: [String: AgendaEntry] = [:]
+    let chapters: [String: AgendaEntry] = [:]
+    let courses: [String: AgendaEntry] = [:]
+}
+
 // MARK: - Chapters and domains
 
 /// A chapter in the curriculum. Chapters are grouped into domains.

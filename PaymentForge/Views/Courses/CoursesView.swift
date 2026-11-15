@@ -901,7 +901,7 @@ struct CourseIndexRow: View {
     }
 
     private var thumbnailPath: String? {
-        PFChapterHelper.courseThumbnailPath(chapterNumbers: chapterNumbers, in: contentService)
+        PFChapterHelper.courseThumbnailPath(for: product, in: contentService)
     }
 
     var body: some View {
@@ -1005,7 +1005,7 @@ struct CourseDetailView: View {
     }
 
     private var thumbnailPath: String? {
-        PFChapterHelper.courseThumbnailPath(chapterNumbers: chapterNumbers, in: contentService)
+        PFChapterHelper.courseThumbnailPath(for: product, in: contentService)
     }
 
     private var courseIndex: Int {
@@ -1045,7 +1045,7 @@ struct CourseDetailView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                PFAgendaBlock(title: "Why take this course", agenda: product.description)
+                PFAgendaBlock(title: "Why take this course", agenda: PFChapterHelper.courseAgenda(for: product, in: contentService) ?? product.description)
                 HStack(spacing: PFSpacing.sm) {
                     if isUnlocked {
                         PFPill(
@@ -1407,9 +1407,10 @@ struct ChapterDetailView: View {
         !storeManager.isChapterUnlocked("ch\(chapterNumber)")
     }
 
-    /// The chapter agenda, from the chapter's opening lesson (see
-    /// PFChapterHelper.chapterAgenda). Nil when the website
-    /// exposes no agenda for the chapter: no agenda block shows.
+    /// The chapter agenda, from the agendas document's chapters
+    /// map (see PFChapterHelper.chapterAgenda). Nil when the
+    /// website exposes no agenda for the chapter: no agenda
+    /// block shows.
     private var chapterAgenda: String? {
         PFChapterHelper.chapterAgenda(forChapter: chapterNumber, in: contentService)
     }

@@ -71,14 +71,15 @@ struct PaymentForgeApp: App {
                     Task { _ = await authService.handleAuthCallback(url: url) }
                 }
                 .task {
-                    // Load the catalogue, the full situations and the
-                    // store in parallel: they are independent, and
+                    // Load the catalogue, the agendas, the full situations
+                    // and the store in parallel: they are independent, and
                     // running them in sequence delayed the store
                     // behind a slow catalogue load.
                     async let index: Void = contentService.loadSearchIndex()
+                    async let agendas: Void = contentService.loadAgendas()
                     async let situations: Void = contentService.loadFullSituations()
                     async let store: Void = storeManager.start()
-                    _ = await (index, situations, store)
+                    _ = await (index, agendas, situations, store)
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     // On every activation, refresh the system

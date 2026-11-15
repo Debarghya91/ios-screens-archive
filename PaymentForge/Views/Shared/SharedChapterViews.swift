@@ -127,47 +127,49 @@ enum PFChapterHelper {
         return "Chapter \(book)"
     }
 
-    /// The agenda for a chapter: the agenda of the chapter's first
-    /// lesson that carries one, in catalogue order. The website
-    /// exposes agendas on lesson data; the app has no separate
-    /// chapter data fetch, and a chapter's opening lesson agenda
-    /// introduces the chapter, so it stands in for the chapter
-    /// agenda until the website exposes chapter-level agendas.
-    /// Nil when no lesson in the chapter carries an agenda: the
-    /// chapter view then shows no agenda block, never a
-    /// placeholder. Blank agendas are skipped, never shown.
+    /// The agenda for a chapter, from the agendas document's
+    /// chapters map, keyed by chapter id ("ch1"). Nil when the
+    /// agendas have not loaded, when the chapter has no row, or
+    /// when its agenda is blank: the chapter view then shows no
+    /// agenda block, never a placeholder and never another
+    /// lesson's agenda standing in for the chapter.
     static func chapterAgenda(forChapter number: Int, in service: ContentService) -> String? {
-        for lesson in lessons(forChapter: number, in: service) {
-            if let agenda = lesson.agenda?.trimmingCharacters(in: .whitespacesAndNewlines), !agenda.isEmpty {
-                return agenda
-            }
-        }
-        return nil
+        let agenda = service.agendas?.chapters["ch\(number)"]?.agenda?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let agenda, !agenda.isEmpty else { return nil }
+        return agenda
     }
 
-    /// The thumbnail path for a chapter: the thumbnail of the
-    /// chapter's first lesson that carries one, in catalogue
-    /// order. Nil when no lesson in the chapter carries a
-    /// thumbnail: the chapter row keeps its number badge.
+    /// The thumbnail path for a chapter, from the agendas
+    /// document's chapters map, keyed by chapter id ("ch1").
+    /// Nil when the agendas have not loaded, when the chapter
+    /// has no row, or when its thumbnail is blank: the chapter
+    /// row keeps its number badge.
     static func chapterThumbnailPath(forChapter number: Int, in service: ContentService) -> String? {
-        for lesson in lessons(forChapter: number, in: service) {
-            if let path = lesson.thumbnail?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
-                return path
-            }
-        }
-        return nil
+        let path = service.agendas?.chapters["ch\(number)"]?.thumbnail?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let path, !path.isEmpty else { return nil }
+        return path
     }
 
-    /// The thumbnail path for a course: the thumbnail of the first
-    /// lesson, across the course's chapters in the given order,
-    /// that carries one. Nil when none does.
-    static func courseThumbnailPath(chapterNumbers: [Int], in service: ContentService) -> String? {
-        for number in chapterNumbers {
-            if let path = chapterThumbnailPath(forChapter: number, in: service) {
-                return path
-            }
-        }
-        return nil
+    /// The agenda for a course, from the agendas document's
+    /// courses map, keyed by catalogue bundle id ("integrated",
+    /// "part-1" to "part-10"). Nil when the agendas have not
+    /// loaded or the product has no row (standalone products
+    /// have none): the caller falls back to the product's own
+    /// description, never to a placeholder.
+    static func courseAgenda(for product: CourseProduct, in service: ContentService) -> String? {
+        let agenda = service.agendas?.courses[product.id]?.agenda?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let agenda, !agenda.isEmpty else { return nil }
+        return agenda
+    }
+
+    /// The thumbnail path for a course, from the agendas
+    /// document's courses map, keyed by catalogue bundle id.
+    /// Nil when the agendas have not loaded or the product has
+    /// no row: the course row keeps its number badge.
+    static func courseThumbnailPath(for product: CourseProduct, in service: ContentService) -> String? {
+        let path = service.agendas?.courses[product.id]?.thumbnail?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let path, !path.isEmpty else { return nil }
+        return path
     }
 
     /// A course product's chapter numbers in reading order, from
