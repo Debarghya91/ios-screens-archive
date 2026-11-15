@@ -279,7 +279,8 @@ enum InvestigationEngine {
     /// number, in the title first and then the explain. No match
     /// means the amount is not stated in the case. Parties are
     /// always generic. The reference is not stated unless the
-    /// explain names one with a label.
+    /// explain names one with a label. A scale word after the
+    /// number (million, billion, thousand, crore, lakh) is kept.
     static func paymentHeader(title: String, explain: String) -> InvestigationPaymentHeader {
         let match = amountMatch(in: title) ?? amountMatch(in: explain)
         return InvestigationPaymentHeader(
@@ -846,24 +847,26 @@ enum InvestigationEngine {
     private static func amountMatch(in text: String) -> (amountText: String, currencyText: String)? {
         let codePattern = currencyCodes.joined(separator: "|")
         if let groups = firstMatchGroups(
-            pattern: "\\b(\(codePattern))\\s*(\\d[\\d,]*(?:\\.\\d+)?)",
+            pattern: "\\b(\(codePattern))\\s*(\\d[\\d,]*(?:\\.\\d+)?)(?:\\s+([Mm]illions?|[Bb]illions?|[Tt]housands?|[Cc]rore|[Ll]akh))?",
             in: text,
             options: [.caseInsensitive]
-        ), groups.count == 2 {
+        ), groups.count == 3 {
             let number = cleanAmountNumber(groups[1])
             if !number.isEmpty {
-                return ("\(groups[0].uppercased()) \(number)", groups[0].uppercased())
+                let scale = groups[2].isEmpty ? "" : " \(groups[2])"
+                return ("\(groups[0].uppercased()) \(number)\(scale)", groups[0].uppercased())
             }
         }
         if let groups = firstMatchGroups(
-            pattern: "(Rs\\.?|₹)\\s*(\\d[\\d,]*(?:\\.\\d+)?)",
+            pattern: "(Rs\\.?|₹)\\s*(\\d[\\d,]*(?:\\.\\d+)?)(?:\\s+([Mm]illions?|[Bb]illions?|[Tt]housands?|[Cc]rore|[Ll]akh))?",
             in: text,
             options: [.caseInsensitive]
-        ), groups.count == 2 {
+        ), groups.count == 3 {
             let number = cleanAmountNumber(groups[1])
             if !number.isEmpty {
                 let symbol = groups[0].contains("₹") ? "₹" : "Rs"
-                return ("\(symbol) \(number)", "INR")
+                let scale = groups[2].isEmpty ? "" : " \(groups[2])"
+                return ("\(symbol) \(number)\(scale)", "INR")
             }
         }
         if let groups = firstMatchGroups(

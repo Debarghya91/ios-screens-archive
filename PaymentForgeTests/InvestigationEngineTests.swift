@@ -285,6 +285,39 @@ final class InvestigationEngineTests: XCTestCase {
         XCTAssertTrue(symbolHeader.amountText.contains("25,000"))
     }
 
+    func testPaymentHeaderKeepsScaleWordAfterCurrencyAmount() {
+        let header = InvestigationEngine.paymentHeader(
+            title: "EUR 40 million weekly settlement fails",
+            explain: "The settlement failed."
+        )
+        XCTAssertEqual(header.amountText, "EUR 40 million")
+        XCTAssertTrue(header.currencyText.contains("EUR"))
+        let billionHeader = InvestigationEngine.paymentHeader(
+            title: "USD 2.5 billion payment stuck in clearing",
+            explain: "The payment is stuck."
+        )
+        XCTAssertEqual(billionHeader.amountText, "USD 2.5 billion")
+        XCTAssertTrue(billionHeader.currencyText.contains("USD"))
+    }
+
+    func testPaymentHeaderKeepsScaleWordAfterRupeeAmount() {
+        let header = InvestigationEngine.paymentHeader(
+            title: "Rs 50 lakh transfer delayed",
+            explain: "The transfer is delayed."
+        )
+        XCTAssertEqual(header.amountText, "Rs 50 lakh")
+        XCTAssertTrue(header.currencyText.contains("INR"))
+    }
+
+    func testPaymentHeaderWithoutScaleWordIsUnchanged() {
+        let header = InvestigationEngine.paymentHeader(
+            title: "GBP 12,500 fee dispute",
+            explain: "The fee is disputed."
+        )
+        XCTAssertEqual(header.amountText, "GBP 12,500")
+        XCTAssertTrue(header.currencyText.contains("GBP"))
+    }
+
     func testPaymentHeaderFallsBackToExplainWhenTitleHasNoAmount() {
         let header = InvestigationEngine.paymentHeader(
             title: "A payment went missing",
