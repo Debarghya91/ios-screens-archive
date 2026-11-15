@@ -444,6 +444,69 @@ enum SearchService {
         return Array(hits.prefix(limit))
     }
 
+    // MARK: - Difficulty filter
+
+    /// Every difficulty level the filter offers. Selecting all of
+    /// them is the same as no filter: see applyLevelFilter.
+    static let allLevels: [SituationLevel] = [.foundation, .core, .advanced]
+
+    /// True when the selected levels actually restrict the results:
+    /// at least one level picked, but not all of them. An empty
+    /// selection and a full selection both mean "all levels".
+    static func isLevelFilterActive(_ selectedLevels: Set<SituationLevel>) -> Bool {
+        !selectedLevels.isEmpty && selectedLevels.count < allLevels.count
+    }
+
+    /// The level of an entry, or nil when it cannot be derived.
+    /// Situations use the full data file level first, then a text
+    /// hint, defaulting to Core the same way situation(from:) does.
+    /// Other types only get a level when their text names one.
+    /// Title and text only, never invented. The situations map is
+    /// prebuilt by the caller, so this is one dictionary lookup
+    /// instead of a linear scan of the full situations file per
+    /// entry. Moved here from SearchView so the filter rule is
+    /// pure, shared, and covered by unit tests.
+    static func levelForEntry(_ entry: SearchEntry, situationLevelsByID: [String: String]) -> SituationLevel? {
+        if entry.type == .situation {
+            if let rawLevel = situationLevelsByID[entry.id] {
+                switch rawLevel.lowercased() {
+                case "foundation": return .foundation
+                case "advanced": return .advanced
+                default: return .core
+                }
+            }
+            let lower = entry.text.lowercased()
+            if lower.contains("foundation") { return .foundation }
+            if lower.contains("advanced") { return .advanced }
+            return .core
+        }
+        let lower = entry.text.lowercased()
+        if lower.contains("foundation") { return .foundation }
+        if lower.contains("advanced") { return .advanced }
+        return nil
+    }
+
+    /// Apply the multi-select difficulty filter to ranked hits.
+    /// Selecting every level returns the hits unchanged: the old
+    /// single-select filter combined with the 60-hit search cap
+    /// could empty the results, and an all-selected filter must
+    /// never hide anything. With a partial selection, only hits
+    /// whose derived level is one of the selected levels survive;
+    /// entries with no derivable level are excluded, exactly as
+    /// the old single-select filter excluded them. Pure logic,
+    /// covered by unit tests.
+    static func applyLevelFilter(
+        _ hits: [SearchHit],
+        selectedLevels: Set<SituationLevel>,
+        situationLevelsByID: [String: String]
+    ) -> [SearchHit] {
+        guard isLevelFilterActive(selectedLevels) else { return hits }
+        return hits.filter { hit in
+            guard let level = levelForEntry(hit.entry, situationLevelsByID: situationLevelsByID) else { return false }
+            return selectedLevels.contains(level)
+        }
+    }
+
     /// Score one needle (the query or one expansion term) against a
     /// title and body. Title outranks body at every step; exact
     /// phrase outranks partial; a 1-2 edit typo on a word of 4 or more

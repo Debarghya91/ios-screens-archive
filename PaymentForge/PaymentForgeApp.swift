@@ -156,6 +156,10 @@ struct MainTabView: View {
     @State private var isDrawerOpen = false
     @State private var selectedTab = 0
     @State private var presentedSheet: DrawerDestination? = nil
+    /// Guards delayed tour destination opens: bumped on every
+    /// tour destination request, so a stale delayed open can
+    /// never fire after the tour moved on or finished.
+    @State private var tourDestinationGeneration = 0
     @State private var showSplash = true
 
     /// A lesson opened from a deep link, shown as a sheet so the
@@ -368,6 +372,8 @@ struct MainTabView: View {
                     keepLearningAnchor: keepLearningAnchor,
                     keepLearningFrame: keepLearningFrame,
                     searchFieldAnchor: searchFieldAnchor,
+                    onOpenDestination: openDestinationFromTour,
+                    onOpenKeepLearning: openKeepLearningFromTour,
                     onFinish: finishTour
                 )
                 .zIndex(2)
@@ -571,6 +577,36 @@ struct MainTabView: View {
         }
     }
 
+    /// Open a drawer destination from a tour step, or close any
+    /// destination the tour opened when passed nil. Opening
+    /// closes the drawer first and routes through
+    /// handleDrawerSelection once the close animation finishes,
+    /// exactly as a real drawer tap does. The generation guards
+    /// the delayed routing: a fast Next or Back bumps it, so a
+    /// stale delayed open can never fire after the tour moved
+    /// on or finished.
+    private func openDestinationFromTour(_ destination: DrawerDestination?) {
+        tourDestinationGeneration += 1
+        let generation = tourDestinationGeneration
+        guard let destination else {
+            presentedSheet = nil
+            return
+        }
+        isDrawerOpen = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            guard generation == tourDestinationGeneration, showTour else { return }
+            handleDrawerSelection(destination)
+        }
+    }
+
+    /// Open the Keep Learning card's target from the tour's final
+    /// step: close the drawer and land on the Learn tab, the same
+    /// routing as tapping the card itself.
+    private func openKeepLearningFromTour() {
+        isDrawerOpen = false
+        selectedTab = 1
+    }
+
     /// Show the guided tour only when onboarding has finished and
     /// the tour itself is unfinished. Called on appear (returning
     /// learners, onboarding already complete), from the onboarding
@@ -582,12 +618,15 @@ struct MainTabView: View {
     }
 
     /// The tour finished, completed or skipped: mark it done and
-    /// land on Home with the drawer closed.
+    /// land on Home with the drawer closed and no destination
+    /// sheet open: a sheet opened by a tour step must not
+    /// survive the tour.
     private func finishTour() {
         tourDone = true
         showTour = false
         tourScrollTarget = nil
         isDrawerOpen = false
+        presentedSheet = nil
         selectedTab = 0
         // The permission explanation follows the tour, once the
         // overlay has gone. The delayed check re-reads every

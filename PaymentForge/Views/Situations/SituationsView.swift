@@ -42,7 +42,9 @@ func situation(from entry: SearchEntry) -> Situation {
         takeaway: entry.preview,
         isFreeSample: ContentService.freeSampleIDs.contains(entry.id),
         visual: nil,
-        isStageAuthoritative: false
+        isStageAuthoritative: false,
+        agenda: entry.agenda,
+        thumbnail: entry.thumbnail
     )
 }
 
@@ -71,7 +73,9 @@ func situation(fromFull item: FullSituationItem) -> Situation {
         takeaway: item.takeaway,
         isFreeSample: ContentService.freeSampleIDs.contains(item.id),
         visual: item.visual,
-        isStageAuthoritative: ContentService.stageSource(forFullItem: item) == .authoritative
+        isStageAuthoritative: ContentService.stageSource(forFullItem: item) == .authoritative,
+        agenda: item.agenda,
+        thumbnail: item.thumbnail
     )
 }
 
@@ -111,11 +115,33 @@ private let situationSchemeCandidates: [(label: String, pattern: String)] = [
 ]
 
 private func containsWord(_ text: String, pattern: String) -> Bool {
-    let regexPattern = "\\b" + pattern + "\\b"
-    guard let regex = try? NSRegularExpression(pattern: regexPattern, options: [.caseInsensitive]) else { return false }
+    // The regexes are compiled once and cached: the old code
+    // compiled a fresh regex on every call, and scheme(for:) runs
+    // for every row on every render, so one list render paid for
+    // thousands of compilations. A pattern outside the cache (only
+    // possible for a future caller) still compiles on the spot,
+    // with the same pattern, so the match is identical.
+    let regex: NSRegularExpression?
+    if let cached = situationSchemeRegexes[pattern] {
+        regex = cached
+    } else {
+        regex = try? NSRegularExpression(pattern: "\\b" + pattern + "\\b", options: [.caseInsensitive])
+    }
+    guard let regex else { return false }
     let range = NSRange(text.startIndex..., in: text)
     return regex.firstMatch(in: text, options: [], range: range) != nil
 }
+
+/// The compiled scheme regexes, one per candidate pattern.
+private let situationSchemeRegexes: [String: NSRegularExpression] = {
+    var map: [String: NSRegularExpression] = [:]
+    for candidate in situationSchemeCandidates {
+        if let regex = try? NSRegularExpression(pattern: "\\b" + candidate.pattern + "\\b", options: [.caseInsensitive]) {
+            map[candidate.pattern] = regex
+        }
+    }
+    return map
+}()
 
 /// The scheme named by a situation title, or nil when the title names
 /// none. Never invented.
@@ -302,6 +328,24 @@ private func parseSituationExplain(_ explain: String) -> ParsedSituationExplain 
 
 // MARK: - Situations list
 
+/// One category in the category drawer: every case, the free
+/// samples, or one learning stage. The drawer is the category
+/// navigation: picking a category filters the flat list below,
+/// and no category starts privileged over the others.
+enum SituationCategory: Hashable {
+    case all
+    case freeSamples
+    case stage(Int)
+
+    var title: String {
+        switch self {
+        case .all: return "All cases"
+        case .freeSamples: return "Free samples"
+        case .stage(let stage): return "Stage \(stage) · \(ContentService.stageName(for: stage))"
+        }
+    }
+}
+
 struct SituationsView: View {
     @EnvironmentObject private var contentService: ContentService
     @EnvironmentObject private var storeManager: StoreManager
@@ -321,27 +365,20 @@ struct SituationsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var levelFilter: SituationLevel? = nil
-    @State private var stageFilter: Int? = nil
+    @State private var selectedCategory: SituationCategory = .all
+    @State private var isCategoryDrawerOpen = false
     @State private var showCheckout = false
-    @State private var showOnlyFree = false
     @State private var searchText = ""
     @State private var schemeFilter: String? = nil
     @ObservedObject private var bookmarkStore = PFBookmarkStore.shared
 
-    /// Pagination inside each stage group: 10 situations per
-    /// page, with a Load more button. Only the shown situations
-    /// are rendered, so ContentManifest.situationCount situations never sit in the view
-    /// hierarchy at once.
-    private static let stagePageSize = 10
-    /// Expanded stage groups. Stage 1 starts open so the list
-    /// never opens empty; every group can be collapsed and
-    /// expanded. When a filter leaves only one group, it opens
-    /// on its own (see stageGroupCard).
-    @State private var expandedStages: Set<Int> = [1]
-    /// Situations shown per stage group, by stage number.
-    /// Absent means the first page (10). The count is kept when
-    /// a group is collapsed and re-expanded.
-    @State private var stageVisibleCounts: [Int: Int] = [:]
+    /// Pagination for the flat case list: 20 cases per page, with
+    /// a Load more button. Only the shown cases are rendered, so
+    /// ContentManifest.situationCount cases never sit in the view
+    /// hierarchy at once. Any filter or category change resets to
+    /// the first page.
+    private static let listPageSize = 20
+    @State private var visibleCount = 20
 
     /// The situations to show. The full data file wins when it has
     /// loaded (full explain, visual and stage); the search index
@@ -369,13 +406,34 @@ struct SituationsView: View {
     }
 
     private var filteredSituations: [Situation] {
-        var list = allSituations
-        if showOnlyFree {
+        var list = categoryBase
+        switch selectedCategory {
+        case .all:
+            break
+        case .freeSamples:
             list = list.filter { $0.isFreeSample }
+        case .stage(let stage):
+            list = list.filter { $0.stage == stage }
         }
+        return list
+    }
+
+    /// The situations filtered by everything except the category:
+    /// the search text, the scheme chip, and the difficulty chip.
+    /// The category drawer counts each category against this list,
+    /// so its counts respect the other filters, and the flat list
+    /// applies the category on top of it. The search matches the
+    /// title, the explain text, and the takeaway: title-only
+    /// matching hid cases whose title never names the search term.
+    private var categoryBase: [Situation] {
+        var list = allSituations
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if !query.isEmpty {
-            list = list.filter { $0.title.lowercased().contains(query) }
+            list = list.filter {
+                $0.title.lowercased().contains(query)
+                    || $0.explain.lowercased().contains(query)
+                    || $0.takeaway.lowercased().contains(query)
+            }
         }
         if let schemeFilter {
             list = list.filter { scheme(for: $0) == schemeFilter }
@@ -383,74 +441,120 @@ struct SituationsView: View {
         if let levelFilter {
             list = list.filter { $0.level == levelFilter }
         }
-        if let stageFilter {
-            list = list.filter { $0.stage == stageFilter }
-        }
         return list
     }
 
-    /// The filtered situations grouped by learning stage (1-6),
-    /// in stage order, skipping stages with no matches. Every
-    /// situation carries a stage, so grouping never drops one.
-    /// Stage names come from ContentService, the same names the
-    /// stage filter and the situation rows already use.
-    private var groupedSituations: [(stage: Int, stageName: String, situations: [Situation])] {
-        var groups: [Int: [Situation]] = [:]
-        for situation in filteredSituations {
-            groups[situation.stage, default: []].append(situation)
+    /// The count of one category against the current other
+    /// filters, for the drawer rows.
+    private func count(for category: SituationCategory) -> Int {
+        switch category {
+        case .all:
+            return categoryBase.count
+        case .freeSamples:
+            return categoryBase.count { $0.isFreeSample }
+        case .stage(let stage):
+            return categoryBase.count { $0.stage == stage }
         }
-        return (1...6).compactMap { stage in
-            guard let list = groups[stage], !list.isEmpty else { return nil }
-            return (stage: stage, stageName: ContentService.stageName(for: stage), situations: list)
+    }
+
+    /// The cases actually rendered: the first page(s) of the
+    /// filtered list.
+    private var visibleSituations: [Situation] {
+        Array(filteredSituations.prefix(visibleCount))
+    }
+
+    /// True when any filter narrows the list: search text, a
+    /// scheme, a difficulty, or a category other than All.
+    private var hasActiveFilters: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || schemeFilter != nil
+            || levelFilter != nil
+            || selectedCategory != .all
+    }
+
+    /// Clear every filter and return to the full list.
+    private func clearAllFilters() {
+        searchText = ""
+        schemeFilter = nil
+        levelFilter = nil
+        selectedCategory = .all
+        visibleCount = Self.listPageSize
+    }
+
+    /// Pick a category from the drawer: filter the list, reset to
+    /// the first page, and close the drawer.
+    private func selectCategory(_ category: SituationCategory) {
+        selectedCategory = category
+        visibleCount = Self.listPageSize
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            isCategoryDrawerOpen = false
         }
     }
 
     var body: some View {
         NavigationStack {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: PFSpacing.xl) {
-                        heroCard(onSeeFreeSamples: {
-                            showOnlyFree = true
-                            withAnimation {
-                                proxy.scrollTo("freeSamples", anchor: .top)
+            ZStack(alignment: .leading) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: PFSpacing.xl) {
+                            heroCard(onSeeFreeSamples: {
+                                selectCategory(.freeSamples)
+                                withAnimation {
+                                    proxy.scrollTo("allSituations", anchor: .top)
+                                }
+                            })
+                            .id("situationsTop")
+
+                            if contentService.isShowingCachedContent {
+                                PFOfflineBanner()
                             }
-                        })
-                        .id("situationsTop")
 
-                        if contentService.isShowingCachedContent {
-                            PFOfflineBanner()
+                            // The free samples teaser shows only in
+                            // the unfiltered browse state. Showing
+                            // it alongside the flat list would list
+                            // the same cases twice on one screen.
+                            if !hasActiveFilters {
+                                freeSamplesSection
+                            }
+
+                            searchField
+
+                            categoryButtonRow
+
+                            filterSection
+
+                            allSituationsSection
+
+                            if !storeManager.isPracticeUnlocked {
+                                footerCard
+                            }
                         }
-
-                        freeSamplesSection
-
-                        searchField
-
-                        filterSection
-
-                        allSituationsSection
-
-                        if !storeManager.isPracticeUnlocked {
-                            footerCard
+                        .padding(PFSpacing.lg)
+                    }
+                    .background(Color.pfBackground)
+                    // Extra scrollable space at the bottom so the last card
+                    // clears the tab bar on every iPhone size.
+                    .pfTabBarClearance()
+                    // Any filter change: back to the first page.
+                    .onChange(of: searchText) { _, _ in visibleCount = Self.listPageSize }
+                    .onChange(of: schemeFilter) { _, _ in visibleCount = Self.listPageSize }
+                    .onChange(of: levelFilter) { _, _ in visibleCount = Self.listPageSize }
+                    .onChange(of: selectedCategory) { _, _ in
+                        visibleCount = Self.listPageSize
+                        withAnimation {
+                            proxy.scrollTo("allSituations", anchor: .top)
                         }
                     }
-                    .padding(PFSpacing.lg)
+                    .onAppear {
+                        // The scroll rule: Back and tab switches land
+                        // at the top, never at the restored offset.
+                        proxy.scrollTo("situationsTop", anchor: .top)
+                    }
                 }
-                .background(Color.pfBackground)
-                // Extra scrollable space at the bottom so the last card
-                // clears the tab bar on every iPhone size.
-                .pfTabBarClearance()
-                // Any filter change: back to the first page in
-                // every stage group.
-                .onChange(of: searchText) { _, _ in stageVisibleCounts = [:] }
-                .onChange(of: schemeFilter) { _, _ in stageVisibleCounts = [:] }
-                .onChange(of: levelFilter) { _, _ in stageVisibleCounts = [:] }
-                .onChange(of: stageFilter) { _, _ in stageVisibleCounts = [:] }
-                .onChange(of: showOnlyFree) { _, _ in stageVisibleCounts = [:] }
-                .onAppear {
-                    // The scroll rule: Back and tab switches land
-                    // at the top, never at the restored offset.
-                    proxy.scrollTo("situationsTop", anchor: .top)
+                .disabled(isCategoryDrawerOpen)
+
+                if isCategoryDrawerOpen {
+                    categoryDrawerOverlay
                 }
             }
             .navigationTitle("Payment Cases")
@@ -472,6 +576,163 @@ struct SituationsView: View {
                 await contentService.loadFullSituations()
             }
         }
+    }
+
+    // MARK: - Category drawer
+
+    /// The button row above the filters: the current category,
+    /// which opens the category drawer, and Clear all filters
+    /// when any filter is active.
+    private var categoryButtonRow: some View {
+        HStack(spacing: PFSpacing.md) {
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    isCategoryDrawerOpen = true
+                }
+            } label: {
+                HStack(spacing: PFSpacing.sm) {
+                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                        .font(.pfBody.weight(.semibold))
+                    Text(selectedCategory.title)
+                        .font(.pfBody.weight(.semibold))
+                    Image(systemName: "chevron.right")
+                        .font(.pfCaption.weight(.semibold))
+                }
+                .foregroundColor(.pfRoyal)
+                .padding(.horizontal, PFSpacing.md)
+                .padding(.vertical, PFSpacing.sm)
+                .frame(minHeight: 44)
+                .background(Color.pfRoyal.opacity(0.10))
+                .cornerRadius(PFSpacing.cornerRadius)
+                .overlay(
+                    RoundedRectangle(cornerRadius: PFSpacing.cornerRadius)
+                        .stroke(Color.pfRoyal.opacity(0.35), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Browse by category, currently \(selectedCategory.title)")
+            .accessibilityHint("Opens the category list.")
+            Spacer()
+            if hasActiveFilters {
+                Button("Clear all filters") {
+                    clearAllFilters()
+                }
+                .font(.pfCallout.weight(.semibold))
+                .foregroundColor(.pfRoyal)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+                .accessibilityLabel("Clear all filters")
+            }
+        }
+    }
+
+    /// The side-drawer style category navigation: a dimmed
+    /// background (tap to close) and a panel sliding in from the
+    /// left with All cases, Free samples, and the six learning
+    /// stages, each with its live count against the other
+    /// filters. Stages with no matches under the other filters
+    /// still list, with a zero count, so the drawer never hides
+    /// a category the learner is looking for.
+    private var categoryDrawerOverlay: some View {
+        GeometryReader { geometry in
+            let panelWidth = min(geometry.size.width * 0.85, 320)
+            ZStack(alignment: .leading) {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            isCategoryDrawerOpen = false
+                        }
+                    }
+                    .accessibilityLabel("Close categories")
+                    .accessibilityHint("Closes the category list.")
+                    .accessibilityAddTraits(.isButton)
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        Text("Categories")
+                            .font(.pfSectionTitle)
+                            .foregroundColor(.pfNavy)
+                        Spacer()
+                        Button {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                isCategoryDrawerOpen = false
+                            }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.pfBody.weight(.semibold))
+                                .foregroundColor(.pfSecondaryText)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Close categories")
+                    }
+                    .padding(PFSpacing.lg)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                            categoryDrawerRow(category: .all, systemImage: "square.grid.2x2.fill")
+                            categoryDrawerRow(category: .freeSamples, systemImage: "gift.fill")
+                            Text("Learning stages")
+                                .font(.pfCaptionBold)
+                                .foregroundColor(.pfSecondaryText)
+                                .padding(.top, PFSpacing.md)
+                                .padding(.horizontal, PFSpacing.md)
+                            ForEach(1...6, id: \.self) { stage in
+                                categoryDrawerRow(category: .stage(stage), systemImage: "briefcase.fill")
+                            }
+                        }
+                        .padding(.horizontal, PFSpacing.sm)
+                        .padding(.bottom, PFSpacing.lg)
+                    }
+                }
+                .frame(width: panelWidth)
+                .frame(maxHeight: .infinity)
+                .background(Color.pfCard)
+                .ignoresSafeArea(edges: .vertical)
+                .transition(.move(edge: .leading))
+            }
+        }
+    }
+
+    /// One category drawer row: icon, title, live count, and a
+    /// checkmark when selected, so selection is never shown by
+    /// colour alone.
+    private func categoryDrawerRow(category: SituationCategory, systemImage: String) -> some View {
+        let isSelected = selectedCategory == category
+        return Button {
+            selectCategory(category)
+        } label: {
+            HStack(spacing: PFSpacing.md) {
+                Image(systemName: systemImage)
+                    .font(.pfBody.weight(.semibold))
+                    .foregroundColor(isSelected ? .pfRoyal : .pfSecondaryText)
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+                Text(category.title)
+                    .font(.pfBody.weight(isSelected ? .semibold : .regular))
+                    .foregroundColor(.pfNavy)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Text("\(count(for: category))")
+                    .font(.pfCaptionBold)
+                    .foregroundColor(.pfSecondaryText)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.pfBody.weight(.bold))
+                        .foregroundColor(.pfRoyal)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, PFSpacing.md)
+            .padding(.vertical, PFSpacing.sm)
+            .frame(minHeight: 44)
+            .background(isSelected ? Color.pfRoyal.opacity(0.10) : Color.clear)
+            .cornerRadius(PFSpacing.cornerRadius)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(category.title), \(count(for: category)) cases" + (isSelected ? ", selected" : ""))
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
     }
 
     // MARK: - (a) Hero card
@@ -520,8 +781,8 @@ struct SituationsView: View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
             PFSectionHeader(
                 title: "Free samples",
-                actionTitle: showOnlyFree ? "Show all" : nil,
-                action: showOnlyFree ? { showOnlyFree = false } : nil
+                actionTitle: "See all free samples",
+                action: { selectCategory(.freeSamples) }
             )
             Text("Try the free samples, no payment needed. Practice Experiences unlocks the full set.")
                 .font(.pfBody)
@@ -649,29 +910,25 @@ struct SituationsView: View {
                 .foregroundColor(.pfSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Picker("Stage", selection: $stageFilter) {
-                Text("All stages").tag(nil as Int?)
-                ForEach(1...6, id: \.self) { stage in
-                    Text("Stage \(stage)").tag(stage as Int?)
-                }
-            }
-            .pickerStyle(.menu)
-            if showOnlyFree {
-                Button("Clear free samples filter") {
-                    showOnlyFree = false
-                }
-                .font(.pfCallout)
-                .foregroundColor(.pfRoyal)
-            }
+            // The category (All cases, Free samples, or one
+            // stage) lives in the category drawer, opened from
+            // the category button above. Clear all filters sits
+            // beside that button.
         }
     }
 
-    // MARK: - (d) All situations
+    // MARK: - (d) Cases list
 
+    /// The flat case list for the selected category: the current
+    /// category's title and count, the cases in catalogue order,
+    /// twenty at a time with a Load more button and a "Showing X
+    /// of Y" label. Categories live in the drawer, not as
+    /// accordions: the old stage groups duplicated the free
+    /// samples and forced every case through an extra tap.
     private var allSituationsSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: showOnlyFree ? "Free samples" : "All situations")
-            Text("\(filteredSituations.count) situations in \(groupedSituations.count) stages")
+            PFSectionHeader(title: selectedCategory.title)
+            Text("\(filteredSituations.count) cases")
                 .font(.pfCaptionBold)
                 .foregroundColor(.pfSecondaryText)
             if contentService.isLoadingIndex && contentService.searchIndex == nil {
@@ -679,13 +936,26 @@ struct SituationsView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, PFSpacing.lg)
             } else if filteredSituations.isEmpty {
-                Text("No situations match this search or these filters. Try a different search, scheme, level or stage.")
+                Text("No cases match this search or these filters. Try a different search, scheme, level or category.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
             } else {
-                VStack(spacing: PFSpacing.md) {
-                    ForEach(groupedSituations, id: \.stage) { group in
-                        stageGroupCard(group)
+                VStack(spacing: PFSpacing.sm) {
+                    ForEach(visibleSituations) { situation in
+                        NavigationLink(destination: SituationDetailView(situation: situation)) {
+                            situationRow(situation, showFreePill: situation.isFreeSample)
+                        }
+                        .buttonStyle(PFCardButtonStyle())
+                        .accessibilityIdentifier(!situation.isFreeSample && !storeManager.isPracticeUnlocked ? "lockedSituationRow" : "situationRow")
+                    }
+                    if filteredSituations.count > visibleCount {
+                        Text("Showing \(visibleCount) of \(filteredSituations.count) cases")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        PFSecondaryButton(title: "Load more cases") {
+                            visibleCount += Self.listPageSize
+                        }
                     }
                 }
             }
@@ -693,94 +963,27 @@ struct SituationsView: View {
         .id("allSituations")
     }
 
-    /// One collapsible stage group: a header card with the stage
-    /// name and situation count, and, when expanded, its
-    /// situation rows in catalogue order, numbered 1 to N within
-    /// the stage, ten at a time with a Load more button and a
-    /// "Showing X of Y" label. The rows are the same situationRow
-    /// as before, detail navigation included. A group opens on
-    /// its own when it is the only one left after filtering.
-    private func stageGroupCard(_ group: (stage: Int, stageName: String, situations: [Situation])) -> some View {
-        let isExpanded = expandedStages.contains(group.stage) || groupedSituations.count == 1
-        let visibleCount = min(stageVisibleCounts[group.stage] ?? Self.stagePageSize, group.situations.count)
-        return VStack(alignment: .leading, spacing: PFSpacing.md) {
-            Button {
-                withAnimation {
-                    if expandedStages.contains(group.stage) {
-                        expandedStages.remove(group.stage)
-                    } else {
-                        expandedStages.insert(group.stage)
-                    }
-                }
-            } label: {
-                PFCard {
-                    HStack(spacing: PFSpacing.md) {
-                        VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                            Text("Stage \(group.stage) · \(group.stageName)")
-                                .font(.pfCardTitle)
-                                .foregroundColor(.pfNavy)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text("\(group.situations.count) situations")
-                                .font(.pfCaptionBold)
-                                .foregroundColor(.pfSecondaryText)
-                        }
-                        Spacer()
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .foregroundColor(.pfSecondaryText)
-                    }
-                }
-            }
-            .buttonStyle(PFCardButtonStyle())
-            .accessibilityLabel("Stage \(group.stage), \(group.stageName), \(group.situations.count) situations")
-            .accessibilityHint(isExpanded ? "Collapse this stage" : "Expand to see its situations")
-            if isExpanded {
-                VStack(spacing: PFSpacing.sm) {
-                    ForEach(Array(group.situations.enumerated().prefix(visibleCount)), id: \.element.id) { index, situation in
-                        NavigationLink(destination: SituationDetailView(situation: situation)) {
-                            situationRow(situation, showFreePill: situation.isFreeSample, number: index + 1)
-                        }
-                        .buttonStyle(PFCardButtonStyle())
-                        .accessibilityIdentifier(!situation.isFreeSample && !storeManager.isPracticeUnlocked ? "lockedSituationRow" : "situationRow")
-                    }
-                    if group.situations.count > visibleCount {
-                        Text("Showing \(visibleCount) of \(group.situations.count) situations")
-                            .font(.pfCaption)
-                            .foregroundColor(.pfSecondaryText)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        PFSecondaryButton(title: "Load more situations") {
-                            stageVisibleCounts[group.stage] = visibleCount + Self.stagePageSize
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     /// A situation row has a distinct case-study identity, different
-    /// from a lesson card: a gold leading accent and a briefcase tile,
-    /// navy heading, and the stage and level pills. Inside a stage
-    /// group the row also carries its number within the stage, and
-    /// every row shows the approximate read time.
-    private func situationRow(_ situation: Situation, showFreePill: Bool, number: Int? = nil) -> some View {
+    /// from a lesson card: a gold leading accent, a thumbnail when
+    /// the website exposes one (the briefcase tile otherwise),
+    /// navy heading, and the stage and level pills. Every row
+    /// shows the approximate read time.
+    private func situationRow(_ situation: Situation, showFreePill: Bool) -> some View {
         HStack(alignment: .top, spacing: PFSpacing.md) {
-            if let number {
-                Text("\(number)")
-                    .font(.pfCaptionBold)
-                    .foregroundColor(.pfRoyal)
-                    .frame(width: 26, height: 26)
-                    .background(Color.pfRoyal.opacity(0.10))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
             Rectangle()
                 .fill(Color.pfGold)
                 .frame(width: 4)
                 .cornerRadius(2)
-            Image(systemName: "briefcase.fill")
-                .font(.pfCardTitle.weight(.semibold))
-                .foregroundColor(Color.pfGoldText)
-                .frame(width: 44, height: 44)
-                .background(Color.pfGoldSoft)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+            if situation.thumbnail != nil {
+                PFThumbnailView(thumbnailPath: situation.thumbnail, size: 56, cornerRadius: 12)
+            } else {
+                Image(systemName: "briefcase.fill")
+                    .font(.pfCardTitle.weight(.semibold))
+                    .foregroundColor(Color.pfGoldText)
+                    .frame(width: 44, height: 44)
+                    .background(Color.pfGoldSoft)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
             VStack(alignment: .leading, spacing: PFSpacing.sm) {
                 Text(situation.title)
                     .font(.pfCardTitle)
@@ -1114,15 +1317,29 @@ struct SituationDetailView: View {
                     Text("Case \(situation.id)")
                         .font(.pfCaptionBold)
                         .foregroundColor(.pfSecondaryText)
-                    Text(situation.title)
-                        .font(.pfSectionTitle)
-                        .foregroundColor(.pfNavy)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .top, spacing: PFSpacing.md) {
+                        if situation.thumbnail != nil {
+                            PFThumbnailView(thumbnailPath: situation.thumbnail, size: 64, cornerRadius: 14)
+                        }
+                        Text(situation.title)
+                            .font(.pfSectionTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if let readLabel = ReadTime.label(for: situation.explain + " " + situation.takeaway) {
                         Label(readLabel, systemImage: "clock")
                             .font(.pfCaptionBold)
                             .foregroundColor(.pfSecondaryText)
                     }
+                }
+
+                // The agenda is discovery metadata, like the title
+                // and pills: it says what the case is about, not
+                // how it resolves, so it shows even for locked
+                // cases. The case body stays behind the D101 gate
+                // below.
+                if let agenda = situation.agenda?.trimmingCharacters(in: .whitespacesAndNewlines), !agenda.isEmpty {
+                    PFAgendaBlock(title: "Why work through this case", agenda: agenda)
                 }
 
                 if isLocked {
@@ -1131,14 +1348,14 @@ struct SituationDetailView: View {
                     Picker("Situation detail", selection: $selectedDetailTab) {
                         Text("Overview").tag(0)
                         Text("Analysis").tag(1)
-                        Text("Flow").tag(3)
+                        Text("Flow").tag(2)
                     }
                     .pickerStyle(.segmented)
 
                     switch selectedDetailTab {
                     case 1:
                         analysisTab
-                    case 3:
+                    case 2:
                         flowTab
                     default:
                         overviewTab

@@ -176,12 +176,12 @@ final class EntitlementTests: XCTestCase {
 
     func testChapterCoverageIsExactlyNinetyNineChaptersWithNoOverlaps() {
         let parts = ProductCatalogue.partProducts
-        XCTAssertEqual(parts.count, 10, "There are 10 book parts.")
+        XCTAssertEqual(parts.count, 10, "There are 10 courses.")
         let allChapters = parts.flatMap { $0.chapterIDs }
-        XCTAssertEqual(allChapters.count, 99, "Part chapter lists must total 99: no overlaps.")
-        XCTAssertEqual(Set(allChapters).count, 99, "No chapter may appear in two parts.")
+        XCTAssertEqual(allChapters.count, 99, "Course chapter lists must total 99: no overlaps.")
+        XCTAssertEqual(Set(allChapters).count, 99, "No chapter may appear in two courses.")
         let expected = Set((1...100).map { "ch\($0)" }).subtracting(["ch37"])
-        XCTAssertEqual(Set(allChapters), expected, "Parts must cover exactly ch1 to ch100 except the held-out ch37: no gaps.")
+        XCTAssertEqual(Set(allChapters), expected, "Courses must cover exactly ch1 to ch100 except the held-out ch37: no gaps.")
         XCTAssertFalse(allChapters.contains("ch37"), "ch37 is in no product and must never be sold.")
         XCTAssertEqual(ProductCatalogue.product(for: ProductCatalogue.integratedProductID)?.chapterIDs.count, 99)
         XCTAssertEqual(Set(ProductCatalogue.product(for: ProductCatalogue.integratedProductID)?.chapterIDs ?? []), expected)

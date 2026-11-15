@@ -5,6 +5,7 @@
 // No em dashes in any user-facing text.
 
 import SwiftUI
+import WebKit
 
 // MARK: - Colors
 
@@ -887,5 +888,172 @@ struct PFBodyText: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Agenda block and thumbnails
+
+/// The highlighted agenda block: the "why take it" line for a
+/// lesson, chapter, course, or case, in a gold-tinted panel with
+/// a gold leading bar so it reads as highlighted, not as body
+/// text. Callers render it only when an agenda string exists;
+/// there is no empty or placeholder state. Colours are the fixed
+/// pf palette (navy text on a gold tint over white), identical
+/// in light and dark mode, so the pairing stays legible in both.
+struct PFAgendaBlock: View {
+    let title: String
+    let agenda: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            Rectangle()
+                .fill(Color.pfGold)
+                .frame(width: 4)
+                .cornerRadius(2)
+            VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                // Navy title on the gold-tinted panel (15.38:1,
+                // AAA): the gold leading bar and panel carry the
+                // highlight identity. Gold text on the tint
+                // measured 4.28:1, below AA for caption text.
+                Text(title)
+                    .font(.pfCaptionBold)
+                    .foregroundColor(.pfNavy)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(agenda)
+                    .font(.pfBody)
+                    .foregroundColor(.pfNavy)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, PFSpacing.md)
+            .padding(.leading, PFSpacing.md)
+            .padding(.trailing, PFSpacing.md)
+            Spacer(minLength: 0)
+        }
+        .background(Color.pfGoldSoft)
+        .cornerRadius(PFSpacing.cornerRadius)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title): \(agenda)")
+    }
+}
+
+/// A thumbnail image beside a title, from a website thumbnail
+/// path. Renders nothing when the path is nil, blank, or
+/// unresolvable: the caller keeps its icon tile or badge in that
+/// case. Raster images load through AsyncImage; SVG images (which
+/// AsyncImage cannot render) load through a small non-interactive
+/// WKWebView, the same rendering route LessonDiagramView uses
+/// for lesson SVGs. While loading, or when a load fails, a
+/// neutral tile holds the same frame, so the layout never jumps
+/// and no broken image ever shows.
+struct PFThumbnailView: View {
+    let thumbnailPath: String?
+    var size: CGFloat = 56
+    var cornerRadius: CGFloat = 12
+
+    private var resolvedURL: URL? {
+        PFThumbnailURL.resolve(thumbnailPath, base: ContentService.siteBase)
+    }
+
+    /// True when there is a thumbnail to show. Callers that swap
+    /// an icon tile for the thumbnail check this first.
+    var hasThumbnail: Bool {
+        resolvedURL != nil
+    }
+
+    var body: some View {
+        if let url = resolvedURL {
+            Group {
+                if PFThumbnailURL.isSVG(url) {
+                    PFThumbnailSVGView(url: url)
+                } else {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        case .failure, .empty:
+                            thumbnailPlaceholder
+                        @unknown default:
+                            thumbnailPlaceholder
+                        }
+                    }
+                }
+            }
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .accessibilityHidden(true)
+        }
+    }
+
+    /// The neutral tile shown while a raster thumbnail loads or
+    /// when its load fails: same frame, no broken-image glyph.
+    private var thumbnailPlaceholder: some View {
+        ZStack {
+            Color.pfRoyal.opacity(0.10)
+            Image(systemName: "photo")
+                .font(.system(size: size * 0.4, weight: .semibold))
+                .foregroundColor(.pfRoyal)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+/// Renders one remote SVG thumbnail in a non-interactive web
+/// view. The SVG loads as an <img> inside minimal wrapper HTML,
+/// so it scales to the frame with object-fit cover and a
+/// transparent background. Loads once per URL: updateUIView
+/// reloads only when the URL changes, so list scrolling never
+/// re-fetches the same thumbnail.
+private struct PFThumbnailSVGView: UIViewRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(loadedURL: url)
+    }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.isScrollEnabled = false
+        webView.scrollView.bounces = false
+        webView.isUserInteractionEnabled = false
+        webView.loadHTMLString(Self.wrappedHTML(for: url), baseURL: nil)
+        return webView
+    }
+
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        guard context.coordinator.loadedURL != url else { return }
+        context.coordinator.loadedURL = url
+        webView.loadHTMLString(Self.wrappedHTML(for: url), baseURL: nil)
+    }
+
+    static func wrappedHTML(for url: URL) -> String {
+        let escaped = url.absoluteString
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+        <style>
+        html, body { margin: 0; padding: 0; background: transparent; }
+        img { display: block; width: 100%; height: 100%; object-fit: cover; }
+        </style>
+        </head>
+        <body><img src="\(escaped)" alt=""></body>
+        </html>
+        """
+    }
+
+    final class Coordinator {
+        var loadedURL: URL
+
+        init(loadedURL: URL) {
+            self.loadedURL = loadedURL
+        }
     }
 }

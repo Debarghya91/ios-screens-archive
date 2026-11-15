@@ -30,10 +30,21 @@ struct GuidedPathCardView: View {
         return Double(completedCount) / Double(lessons.count)
     }
 
+    /// The path thumbnail: the first lesson in the path that
+    /// carries one. The icon tile shows when no lesson in the
+    /// path has a thumbnail yet.
+    private var thumbnailPath: String? {
+        lessons.compactMap(\.thumbnail).first
+    }
+
     var body: some View {
         PFCard {
             HStack(alignment: .top, spacing: PFSpacing.md) {
-                PFIconTile(systemImage: path.systemImage, size: 48)
+                if thumbnailPath != nil {
+                    PFThumbnailView(thumbnailPath: thumbnailPath, size: 48, cornerRadius: 12)
+                } else {
+                    PFIconTile(systemImage: path.systemImage, size: 48)
+                }
                 VStack(alignment: .leading, spacing: PFSpacing.xs) {
                     Text(path.title)
                         .font(.pfCardTitle)
@@ -48,18 +59,26 @@ struct GuidedPathCardView: View {
                         .font(.pfCaptionBold)
                         .foregroundColor(.pfRoyal)
                         .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: PFSpacing.sm) {
-                        PFProgressBar(progress: progress, height: 6)
-                        Text("\(Int((progress * 100).rounded()))%")
-                            .font(.pfCaptionBold)
-                            .foregroundColor(.pfNavy)
-                            .fixedSize(horizontal: true, vertical: false)
+                    if completedCount > 0 {
+                        HStack(spacing: PFSpacing.sm) {
+                            PFProgressBar(progress: progress, height: 6)
+                            Text("\(Int((progress * 100).rounded()))%")
+                                .font(.pfCaptionBold)
+                                .foregroundColor(.pfNavy)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                        .padding(.top, PFSpacing.xs)
+                        Text("\(completedCount) of \(lessons.count) lessons complete")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("Not started yet")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, PFSpacing.xs)
                     }
-                    .padding(.top, PFSpacing.xs)
-                    Text("\(completedCount) of \(lessons.count) lessons complete")
-                        .font(.pfCaption)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Button {
                     let wasBookmarked = bookmarks.isBookmarked(path.id)
@@ -158,18 +177,30 @@ struct PathDetailView: View {
                         PFPill(text: "Complete", background: Color.pfSuccess.opacity(0.12), foreground: .pfSuccess)
                     }
                 }
-                PFBodyText(text: path.description, textColor: .pfSecondaryText)
-                HStack(spacing: PFSpacing.sm) {
-                    PFProgressBar(progress: progress)
-                    Text("\(Int((progress * 100).rounded()))%")
-                        .font(.pfCaptionBold)
-                        .foregroundColor(.pfNavy)
-                        .fixedSize(horizontal: true, vertical: false)
+                HStack(alignment: .top, spacing: PFSpacing.md) {
+                    if let thumbnailPath = lessons.compactMap(\.thumbnail).first {
+                        PFThumbnailView(thumbnailPath: thumbnailPath, size: 56, cornerRadius: 12)
+                    }
+                    PFBodyText(text: path.description, textColor: .pfSecondaryText)
                 }
-                Text("\(completedCount) of \(lessons.count) lessons complete")
-                    .font(.pfCaptionBold)
-                    .foregroundColor(.pfRoyal)
-                    .fixedSize(horizontal: false, vertical: true)
+                if completedCount > 0 {
+                    HStack(spacing: PFSpacing.sm) {
+                        PFProgressBar(progress: progress)
+                        Text("\(Int((progress * 100).rounded()))%")
+                            .font(.pfCaptionBold)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    Text("\(completedCount) of \(lessons.count) lessons complete")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfRoyal)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Not started yet")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -268,15 +299,21 @@ struct PathDetailView: View {
                     // book number, so the chapter title stands in.
                     let chapterLabel = PFBookModeReadingOrder.bookNumber(forInternalNumber: chapter.number)
                         .map { "Chapter \($0)" } ?? chapter.title
-                    VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                        Text("Step \(index + 1) of \(chapterBlocks.count): \(chapter.title)")
-                            .font(.pfCaptionBold)
-                            .foregroundColor(.pfRoyal)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("\(chapterLabel) in the \(path.title) sequence, step \(index + 1) of \(chapterBlocks.count) in this path.")
-                            .font(.pfCaption)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
+                    let chapterThumbnail = PFChapterHelper.chapterThumbnailPath(forChapter: chapter.number, in: contentService)
+                    HStack(alignment: .top, spacing: PFSpacing.md) {
+                        if chapterThumbnail != nil {
+                            PFThumbnailView(thumbnailPath: chapterThumbnail, size: 44, cornerRadius: 12)
+                        }
+                        VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                            Text("Step \(index + 1) of \(chapterBlocks.count): \(chapter.title)")
+                                .font(.pfCaptionBold)
+                                .foregroundColor(.pfRoyal)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("\(chapterLabel) in the \(path.title) sequence, step \(index + 1) of \(chapterBlocks.count) in this path.")
+                                .font(.pfCaption)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     .padding(.top, PFSpacing.sm)
                     let chapterLessons = lessons.filter {

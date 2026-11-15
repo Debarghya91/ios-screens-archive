@@ -77,9 +77,12 @@ struct SearchView: View {
 
     // MARK: - Filter state (difficulty only)
 
-    /// The one filter: difficulty level, picked from the pill
-    /// row above the search field. Nil means all levels.
-    @State private var selectedLevel: SituationLevel? = nil
+    /// The one filter: difficulty levels, picked from the pill
+    /// row above the search field. Multi-select: tapping a level
+    /// toggles it. An empty selection means all levels, and
+    /// selecting every level means all levels too, so an
+    /// all-selected filter can never empty the results.
+    @State private var selectedLevels: Set<SituationLevel> = []
 
     /// Results shown at first: 20 per page, Load more adds 20.
     /// Only the shown results are grouped and rendered, so a
@@ -135,7 +138,7 @@ struct SearchView: View {
     }
 
     private var hasActiveFilters: Bool {
-        selectedLevel != nil
+        SearchService.isLevelFilterActive(selectedLevels)
     }
 
     // MARK: - Synonym, acronym and symptom map
@@ -186,7 +189,7 @@ struct SearchView: View {
     private var searchWorkKey: String {
         [
             debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-            selectedLevel?.rawValue ?? "",
+            selectedLevels.map(\.rawValue).sorted().joined(separator: ","),
             "\(contentService.searchIndex?.entries.count ?? 0)",
             "\(contentService.fullSituations?.count ?? -1)",
             progressStore.lastLessonID ?? ""
@@ -206,8 +209,9 @@ struct SearchView: View {
     /// partial, synonym and symptom expansions resolve to the
     /// right cases, a 1-2 edit typo still finds the right lesson
     /// or Situation, free samples and the current chapter rank
-    /// higher, completed items are marked, never hidden, capped
-    /// at 60). With no search text, every catalogue entry is the
+    /// higher, completed items are marked, never hidden; the 60-hit
+    /// cap lifts while a difficulty filter is active, so the filter
+    /// never empties a query's results). With no search text, every catalogue entry is the
     /// base set and the difficulty filter alone applies.
     private var filteredResults: [SearchHit] {
         searchSnapshot.hits
@@ -225,8 +229,8 @@ struct SearchView: View {
     /// receives only plain sendable values.
     private func computeSnapshot() async -> SearchResultsSnapshot {
         let q = debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let level = selectedLevel
-        guard !q.isEmpty || level != nil else { return .empty }
+        let levels = selectedLevels
+        guard !q.isEmpty || SearchService.isLevelFilterActive(levels) else { return .empty }
         let entries = contentService.searchIndex?.entries ?? []
         guard !entries.isEmpty else { return .empty }
         var situationLevelsByID: [String: String] = [:]
@@ -240,7 +244,7 @@ struct SearchView: View {
             Self.computeSnapshotSync(
                 entries: entries,
                 query: q,
-                level: level,
+                levels: levels,
                 situationLevelsByID: situationLevelsByID,
                 chapterPrefix: chapterPrefix
             )
@@ -257,10 +261,15 @@ struct SearchView: View {
     private nonisolated static func computeSnapshotSync(
         entries: [SearchEntry],
         query: String,
-        level: SituationLevel?,
+        levels: Set<SituationLevel>,
         situationLevelsByID: [String: String],
         chapterPrefix: String?
     ) -> SearchResultsSnapshot {
+        // When the difficulty filter is active, the search runs
+        // uncapped: the old 60-hit cap ran before the filter, so
+        // a query plus a filter could return nothing even though
+        // matches existed beyond the first 60 hits. With no
+        // active filter the 60-hit cap stays, as before.
         let base: [SearchHit]
         if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             base = entries.map { SearchHit(entry: $0, score: 0, reason: "", matchedTerm: nil) }
@@ -269,15 +278,15 @@ struct SearchView: View {
                 entries: entries,
                 query: query,
                 freeSampleIDs: Set(ContentService.freeSampleIDs),
-                currentChapterPrefix: chapterPrefix
+                currentChapterPrefix: chapterPrefix,
+                limit: SearchService.isLevelFilterActive(levels) ? entries.count : 60
             )
         }
-        let filtered: [SearchHit]
-        if let wantedLevel = level {
-            filtered = base.filter { levelForEntry($0.entry, situationLevelsByID: situationLevelsByID) == wantedLevel }
-        } else {
-            filtered = base
-        }
+        let filtered = SearchService.applyLevelFilter(
+            base,
+            selectedLevels: levels,
+            situationLevelsByID: situationLevelsByID
+        )
         var totals: [SearchEntryType: Int] = [:]
         for hit in filtered {
             totals[hit.entry.type, default: 0] += 1
@@ -287,35 +296,6 @@ struct SearchView: View {
             totals: totals,
             chapters: matchedChaptersSync(entries: entries, query: query)
         )
-    }
-
-    /// The level of an entry, or nil when it cannot be derived.
-    /// Situations use the full data file level first, then a text
-    /// hint, defaulting to Core the same way situation(from:) does.
-    /// Other types only get a level when their text names one.
-    /// Title and text only, never invented. The situations map is
-    /// prebuilt by the caller, so this is one dictionary lookup
-    /// instead of a linear scan of the full situations file per
-    /// entry, which the old level(for:) did for every filtered
-    /// entry on every render.
-    private nonisolated static func levelForEntry(_ entry: SearchEntry, situationLevelsByID: [String: String]) -> SituationLevel? {
-        if entry.type == .situation {
-            if let rawLevel = situationLevelsByID[entry.id] {
-                switch rawLevel.lowercased() {
-                case "foundation": return .foundation
-                case "advanced": return .advanced
-                default: return .core
-                }
-            }
-            let lower = entry.text.lowercased()
-            if lower.contains("foundation") { return .foundation }
-            if lower.contains("advanced") { return .advanced }
-            return .core
-        }
-        let lower = entry.text.lowercased()
-        if lower.contains("foundation") { return .foundation }
-        if lower.contains("advanced") { return .advanced }
-        return nil
     }
 
     /// Chapters whose title, or whose course name, matches the
@@ -403,7 +383,7 @@ struct SearchView: View {
     private var filterSignature: String {
         [
             debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-            selectedLevel?.rawValue ?? ""
+            selectedLevels.map(\.rawValue).sorted().joined(separator: ",")
         ].joined(separator: "|")
     }
 
@@ -438,10 +418,10 @@ struct SearchView: View {
 
     // MARK: - Derived entry facts (title and text only, never invented)
 
-    // The level derivation lives in levelForEntry above, next to
-    // the snapshot computation that uses it, with the full
-    // situations file prebuilt into a lookup map. Row-level
-    // derivation lives in SearchResultRow below.
+    // The level derivation lives in SearchService.levelForEntry,
+    // shared by the snapshot computation and the unit tests, with
+    // the full situations file prebuilt into a lookup map.
+    // Row-level derivation lives in SearchResultRow below.
 
     /// The full situations file as a lookup map, first item wins
     /// for a repeated id (exactly as first(where:) behaved).
@@ -602,10 +582,13 @@ struct SearchView: View {
 
     // MARK: - Difficulty pills above the search field
 
-    /// The one filter, as pills that are always visible: one tap
-    /// picks a level, tapping All clears it. No menus, no hidden
-    /// choices. The pills work with no search text too, filtering
-    /// the whole catalogue.
+    /// The one filter, as pills that are always visible.
+    /// Multi-select difficulty pills: tapping a level toggles
+    /// it, and any combination can be active. "All" is selected
+    /// when no level is picked or when every level is picked,
+    /// and tapping it clears the selection. No menus, no hidden
+    /// choices. The pills work with no search text too,
+    /// filtering the whole catalogue.
     private var difficultyPillsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: PFSpacing.sm) {
@@ -613,13 +596,17 @@ struct SearchView: View {
                     .font(.pfCaptionBold)
                     .foregroundColor(.pfSecondaryText)
                     .accessibilityHidden(true)
-                PFChip(text: "All", isSelected: selectedLevel == nil) {
-                    selectedLevel = nil
+                PFChip(text: "All", isSelected: !SearchService.isLevelFilterActive(selectedLevels)) {
+                    selectedLevels = []
                 }
                 .pfMinimumTouchTarget()
-                ForEach([SituationLevel.foundation, .core, .advanced], id: \.self) { option in
-                    PFChip(text: option.displayName, isSelected: selectedLevel == option) {
-                        selectedLevel = option
+                ForEach(SearchService.allLevels, id: \.self) { option in
+                    PFChip(text: option.displayName, isSelected: selectedLevels.contains(option)) {
+                        if selectedLevels.contains(option) {
+                            selectedLevels.remove(option)
+                        } else {
+                            selectedLevels.insert(option)
+                        }
                     }
                     .pfMinimumTouchTarget()
                 }
@@ -904,7 +891,7 @@ struct SearchView: View {
                         .multilineTextAlignment(.center)
                     if hasActiveFilters {
                         PFSecondaryButton(title: "Clear filter") {
-                            selectedLevel = nil
+                            selectedLevels = []
                         }
                         .padding(.horizontal, PFSpacing.xl)
                     }
@@ -921,7 +908,7 @@ struct SearchView: View {
                     PFSecondaryButton(title: "Browse by type") {
                         query = ""
                         debouncedQuery = ""
-                        selectedLevel = nil
+                        selectedLevels = []
                         isSearchFieldFocused = false
                     }
                     .padding(.horizontal, PFSpacing.xl)
@@ -1011,7 +998,7 @@ struct SearchView: View {
                 Spacer()
                 if hasActiveFilters {
                     Button("Clear filter") {
-                        selectedLevel = nil
+                        selectedLevels = []
                     }
                     .font(.pfCaptionBold)
                     .foregroundColor(.pfRoyal)
@@ -1180,7 +1167,13 @@ private struct SearchResultRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: PFSpacing.md) {
-            PFIconTile(systemImage: systemImage, size: 40)
+            // The thumbnail sits beside the title when the
+            // website exposes one; the type icon tile otherwise.
+            if entry.thumbnail != nil {
+                PFThumbnailView(thumbnailPath: entry.thumbnail, size: 40, cornerRadius: 10)
+            } else {
+                PFIconTile(systemImage: systemImage, size: 40)
+            }
             VStack(alignment: .leading, spacing: PFSpacing.xs) {
                 Text(SearchService.highlightedTitle(entry.title, matchedTerm: matchedTerm, query: query))
                     .font(.pfCardTitle)

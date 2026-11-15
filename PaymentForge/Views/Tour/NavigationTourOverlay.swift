@@ -525,6 +525,19 @@ struct NavigationTourOverlay: View {
     /// The anchor of the Search page's search field, for the
     /// typing demo on the Search step. Nil until Search lays out.
     private let searchFieldAnchor: Anchor<CGRect>?
+    /// Opens a drawer destination from a tour step, or closes
+    /// any destination the tour opened when passed nil. The
+    /// parent owns the sheet/tab state: this overlay only asks.
+    /// Every tour step opens its target, so drawer steps call
+    /// this after the drawer settles, and tab, card, and
+    /// completion steps pass nil so a sheet opened by an
+    /// earlier step never covers the next step.
+    private let onOpenDestination: (DrawerDestination?) -> Void
+    /// Opens the Keep Learning card's target (the Learn tab)
+    /// from the final step. Kept separate from
+    /// onOpenDestination because the card is a tab switch, not
+    /// a drawer destination.
+    private let onOpenKeepLearning: () -> Void
     private let onFinish: () -> Void
 
     /// The bar frame for tooltip clearance and the segment
@@ -585,6 +598,8 @@ struct NavigationTourOverlay: View {
         keepLearningAnchor: Anchor<CGRect>?,
         keepLearningFrame: CGRect?,
         searchFieldAnchor: Anchor<CGRect>?,
+        onOpenDestination: @escaping (DrawerDestination?) -> Void,
+        onOpenKeepLearning: @escaping () -> Void,
         onFinish: @escaping () -> Void
     ) {
         self._selectedTab = selectedTab
@@ -596,6 +611,8 @@ struct NavigationTourOverlay: View {
         self.keepLearningAnchor = keepLearningAnchor
         self.keepLearningFrame = keepLearningFrame
         self.searchFieldAnchor = searchFieldAnchor
+        self.onOpenDestination = onOpenDestination
+        self.onOpenKeepLearning = onOpenKeepLearning
         self.onFinish = onFinish
     }
 
@@ -718,7 +735,7 @@ struct NavigationTourOverlay: View {
         ),
         TourStep(
             title: "Profile and Purchases",
-            body: "Profile holds your account and settings. My Purchases sits just below Profile in the menu, with your bundles and access.",
+            body: "Profile holds your account and settings. My Purchases sits just below Profile in the menu, with your courses and access.",
             symbol: "person.fill",
             tabIndex: nil,
             destination: .profile
@@ -1548,7 +1565,10 @@ struct NavigationTourOverlay: View {
     /// no glide, click, or page scroll. Drawer and card steps
     /// open the drawer and circle the row or card icon from its
     /// live frame, and the hand points at the icon from the
-    /// same frame: no press, no activation. Drawer steps pulse
+    /// same frame; once the drawer settles, the step actually
+    /// opens its target through the parent callbacks, so every
+    /// step opens what it describes. Tab steps close any
+    /// destination an earlier step opened. Drawer steps pulse
     /// the scroll target and then open the drawer, so the
     /// drawer list re-issues its scroll into view on every
     /// entry, and schedule geometry re-resolves after the slide
@@ -1579,6 +1599,9 @@ struct NavigationTourOverlay: View {
         if let tabIndex = step.tabIndex {
             isDrawerOpen = false
             drawerScrollTarget = nil
+            // A sheet opened by an earlier drawer step must not
+            // cover this tab step: close it before switching.
+            onOpenDestination(nil)
             guard sequencedStep != index else { return }
             sequencedStep = index
             handPoint = nil
@@ -1597,9 +1620,12 @@ struct NavigationTourOverlay: View {
                     showClickRipple()
                     selectedTab = tabIndex
                     if tabIndex == 2 {
-                        // Search step: show the Search screen
-                        // only. No typing demo, no scroll. The
-                        // hand stays on the tab.
+                        // Search step: the typing demo runs
+                        // against the live Search page, typing
+                        // the demo query and submitting it, so
+                        // the step shows a real search, not an
+                        // empty field. No scroll showcase here.
+                        runSearchDemo(generation: myGeneration)
                     } else if tabIndex == 3 {
                         // Payment Cases: the list renders its
                         // ContentManifest.situationCount rows lazily, so a full traverse
@@ -1671,8 +1697,9 @@ struct NavigationTourOverlay: View {
             // re-resolves against the settled layout; the live
             // frame feed refreshes on its own as the row moves.
             // The hand points at the circled icon from the
-            // live frame, without pressing or activating the
-            // row, and stays hidden until the row is visible.
+            // live frame, and stays hidden until the row is
+            // visible. Once the drawer settles, the step opens
+            // its target: see the sequenced activation below.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
                 geometryTick += 1
             }
@@ -1687,10 +1714,25 @@ struct NavigationTourOverlay: View {
             // A new generation so any pending tab sequence
             // (scroll showcase or search demo) aborts.
             transitionGeneration += 1
+            let drawerGeneration = transitionGeneration
+            // The drawer slide and scroll finish around 0.9s
+            // in. Then the step opens its target for real, with
+            // a click ripple on the row: the learner lands in
+            // the destination, dismisses it, and continues the
+            // tour from this step. Guarded by the phase and the
+            // generation, so a fast Next or Back never opens a
+            // stale destination.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                guard drawerGeneration == transitionGeneration, phase == .step(index) else { return }
+                showClickRipple()
+                onOpenDestination(destination)
+            }
         } else if step.highlightsCard {
             // The card is fixed at the bottom of the drawer, so
             // no scroll is needed: open the drawer and spotlight
-            // the card once the slide settles.
+            // the card once the slide settles. A sheet opened
+            // by the previous drawer step must not cover it.
+            onOpenDestination(nil)
             TourPageScroller.cancel()
             // Release any drag point left over from a tab
             // step, so the hand never lands mid-screen here.
@@ -1715,11 +1757,18 @@ struct NavigationTourOverlay: View {
             guard sequencedStep != index else { return }
             sequencedStep = index
             // A new generation so any pending tab sequence
-            // (scroll showcase or search demo) aborts. The
-            // hand points at the circled card icon from the
-            // live frame once the drawer slide settles,
-            // without pressing or activating the card.
+            // (scroll showcase or search demo) aborts.
             transitionGeneration += 1
+            let cardGeneration = transitionGeneration
+            // The hand points at the circled card icon from the
+            // live frame once the drawer slide settles. Then
+            // the step opens the card's target (the Learn tab)
+            // for real, guarded like the drawer activation.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                guard cardGeneration == transitionGeneration, phase == .step(index) else { return }
+                showClickRipple()
+                onOpenKeepLearning()
+            }
         }
     }
 
@@ -1754,9 +1803,6 @@ struct NavigationTourOverlay: View {
         )
     }
 
-    /// Dormant: the Search step currently shows the screen
-    /// only, with no typing demo and no scroll. Kept so the
-    /// demo can return without rebuilding.
     /// The Search step demo: the field lights up, the hand moves
     /// to it, the query types itself in character by character,
     /// the hand taps the search icon, and the results run. The
@@ -1858,6 +1904,7 @@ struct NavigationTourOverlay: View {
             transitionGeneration += 1
             sequencedStep = nil
             postSearchDemoReset()
+            onOpenDestination(nil)
             phase = .start
             accessibilityFocus = .startCard
         } else {
@@ -1871,6 +1918,7 @@ struct NavigationTourOverlay: View {
             transitionGeneration += 1
             sequencedStep = nil
             postSearchDemoReset()
+            onOpenDestination(nil)
             phase = .complete
             accessibilityFocus = .completionCard
         } else {

@@ -15,7 +15,7 @@
 // iPhone SE through to a Pro Max, in portrait and landscape.
 //
 // My Purchases lists all catalogue products from ProductCatalogue
-// (the 10 book parts plus BA/PO Studio, Payment Simulator,
+// (the 10 courses plus BA/PO Studio, Payment Simulator,
 // Investigation Lab, Practice Experiences, Interview Ready, and
 // The Integrated Course), each buyable on its own: a part unlocks
 // only its own chapters, a standalone product unlocks only its own
@@ -163,7 +163,7 @@ struct CheckoutView: View {
                         Text("Products")
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
-                        Text("Buy a part to unlock its chapters, or a standalone product to unlock its content. The Integrated Course unlocks everything. Every purchase gives 1 year of access.")
+                        Text("Buy a course to unlock its chapters, or a standalone product to unlock its content. The Integrated Course unlocks everything. Every purchase gives 1 year of access.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -178,7 +178,7 @@ struct CheckoutView: View {
                 // D101 decided (hard-gate, v69): this text states
                 // what buying gives: ownership of the set, restore,
                 // and sync when signed in. See the file header.
-                PFBodyText(text: StoreManager.buildPhaseBuyOpensContent ? "For now, Buy opens the course on this device. No payment is taken." : "Each product gives 1 year of access from purchase, and can be renewed for 1 more year at half the sale price. The Integrated Course includes every part and every standalone product. Purchases restore with the same Apple ID, and sync to your account when you are signed in.")
+                PFBodyText(text: StoreManager.buildPhaseBuyOpensContent ? "For now, Buy opens the course on this device. No payment is taken." : "Each product gives 1 year of access from purchase, and can be renewed for 1 more year at half the sale price. The Integrated Course includes every course and every standalone product. Purchases restore with the same Apple ID, and sync to your account when you are signed in.")
                 if storeManager.productLoadFailed {
                     VStack(alignment: .leading, spacing: PFSpacing.sm) {
                         Text("Prices could not be loaded from the App Store. Check your connection, then try again. No purchase can be made until the price loads.")
@@ -225,7 +225,7 @@ struct CheckoutView: View {
                             .foregroundColor(.pfNavy)
                         comparisonRow(
                             icon: "checkmark",
-                            text: "The first lesson of each of the \(ContentManifest.chapterCount) chapters, plus the first 2 lessons of each part in reading order. Every other lesson needs its part or the Integrated Course."
+                            text: "The first lesson of each of the \(ContentManifest.chapterCount) chapters, plus the first 2 lessons of each course in reading order. Every other lesson needs its course or the Integrated Course."
                         )
                         comparisonRow(
                             icon: "checkmark",
@@ -247,7 +247,7 @@ struct CheckoutView: View {
                             .foregroundColor(.pfNavy)
                         comparisonRow(
                             icon: "checkmark",
-                            text: "A book part unlocks only its own chapters, with all lessons in those chapters. There are \(chapterParts.count) parts."
+                            text: "A course unlocks only its own chapters, with all lessons in those chapters. There are \(chapterParts.count) courses."
                         )
                         comparisonRow(
                             icon: "checkmark",
@@ -269,7 +269,7 @@ struct CheckoutView: View {
                         comparisonRow(icon: "arrow.right", text: "Each product is bought on its own at its App Store price, shown on its card below.")
                     }
                     if partChaptersDoNotOverlap {
-                        Text("Each chapter sits in exactly one part, so parts never overlap. Buying two parts never buys the same chapter twice.")
+                        Text("Each chapter sits in exactly one course, so courses never overlap. Buying two courses never buys the same chapter twice.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -283,7 +283,7 @@ struct CheckoutView: View {
         }
     }
 
-    /// The book parts: every catalogue product with chapters
+    /// The courses: every catalogue product with chapters
     /// except the Integrated Course. Standalone products have no
     /// chapters and are excluded by the chapterIDs check.
     private var chapterParts: [CourseProduct] {

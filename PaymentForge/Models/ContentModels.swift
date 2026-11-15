@@ -15,6 +15,17 @@ struct SearchEntry: Codable, Identifiable, Hashable {
     let url: String
     let type: SearchEntryType
     let text: String
+    /// The agenda for this entry ("why take it"), when the website
+    /// exposes one. Optional: entries without it show no agenda
+    /// block, never a placeholder. Defaults to nil so existing
+    /// memberwise construction in tests keeps compiling.
+    let agenda: String? = nil
+    /// The thumbnail path for this entry, relative to the site
+    /// root (for example "assets/thumbs/ch1s1.svg"), when the
+    /// website exposes one. Optional: entries without it show the
+    /// standard icon tile, never a broken image. Resolve with
+    /// PFThumbnailURL, which prepends the site base URL.
+    let thumbnail: String? = nil
 
     var isLesson: Bool { type == .lesson }
     var isGuide: Bool { type == .guide }
@@ -62,8 +73,8 @@ struct SearchEntry: Codable, Identifiable, Hashable {
         return Int(digits)
     }
 
-    /// The citation naming where an entry sits in the book: the
-    /// book chapter and lesson for lessons ("Chapter 26, Lesson 3:
+    /// The citation naming where an entry sits in the full course: the
+    /// course chapter and lesson for lessons ("Chapter 26, Lesson 3:
     /// pacs.002 Explained"), the type and title for anything else
     /// ("Guide: camt.029 Explained", "Situation: ..."). Chapter
     /// numbers are always book numbers from
@@ -212,6 +223,35 @@ struct SearchEntry: Codable, Identifiable, Hashable {
     }
 }
 
+// MARK: - Thumbnails
+
+/// Resolves a thumbnail path from website data into a loadable URL.
+/// Relative paths ("assets/thumbs/ch1s1.svg", with or without a
+/// leading slash) resolve against the site base URL passed by the
+/// caller (ContentService.siteBase, the single source for the site
+/// address). Absolute URLs pass through unchanged. Nil, blank, and
+/// unparseable values resolve to nil: the caller shows the standard
+/// icon tile instead, never a broken image. Pure logic, covered by
+/// unit tests.
+enum PFThumbnailURL {
+    static func resolve(_ path: String?, base: URL) -> URL? {
+        guard let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        if let absolute = URL(string: trimmed), absolute.scheme == "http" || absolute.scheme == "https" {
+            return absolute
+        }
+        let relative = trimmed.hasPrefix("/") ? String(trimmed.dropFirst()) : trimmed
+        return base.appendingPathComponent(relative)
+    }
+
+    /// True when the thumbnail at this URL is an SVG, which
+    /// AsyncImage cannot render: SVG thumbnails render through the
+    /// WebKit path in PFThumbnailView instead. The query string is
+    /// ignored, so "thumb.svg?v=2" still counts as SVG.
+    static func isSVG(_ url: URL) -> Bool {
+        url.pathExtension.lowercased() == "svg"
+    }
+}
+
 enum SearchEntryType: String, Codable, Hashable {
     case lesson
     case guide
@@ -353,6 +393,14 @@ struct Situation: Identifiable, Hashable {
     /// hint in the search index entry). Derived stages are never
     /// presented as authoritative.
     let isStageAuthoritative: Bool
+    /// The agenda for this case ("why this case matters"), when the
+    /// website exposes one. Optional: cases without it show no
+    /// agenda block, never a placeholder.
+    let agenda: String?
+    /// The thumbnail path for this case, relative to the site root,
+    /// when the website exposes one. Resolve with PFThumbnailURL.
+    /// Optional: cases without it show the standard case tile.
+    let thumbnail: String?
 
     init(
         id: String,
@@ -364,7 +412,9 @@ struct Situation: Identifiable, Hashable {
         takeaway: String,
         isFreeSample: Bool,
         visual: SituationVisual?,
-        isStageAuthoritative: Bool = false
+        isStageAuthoritative: Bool = false,
+        agenda: String? = nil,
+        thumbnail: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -376,6 +426,8 @@ struct Situation: Identifiable, Hashable {
         self.isFreeSample = isFreeSample
         self.visual = visual
         self.isStageAuthoritative = isStageAuthoritative
+        self.agenda = agenda
+        self.thumbnail = thumbnail
     }
 }
 
@@ -493,6 +545,14 @@ struct FullSituationItem: Decodable {
     /// Resolution path from the data file, when present. Read by
     /// the investigation engine for the closing decision note.
     let resolution: String?
+    /// Agenda ("why this case matters") from the data file, when
+    /// the website exposes it. Optional: absent means no agenda
+    /// block, never a placeholder.
+    let agenda: String?
+    /// Thumbnail path, relative to the site root, from the data
+    /// file, when the website exposes it. Optional: absent means
+    /// the standard case tile.
+    let thumbnail: String?
 
     enum CodingKeys: String, CodingKey {
         case id, title, level, module, seq, explain, takeaway, visual
@@ -502,6 +562,8 @@ struct FullSituationItem: Decodable {
         case messages
         case failureCategory = "failure_category"
         case resolution
+        case agenda
+        case thumbnail
     }
 
     init(from decoder: Decoder) throws {
@@ -519,6 +581,8 @@ struct FullSituationItem: Decodable {
         messages = try container.decodeIfPresent([String].self, forKey: .messages)
         failureCategory = try container.decodeIfPresent(String.self, forKey: .failureCategory)
         resolution = try container.decodeIfPresent(String.self, forKey: .resolution)
+        agenda = try container.decodeIfPresent(String.self, forKey: .agenda)
+        thumbnail = try container.decodeIfPresent(String.self, forKey: .thumbnail)
         if let intStage = try? container.decodeIfPresent(Int.self, forKey: .stage) {
             stage = intStage
         } else if let stringStage = try? container.decodeIfPresent(String.self, forKey: .stage),

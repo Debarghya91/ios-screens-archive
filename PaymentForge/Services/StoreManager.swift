@@ -1,6 +1,6 @@
 // StoreManager.swift
 // Payments Training Hub iOS - Apple In-App Purchase (StoreKit 2) for the
-// catalogue products: the 10 book parts, BA/PO Studio, Payment
+// catalogue products: the 10 courses, BA/PO Studio, Payment
 // Simulator, Investigation Lab, Practice Experiences, Interview
 // Ready, and The Integrated Course. Every purchase product is a
 // non-consumable that gives 1 year of access from the verified

@@ -1,5 +1,5 @@
 // CoursesView.swift
-// Payments Training Hub iOS - Learn tab: the book, learning pathways and all courses.
+// Payments Training Hub iOS - Learn tab: the courses index, learning pathways and the catalogue.
 // Native SwiftUI only, no WebView. Uses the shared DesignSystem.
 // No em dashes in any user-facing text.
 //
@@ -9,24 +9,26 @@
 // on an iPhone SE (320pt wide), a standard iPhone, a Plus, a Pro and a
 // Pro Max, in portrait and in landscape.
 //
-// The three Learn sections do different jobs. Book is the default:
-// the course as one large, structured book, ten parts in reading
-// order, chapters numbered 1 to 99, lessons one after another with
-// prev/next, and nothing else on screen. Learning Paths is the
+// The three Learn sections do different jobs. Courses is the default:
+// the course index, ten courses in reading order, each opening into
+// its chapters and lessons like a navigation pane, with chapters
+// numbered 1 to 99 and lessons one after another with prev/next, and
+// nothing else on screen. No course starts open: every course is a
+// row, and tapping it opens its chapter list. Learning Paths is the
 // guided journey: six role paths filterable by level, then the eight
-// guided sessions from the live site in order. All Courses is the
-// catalogue grouped by part: every chapter under the part that
-// unlocks it, with guides, labs and tests below. Lesson counts and
-// completion % come from the real catalogue and real progress, and
-// the section content sits directly under the section picker, so
-// switching sections visibly changes the first screen. The shared
-// interview and practice cards sit below the section content on the
-// Learning Paths and All Courses sections only: the Book section
-// stays uncluttered. Chapters are gated by purchase: a chapter's lessons
-// unlock when its part, or the Integrated Course, is owned.
+// guided sessions from the live site in order. Catalogue is the
+// structured table of every chapter grouped by course, with guides,
+// labs and tests below. Lesson counts and completion come from the
+// real catalogue and real progress, and the section content sits
+// directly under the section picker, so switching sections visibly
+// changes the first screen. The shared interview and practice cards
+// sit below the section content on the Learning Paths and Catalogue
+// sections only: the Courses section stays uncluttered. Chapters are
+// gated by purchase: a chapter's lessons unlock when its course, or
+// the Integrated Course, is owned.
 // The catalogue stays browsable: locked chapters show a lock state
 // and open to a lock screen, never a dead end. Display numbers are
-// book numbers from PFBookModeReadingOrder: internal chapter IDs
+// course numbers from PFBookModeReadingOrder: internal chapter IDs
 // are never shown.
 
 import SwiftUI
@@ -37,32 +39,24 @@ import Foundation
 struct CoursesView: View {
     @EnvironmentObject private var contentService: ContentService
     @EnvironmentObject private var progressStore: ProgressStore
+    @EnvironmentObject private var storeManager: StoreManager
 
     /// Opens the side drawer. Passed in from the tab bar so the menu
     /// button can sit in this screen's navigation bar, and only here:
     /// pushed detail views have no menu button and keep a clean back button.
     @Binding var isDrawerOpen: Bool
 
-    @State private var selectedSection: LearnSection = .book
+    @State private var selectedSection: LearnSection = .courses
 
     /// The level filter for the guided paths on the Learning Paths
-    /// section only. It never filters the sessions or the All Courses
+    /// section only. It never filters the sessions or the Catalogue
     /// section. The level strings match LearningPath.level exactly.
     @State private var selectedPathLevel: PathLevelFilter = .all
 
-    /// Part ids expanded in the All Courses section, keyed by
-    /// CourseProduct.id. All parts start collapsed so all ten
-    /// part names are visible at once.
-    @State private var expandedBundleIDs: Set<String> = []
-
-    /// Part numbers expanded in the Book section. All parts start
-    /// collapsed so all ten part names are visible at once.
-    @State private var expandedPartNumbers: Set<Int> = []
-
     private enum LearnSection: String, CaseIterable {
-        case book = "Book"
+        case courses = "Courses"
         case learningPaths = "Learning Paths"
-        case allCourses = "All Courses"
+        case catalogue = "Catalogue"
     }
 
     private enum PathLevelFilter: String, CaseIterable {
@@ -92,10 +86,10 @@ struct CoursesView: View {
                         // under the picker, so switching sections
                         // visibly changes the first screen. The
                         // shared interview and practice cards below
-                        // it appear on the Learning Paths and All
-                        // Courses sections only: the Book section
-                        // stays uncluttered, with nothing on screen
-                        // but the book itself.
+                        // it appear on the Learning Paths and
+                        // Catalogue sections only: the Courses
+                        // section stays uncluttered, with nothing
+                        // on screen but the course index itself.
                         if contentService.isLoadingIndex && contentService.searchIndex == nil {
                             VStack(alignment: .leading, spacing: PFSpacing.md) {
                                 PFSkeletonView()
@@ -104,19 +98,19 @@ struct CoursesView: View {
                             }
                             .accessibilityElement(children: .ignore)
                             .accessibilityLabel("Loading chapters")
-                        } else if selectedSection == .book {
-                            bookSection
+                        } else if selectedSection == .courses {
+                            coursesSection
                         } else if selectedSection == .learningPaths {
                             learningPathsIntroSection
                             levelFilterSection
                             guidedPathsSection
                             pathwaysSection
                         } else {
-                            bundlesSection
+                            catalogueSection
                             librarySection
                         }
 
-                        if selectedSection != .book {
+                        if selectedSection != .courses {
                             interviewSection
 
                             practiceSection
@@ -424,7 +418,7 @@ struct CoursesView: View {
         }
     }
 
-    // MARK: - Book section
+    // MARK: - Courses section
 
     /// The first lesson in reading order the learner has not
     /// completed yet, or nil when every lesson is complete.
@@ -432,18 +426,21 @@ struct CoursesView: View {
         contentService.readingOrderLessons.first { !progressStore.isLessonComplete($0.id) }
     }
 
-    /// The book: ten parts in reading order, chapters numbered 1
-    /// to 99, then the chapter held outside the main reading path.
-    /// A Continue reading card sits above the parts. Nothing else
-    /// shares this screen: no interview, practice or experience
-    /// cards, so the book reads like a book.
-    private var bookSection: some View {
+    /// The courses index: ten courses in reading order, chapters
+    /// numbered 1 to 99, then the chapter held outside the main
+    /// reading path. The index behaves like a navigation pane:
+    /// every course is a row, no course starts open, and tapping
+    /// a course opens its chapter list. A Continue reading card
+    /// sits above the courses. Nothing else shares this screen:
+    /// no interview, practice or experience cards, so the index
+    /// reads like an index.
+    private var coursesSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            Text("Read the book")
+            Text("Courses")
                 .font(.pfScreenTitle)
                 .foregroundColor(.pfNavy)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("One course, read in order: ten parts, 99 chapters, each lesson following the last. Open a part to see its chapters, then open a chapter to read its lessons.")
+            Text("Ten courses in reading order, 99 chapters, each lesson following the last. Open a course to see its chapters, then open a chapter to read its lessons.")
                 .font(.pfBody)
                 .foregroundColor(.pfSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -455,20 +452,12 @@ struct CoursesView: View {
                     .foregroundColor(.pfSecondaryText)
             } else {
                 continueReadingCard
-                ForEach(PFBookModeReadingOrder.parts, id: \.number) { part in
-                    BookPartGroupView(
-                        part: part,
-                        isExpanded: Binding(
-                            get: { expandedPartNumbers.contains(part.number) },
-                            set: { isExpanded in
-                                if isExpanded {
-                                    expandedPartNumbers.insert(part.number)
-                                } else {
-                                    expandedPartNumbers.remove(part.number)
-                                }
-                            }
-                        )
-                    )
+                ForEach(Array(ProductCatalogue.partProducts.enumerated()), id: \.element.id) { index, product in
+                    NavigationLink(destination: CourseDetailView(product: product, courseNumber: index + 1, chapterNumbers: PFChapterHelper.readingOrderChapterNumbers(for: product))) {
+                        CourseIndexRow(product: product, courseNumber: index + 1, chapterNumbers: PFChapterHelper.readingOrderChapterNumbers(for: product))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PFCardButtonStyle())
                 }
                 heldOutSection
             }
@@ -513,7 +502,7 @@ struct CoursesView: View {
                     HStack(spacing: PFSpacing.md) {
                         PFIconTile(systemImage: "checkmark.seal.fill", size: 44)
                         VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                            Text("You have finished the book")
+                            Text("You have finished the full course")
                                 .font(.pfCardTitle)
                                 .foregroundColor(.pfNavy)
                             Text("Every lesson is complete. Revisit any chapter, or try the tests and practice experiences.")
@@ -573,20 +562,20 @@ struct CoursesView: View {
         }
     }
 
-    // MARK: - All Courses section, grouped by part
+    // MARK: - Catalogue section, as a table grouped by course
 
     private var chapterNumbers: [Int] {
         PFChapterHelper.chapterNumbers(in: contentService)
     }
 
-    /// The ten book parts in catalogue order: every product with
+    /// The ten courses in catalogue order: every product with
     /// chapters except The Integrated Course (which contains every
     /// chapter). The standalone products contain no chapters and
-    /// are excluded by the chapterIDs check. The ten parts
-    /// partition the 99 in-book chapters exactly: no chapter in
-    /// two parts, no in-book chapter missing, as the entitlement
-    /// tests assert. The held-out ch37 sits in no part and stays
-    /// reachable without purchase. Grouping by part therefore
+    /// are excluded by the chapterIDs check. The ten courses
+    /// partition the 99 in-course chapters exactly: no chapter in
+    /// two courses, no in-course chapter missing, as the entitlement
+    /// tests assert. The held-out ch37 sits in no course and stays
+    /// reachable without purchase. Grouping by course therefore
     /// reaches every chapter the old flat list reached, with no
     /// chapter lost and none repeated.
     private var chapterBundles: [CourseProduct] {
@@ -596,20 +585,25 @@ struct CoursesView: View {
         }
     }
 
-    /// All Courses, grouped by the part that unlocks each chapter.
-    /// Each part card expands in place to its chapters, and each
-    /// chapter row opens the same ChapterDetailView the flat list
-    /// opened, with the same lock state. No chapter is paginated
-    /// away: the largest part holds 14 chapters, all shown when
-    /// its card is expanded. Ownership is read only, through
+    /// The catalogue as a structured table: one row per chapter,
+    /// grouped under its course, with columns for the chapter
+    /// number, the chapter title, the lesson count, and access.
+    /// Course bands head each group. Rows alternate white and
+    /// off-white with hairline dividers, and every row opens the
+    /// same ChapterDetailView the old chapter list opened, with
+    /// the same lock state. No chapter is paginated away. Colours
+    /// are the fixed pf palette, identical in light and dark mode:
+    /// navy band with white text, navy titles, secondary captions,
+    /// success check for unlocked chapters, secondary lock for
+    /// locked ones. Ownership is read only, through
     /// StoreManager.isProductUnlocked: no gating rule changes here.
-    private var bundlesSection: some View {
+    private var catalogueSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            Text("Browse by part")
+            Text("Catalogue")
                 .font(.pfScreenTitle)
                 .foregroundColor(.pfNavy)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Every chapter grouped by the part that unlocks it. Open a part to see its chapters, then open a chapter to see its lessons.")
+            Text("Every chapter grouped by the course that unlocks it. Open a chapter to see its lessons.")
                 .font(.pfBody)
                 .foregroundColor(.pfSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -620,31 +614,94 @@ struct CoursesView: View {
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
             } else {
-                Text("\(chapterBundles.count) parts, \(chapterNumbers.count) chapters in the catalogue.")
+                Text("\(chapterBundles.count) courses, \(chapterNumbers.count) chapters in the catalogue.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("A part shows Owned when you own it or The Integrated Course.")
+                Text("A course shows Owned when you own it or The Integrated Course.")
                     .font(.pfCaption)
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
-                ForEach(chapterBundles) { product in
-                    BundleGroupView(
-                        product: product,
-                        isExpanded: Binding(
-                            get: { expandedBundleIDs.contains(product.id) },
-                            set: { isExpanded in
-                                if isExpanded {
-                                    expandedBundleIDs.insert(product.id)
-                                } else {
-                                    expandedBundleIDs.remove(product.id)
-                                }
-                            }
-                        )
-                    )
+                catalogueTable
+            }
+        }
+    }
+
+    /// The catalogue table: a header row, then one navy course band
+    /// and its chapter rows per course. The whole table sits in one
+    /// bordered container so the columns read as a table, not as
+    /// loose cards.
+    private var catalogueTable: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: PFSpacing.sm) {
+                Text("Ch.")
+                    .frame(width: 36, alignment: .leading)
+                Text("Chapter")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Lessons")
+                    .frame(width: 52, alignment: .trailing)
+                Text("Access")
+                    .frame(width: 44, alignment: .trailing)
+            }
+            .font(.pfCaptionBold)
+            .foregroundColor(.white)
+            .padding(.horizontal, PFSpacing.md)
+            .padding(.vertical, PFSpacing.sm)
+            .background(Color.pfNavy)
+            ForEach(chapterBundles) { product in
+                catalogueCourseBand(product: product)
+                ForEach(Array(PFChapterHelper.readingOrderChapterNumbers(for: product).enumerated()), id: \.element) { index, number in
+                    NavigationLink(destination: ChapterDetailView(chapterNumber: number)) {
+                        CatalogueChapterRow(chapterNumber: number, isAlternate: index % 2 == 1)
+                    }
+                    .buttonStyle(PFCardButtonStyle())
                 }
             }
         }
+        .background(Color.pfCard)
+        .cornerRadius(PFSpacing.cardRadius)
+        .overlay(
+            RoundedRectangle(cornerRadius: PFSpacing.cardRadius)
+                .stroke(Color.pfBorder, lineWidth: 1)
+        )
+        .shadow(color: Color.pfNavy.opacity(0.06), radius: 10, x: 0, y: 4)
+    }
+
+    /// One navy course band inside the catalogue table: the course
+    /// name, its chapter and lesson counts, and its Owned or Locked
+    /// state. Read only: ownership comes from StoreManager.
+    private func catalogueCourseBand(product: CourseProduct) -> some View {
+        HStack(spacing: PFSpacing.sm) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(product.name)
+                    .font(.pfCaptionBold)
+                    .foregroundColor(.white)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("\(PFChapterHelper.readingOrderChapterNumbers(for: product).count) chapters")
+                    .font(.pfCaption)
+                    .foregroundColor(.white.opacity(0.8))
+            }
+            Spacer()
+            // Owned/Locked pill: white text on the royal band for
+            // both states (9.79:1, AAA), told apart by the icon
+            // and the word, never by colour alone. Gold text on
+            // royal measured 4.09:1, below AA for caption text.
+            HStack(spacing: 4) {
+                Image(systemName: storeManager.isProductUnlocked(product.productID) ? "checkmark.circle.fill" : "lock.fill")
+                    .font(.pfCaption.weight(.semibold))
+                    .accessibilityHidden(true)
+                Text(storeManager.isProductUnlocked(product.productID) ? "Owned" : "Locked")
+                    .font(.pfCaptionBold)
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Color.white.opacity(0.14))
+            .clipShape(Capsule())
+        }
+        .padding(.horizontal, PFSpacing.md)
+        .padding(.vertical, PFSpacing.sm)
+        .background(Color.pfRoyal)
     }
 
     // MARK: - Guides, labs and tests
@@ -721,9 +778,13 @@ struct PathwayCardView: View {
     }
 
     /// "69 lessons, 12 complete · About 6 hrs 10 min", or without
-    /// the estimate when no durations are known.
+    /// the estimate when no durations are known. When nothing is
+    /// complete yet the ", 0 complete" tail is omitted: a fresh
+    /// user never sees a zero counter.
     private var summaryLine: String {
-        let base = "\(lessons.count) lessons, \(completedCount) complete"
+        let base = completedCount > 0
+            ? "\(lessons.count) lessons, \(completedCount) complete"
+            : "\(lessons.count) lessons"
         guard let total = LessonDurations.totalLabel(for: lessons) else { return base }
         return base + " · " + total
     }
@@ -759,7 +820,7 @@ struct PathwayCardView: View {
                         .font(.pfCaptionBold)
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)
-                    if !lessons.isEmpty {
+                    if !lessons.isEmpty && completedCount > 0 {
                         PFProgressBar(progress: progress, height: 6)
                             .padding(.top, PFSpacing.xs)
                     }
@@ -771,6 +832,418 @@ struct PathwayCardView: View {
                     .pfDecorative()
             }
         }
+    }
+}
+
+// MARK: - Course index row
+
+/// One course in the Courses index: a row that opens the course
+/// detail, never an expanding group. The thumbnail of the course's
+/// first lesson with one sits beside the title when the website
+/// exposes thumbnails; otherwise the course number badge shows.
+/// Lesson counts, completion and the Owned state are real: lessons
+/// from the catalogue, completion from ProgressStore, ownership
+/// read only through StoreManager.isProductUnlocked, which counts
+/// The Integrated Course as unlocking every course. No price is
+/// shown here and no gating rule changes.
+struct CourseIndexRow: View {
+    @EnvironmentObject private var contentService: ContentService
+    @EnvironmentObject private var progressStore: ProgressStore
+    @EnvironmentObject private var storeManager: StoreManager
+    let product: CourseProduct
+    let courseNumber: Int
+    let chapterNumbers: [Int]
+
+    /// Every lesson of every chapter in this course, in reading
+    /// order, deduped by id. Courses never share a chapter, so no
+    /// lesson repeats; the dedupe guards the count if the
+    /// catalogue ever overlaps.
+    private var lessons: [SearchEntry] {
+        var seen: Set<String> = []
+        var result: [SearchEntry] = []
+        for number in chapterNumbers {
+            for lesson in PFChapterHelper.lessons(forChapter: number, in: contentService) {
+                if seen.insert(lesson.id).inserted {
+                    result.append(lesson)
+                }
+            }
+        }
+        return result
+    }
+
+    private var completedCount: Int {
+        lessons.filter { progressStore.isLessonComplete($0.id) }.count
+    }
+
+    /// "7 chapters, 48 lessons, 12 complete", plus the total
+    /// duration estimate when durations are known. When nothing is
+    /// complete yet the ", 0 complete" tail is omitted: a fresh
+    /// user never sees a zero counter.
+    private var summaryLine: String {
+        let chapterWord = chapterNumbers.count == 1 ? "chapter" : "chapters"
+        let base = completedCount > 0
+            ? "\(chapterNumbers.count) \(chapterWord), \(lessons.count) lessons, \(completedCount) complete"
+            : "\(chapterNumbers.count) \(chapterWord), \(lessons.count) lessons"
+        guard let total = LessonDurations.totalLabel(for: lessons) else { return base }
+        return base + " · " + total
+    }
+
+    private var progress: Double {
+        guard !lessons.isEmpty else { return 0 }
+        return Double(completedCount) / Double(lessons.count)
+    }
+
+    /// True when this course is owned outright, or The Integrated
+    /// Course is owned. Read only: this view never changes any
+    /// entitlement, it only labels the existing state.
+    private var isUnlocked: Bool {
+        storeManager.isProductUnlocked(product.productID)
+    }
+
+    private var thumbnailPath: String? {
+        PFChapterHelper.courseThumbnailPath(chapterNumbers: chapterNumbers, in: contentService)
+    }
+
+    var body: some View {
+        PFCard {
+            HStack(alignment: .top, spacing: PFSpacing.md) {
+                if thumbnailPath != nil {
+                    PFThumbnailView(thumbnailPath: thumbnailPath, size: 44, cornerRadius: 12)
+                } else {
+                    Text("\(courseNumber)")
+                        .font(.pfCardTitle.weight(.bold))
+                        .foregroundColor(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.pfRoyal)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .shadow(color: Color.pfRoyal.opacity(0.30), radius: 6, x: 0, y: 3)
+                }
+                VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                    Text("Course \(courseNumber)")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfRoyal)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(product.name)
+                        .font(.pfCardTitle)
+                        .foregroundColor(.pfNavy)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(product.tagline)
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(summaryLine)
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if isUnlocked {
+                        PFPill(
+                            text: "Owned",
+                            background: Color.pfSuccess.opacity(0.12),
+                            foreground: .pfSuccess
+                        )
+                    } else {
+                        PFPill(
+                            text: "Locked",
+                            background: Color.pfGoldSoft,
+                            foreground: Color.pfGoldText
+                        )
+                    }
+                    if !lessons.isEmpty && completedCount > 0 {
+                        PFProgressBar(progress: progress, height: 6)
+                            .padding(.top, PFSpacing.xs)
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .foregroundColor(.pfSecondaryText)
+                    .padding(.top, PFSpacing.xs)
+                    .pfDecorative()
+            }
+        }
+    }
+}
+
+// MARK: - Course detail
+
+/// One course opened from the index: its thumbnail beside the
+/// title, the highlighted agenda block (the course description:
+/// why take this course), its Owned or Locked state, and its
+/// chapters in reading order, each opening ChapterDetailView.
+/// Prev/next course links at the foot keep the courses reading one
+/// after another. Gating is unchanged: each chapter applies its
+/// own lock state, and the lock card below names the price through
+/// StoreManager, like the chapter lock banner.
+struct CourseDetailView: View {
+    @EnvironmentObject private var contentService: ContentService
+    @EnvironmentObject private var progressStore: ProgressStore
+    @EnvironmentObject private var storeManager: StoreManager
+    let product: CourseProduct
+    let courseNumber: Int
+    let chapterNumbers: [Int]
+
+    @State private var showCheckout = false
+
+    private var lessons: [SearchEntry] {
+        var seen: Set<String> = []
+        var result: [SearchEntry] = []
+        for number in chapterNumbers {
+            for lesson in PFChapterHelper.lessons(forChapter: number, in: contentService) {
+                if seen.insert(lesson.id).inserted {
+                    result.append(lesson)
+                }
+            }
+        }
+        return result
+    }
+
+    private var completedCount: Int {
+        lessons.filter { progressStore.isLessonComplete($0.id) }.count
+    }
+
+    private var isUnlocked: Bool {
+        storeManager.isProductUnlocked(product.productID)
+    }
+
+    private var thumbnailPath: String? {
+        PFChapterHelper.courseThumbnailPath(chapterNumbers: chapterNumbers, in: contentService)
+    }
+
+    private var courseIndex: Int {
+        courseNumber - 1
+    }
+
+    private var previousCourse: CourseProduct? {
+        let courses = ProductCatalogue.partProducts
+        guard courseIndex > 0, courses.indices.contains(courseIndex - 1) else { return nil }
+        return courses[courseIndex - 1]
+    }
+
+    private var nextCourse: CourseProduct? {
+        let courses = ProductCatalogue.partProducts
+        guard courses.indices.contains(courseIndex + 1) else { return nil }
+        return courses[courseIndex + 1]
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: PFSpacing.lg) {
+                HStack(alignment: .top, spacing: PFSpacing.md) {
+                    if thumbnailPath != nil {
+                        PFThumbnailView(thumbnailPath: thumbnailPath, size: 72, cornerRadius: 14)
+                    }
+                    VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                        Text("Course \(courseNumber) of \(ProductCatalogue.partProducts.count)")
+                            .font(.pfCaptionBold)
+                            .foregroundColor(.pfRoyal)
+                        Text(product.name)
+                            .font(.pfSectionTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(product.tagline)
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                PFAgendaBlock(title: "Why take this course", agenda: product.description)
+                HStack(spacing: PFSpacing.sm) {
+                    if isUnlocked {
+                        PFPill(
+                            text: "Owned",
+                            background: Color.pfSuccess.opacity(0.12),
+                            foreground: .pfSuccess
+                        )
+                    } else {
+                        PFPill(
+                            text: "Locked",
+                            background: Color.pfGoldSoft,
+                            foreground: Color.pfGoldText
+                        )
+                    }
+                    Text("\(chapterNumbers.count) chapters, \(lessons.count) lessons")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfSecondaryText)
+                }
+                if completedCount > 0 {
+                    Text("\(completedCount) of \(lessons.count) lessons complete")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfRoyal)
+                    PFProgressBar(progress: lessons.isEmpty ? 0 : Double(completedCount) / Double(lessons.count))
+                }
+                if !isUnlocked {
+                    lockCard
+                }
+                PFSectionHeader(title: "Chapters")
+                if contentService.isLoadingIndex && lessons.isEmpty {
+                    ProgressView("Loading chapters...")
+                } else if chapterNumbers.isEmpty {
+                    Text("Chapters will appear here once the course catalogue has loaded.")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                } else {
+                    ForEach(chapterNumbers, id: \.self) { number in
+                        NavigationLink(destination: ChapterDetailView(chapterNumber: number)) {
+                            ChapterRow(chapterNumber: number)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PFCardButtonStyle())
+                    }
+                }
+                courseNavFooter
+            }
+            .padding(PFSpacing.lg)
+            .id("courseTop")
+        }
+        .pfScrollToTopOnAppear("courseTop")
+        .background(Color.pfBackground)
+        .pfTabBarClearance()
+        .navigationTitle("Course \(courseNumber)")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showCheckout) {
+            CheckoutView()
+        }
+    }
+
+    /// Lock card: names the price and offers checkout. Chapters
+    /// below stay listed and open to their own lock states, so
+    /// browsing stays open.
+    private var lockCard: some View {
+        PFCard {
+            VStack(alignment: .leading, spacing: PFSpacing.md) {
+                HStack(spacing: PFSpacing.md) {
+                    PFIconTile(systemImage: "lock.fill", size: 44)
+                    VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                        Text("Locked course")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                        Text("Unlock this course with \(product.name) for \(storeManager.priceText(for: product.productID)), with 1 year of access. The Integrated Course unlocks every course too.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                PFPrimaryButton(title: "See purchase options") {
+                    showCheckout = true
+                }
+            }
+        }
+    }
+
+    /// Prev/next course footer in reading order, so courses read
+    /// one after another. The first course has no previous, the
+    /// last has no next.
+    private var courseNavFooter: some View {
+        HStack(spacing: PFSpacing.md) {
+            if let previous = previousCourse {
+                NavigationLink(destination: CourseDetailView(product: previous, courseNumber: courseNumber - 1, chapterNumbers: PFChapterHelper.readingOrderChapterNumbers(for: previous))) {
+                    courseNavLabel(product: previous, number: courseNumber - 1, direction: "Previous course")
+                }
+                .buttonStyle(PFCardButtonStyle())
+            }
+            Spacer()
+            if let next = nextCourse {
+                NavigationLink(destination: CourseDetailView(product: next, courseNumber: courseNumber + 1, chapterNumbers: PFChapterHelper.readingOrderChapterNumbers(for: next))) {
+                    courseNavLabel(product: next, number: courseNumber + 1, direction: "Next course")
+                }
+                .buttonStyle(PFCardButtonStyle())
+            }
+        }
+    }
+
+    private func courseNavLabel(product: CourseProduct, number: Int, direction: String) -> some View {
+        PFCard {
+            VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                Text(direction)
+                    .font(.pfCaptionBold)
+                    .foregroundColor(.pfRoyal)
+                Text("Course \(number)")
+                    .font(.pfBody.weight(.semibold))
+                    .foregroundColor(.pfNavy)
+                Text(product.name)
+                    .font(.pfCaption)
+                    .foregroundColor(.pfSecondaryText)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+// MARK: - Catalogue chapter row
+
+/// One chapter row inside the catalogue table: the chapter number
+/// (or the chapter thumbnail when the website exposes one), the
+/// chapter title, the lesson count, and the access icon. Columns
+/// align with the table header in catalogueTable: 36pt number,
+/// flexible title, 52pt lesson count, 44pt access. Alternate rows
+/// carry the off-white tint. Colours are the fixed pf palette,
+/// identical in light and dark mode.
+struct CatalogueChapterRow: View {
+    @EnvironmentObject private var contentService: ContentService
+    @EnvironmentObject private var storeManager: StoreManager
+    let chapterNumber: Int
+    let isAlternate: Bool
+
+    private var lessons: [SearchEntry] {
+        PFChapterHelper.lessons(forChapter: chapterNumber, in: contentService)
+    }
+
+    private var bookNumber: Int? {
+        PFBookModeReadingOrder.bookNumber(forInternalNumber: chapterNumber)
+    }
+
+    private var isLocked: Bool {
+        !storeManager.isChapterUnlocked("ch\(chapterNumber)")
+    }
+
+    private var thumbnailPath: String? {
+        PFChapterHelper.chapterThumbnailPath(forChapter: chapterNumber, in: contentService)
+    }
+
+    var body: some View {
+        HStack(spacing: PFSpacing.sm) {
+            if thumbnailPath != nil {
+                PFThumbnailView(thumbnailPath: thumbnailPath, size: 36, cornerRadius: 8)
+            } else {
+                Text(bookNumber.map(String.init) ?? "•")
+                    .font(.pfCaptionBold)
+                    .foregroundColor(.white)
+                    .frame(width: 36, height: 36)
+                    .background(Color.pfRoyal)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                if let bookNumber {
+                    Text("Chapter \(bookNumber)")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfRoyal)
+                }
+                Text(PFChapterHelper.chapterTitle(for: lessons, number: chapterNumber))
+                    .font(.pfBody.weight(.semibold))
+                    .foregroundColor(.pfNavy)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text("\(lessons.count)")
+                .font(.pfBody)
+                .foregroundColor(.pfSecondaryText)
+                .frame(width: 52, alignment: .trailing)
+            Image(systemName: isLocked ? "lock.fill" : "checkmark.circle.fill")
+                .font(.pfBody.weight(.semibold))
+                .foregroundColor(isLocked ? .pfSecondaryText : .pfSuccess)
+                .frame(width: 44, alignment: .trailing)
+        }
+        .padding(.horizontal, PFSpacing.md)
+        .padding(.vertical, PFSpacing.sm)
+        .background(isAlternate ? Color.pfBackground : Color.pfCard)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.pfBorder)
+                .frame(height: 1)
+        }
+        .contentShape(Rectangle())
     }
 }
 
@@ -791,14 +1264,18 @@ struct ChapterRow: View {
     }
 
     /// "8 lessons, 3 complete · About 1 hr 20 min", or without the
-    /// estimate when no durations are known.
+    /// estimate when no durations are known. When nothing is
+    /// complete yet the ", 0 complete" tail is omitted: a fresh
+    /// user never sees a zero counter.
     private var summaryLine: String {
-        let base = "\(lessons.count) lessons, \(completedCount) complete"
+        let base = completedCount > 0
+            ? "\(lessons.count) lessons, \(completedCount) complete"
+            : "\(lessons.count) lessons"
         guard let total = LessonDurations.totalLabel(for: lessons) else { return base }
         return base + " · " + total
     }
 
-    /// True when neither the part containing this chapter nor the
+    /// True when neither the course containing this chapter nor the
     /// Integrated Course is owned.
     private var isLocked: Bool {
         !storeManager.isChapterUnlocked("ch\(chapterNumber)")
@@ -811,16 +1288,27 @@ struct ChapterRow: View {
         PFBookModeReadingOrder.bookNumber(forInternalNumber: chapterNumber)
     }
 
+    /// The chapter thumbnail, when the website exposes one for a
+    /// lesson in this chapter. The thumbnail replaces the number
+    /// badge; the caption below still names the chapter number.
+    private var thumbnailPath: String? {
+        PFChapterHelper.chapterThumbnailPath(forChapter: chapterNumber, in: contentService)
+    }
+
     var body: some View {
         PFCard {
             HStack(alignment: .top, spacing: PFSpacing.md) {
-                Text(bookNumber.map(String.init) ?? "•")
-                    .font(.pfCardTitle.weight(.bold))
-                    .foregroundColor(.white)
-                    .frame(width: 44, height: 44)
-                    .background(Color.pfRoyal)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .shadow(color: Color.pfRoyal.opacity(0.30), radius: 6, x: 0, y: 3)
+                if thumbnailPath != nil {
+                    PFThumbnailView(thumbnailPath: thumbnailPath, size: 44, cornerRadius: 12)
+                } else {
+                    Text(bookNumber.map(String.init) ?? "•")
+                        .font(.pfCardTitle.weight(.bold))
+                        .foregroundColor(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.pfRoyal)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .shadow(color: Color.pfRoyal.opacity(0.30), radius: 6, x: 0, y: 3)
+                }
                 VStack(alignment: .leading, spacing: PFSpacing.xs) {
                     if let bookNumber {
                         Text("Chapter \(bookNumber)")
@@ -851,7 +1339,7 @@ struct ChapterRow: View {
                         }
                         .foregroundColor(.pfGold)
                     }
-                    if !lessons.isEmpty {
+                    if !lessons.isEmpty && completedCount > 0 {
                         PFProgressBar(
                             progress: Double(completedCount) / Double(lessons.count),
                             height: 6
@@ -864,252 +1352,6 @@ struct ChapterRow: View {
                     .foregroundColor(.pfSecondaryText)
                     .padding(.top, PFSpacing.xs)
                     .pfDecorative()
-            }
-        }
-    }
-}
-
-// MARK: - Bundle group
-
-/// One book part in the All Courses section: a header card
-/// that expands in place to the part's chapters. The part
-/// itself has no detail screen, so the header is a Button that
-/// expands and collapses, never a NavigationLink. Each chapter
-/// row below it opens the same ChapterDetailView the old flat
-/// chapter list opened. Lesson counts, completion and the Owned
-/// state are real: lessons from the catalogue, completion from
-/// ProgressStore, ownership read only through
-/// StoreManager.isProductUnlocked, which counts The Integrated
-/// Course as unlocking every part. No price is shown here and
-/// no gating rule changes: the lock state on each chapter row is
-/// ChapterRow's existing state, unchanged.
-struct BundleGroupView: View {
-    @EnvironmentObject private var contentService: ContentService
-    @EnvironmentObject private var progressStore: ProgressStore
-    @EnvironmentObject private var storeManager: StoreManager
-    let product: CourseProduct
-    @Binding var isExpanded: Bool
-
-    /// This part's chapter numbers in numeric order, so the
-    /// expanded list always reads in chapter order even though
-    /// the catalogue lists part chapters in topic order.
-    private var bundleChapterNumbers: [Int] {
-        product.chapterIDs
-            .compactMap { PFChapterHelper.chapterNumber(from: $0) }
-            .sorted()
-    }
-
-    /// Every lesson of every chapter in this bundle, in chapter
-    /// order, deduped by id. Bundles never share a chapter, so no
-    /// lesson repeats; the dedupe matches the LearningPath pattern
-    /// and guards the count if the catalogue ever overlaps.
-    private var lessons: [SearchEntry] {
-        var seen: Set<String> = []
-        var result: [SearchEntry] = []
-        for number in bundleChapterNumbers {
-            for lesson in PFChapterHelper.lessons(forChapter: number, in: contentService) {
-                if seen.insert(lesson.id).inserted {
-                    result.append(lesson)
-                }
-            }
-        }
-        return result
-    }
-
-    private var completedCount: Int {
-        lessons.filter { progressStore.isLessonComplete($0.id) }.count
-    }
-
-    /// "10 chapters, 72 lessons, 12 complete · About 6 hrs 10 min",
-    /// or without the estimate when no durations are known. The
-    /// same summary shape as the pathway and chapter cards.
-    private var summaryLine: String {
-        let chapterWord = bundleChapterNumbers.count == 1 ? "chapter" : "chapters"
-        let base = "\(bundleChapterNumbers.count) \(chapterWord), \(lessons.count) lessons, \(completedCount) complete"
-        guard let total = LessonDurations.totalLabel(for: lessons) else { return base }
-        return base + " · " + total
-    }
-
-    private var progress: Double {
-        guard !lessons.isEmpty else { return 0 }
-        return Double(completedCount) / Double(lessons.count)
-    }
-
-    /// True when this bundle is owned outright, or The Integrated
-    /// Course is owned. Read only: this view never changes any
-    /// entitlement, it only labels the existing state.
-    private var isUnlocked: Bool {
-        storeManager.isProductUnlocked(product.productID)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.md) {
-            Button {
-                isExpanded.toggle()
-            } label: {
-                PFCard {
-                    HStack(alignment: .top, spacing: PFSpacing.md) {
-                        PFIconTile(systemImage: "folder.fill", size: 44)
-                        VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                            Text(product.name)
-                                .font(.pfCardTitle)
-                                .foregroundColor(.pfNavy)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(product.tagline)
-                                .font(.pfBody)
-                                .foregroundColor(.pfSecondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(summaryLine)
-                                .font(.pfCaptionBold)
-                                .foregroundColor(.pfSecondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if isUnlocked {
-                                PFPill(
-                                    text: "Owned",
-                                    background: Color.pfSuccess.opacity(0.12),
-                                    foreground: .pfSuccess
-                                )
-                            } else {
-                                PFPill(
-                                    text: "Locked",
-                                    background: Color.pfGoldSoft,
-                                    foreground: Color.pfGoldText
-                                )
-                            }
-                            if !lessons.isEmpty {
-                                PFProgressBar(progress: progress, height: 6)
-                                    .padding(.top, PFSpacing.xs)
-                            }
-                        }
-                        Spacer()
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .foregroundColor(.pfSecondaryText)
-                            .padding(.top, PFSpacing.xs)
-                            .pfDecorative()
-                    }
-                }
-            }
-            .buttonStyle(PFCardButtonStyle())
-            .accessibilityHint(isExpanded ? "Collapses the chapter list for this bundle." : "Expands the chapter list for this bundle.")
-            if isExpanded {
-                ForEach(bundleChapterNumbers, id: \.self) { number in
-                    NavigationLink(destination: ChapterDetailView(chapterNumber: number)) {
-                        ChapterRow(chapterNumber: number)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(PFCardButtonStyle())
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Book part group
-
-/// One part of the book in the Book section: a header card that
-/// expands in place to the part's chapters in reading order. The
-/// part itself has no detail screen, so the header is a Button
-/// that expands and collapses, never a NavigationLink. Each
-/// chapter row below it opens the same ChapterDetailView the
-/// bundle groups open, with the same lock state. Lesson counts,
-/// completion and progress are real: lessons from the catalogue,
-/// completion from ProgressStore. No price is shown here and no
-/// gating rule changes.
-struct BookPartGroupView: View {
-    @EnvironmentObject private var contentService: ContentService
-    @EnvironmentObject private var progressStore: ProgressStore
-    let part: PFBookModeReadingOrder.BookPart
-    @Binding var isExpanded: Bool
-
-    /// This part's internal chapter numbers in reading order.
-    private var partChapterNumbers: [Int] {
-        part.bookNumbers.compactMap { PFBookModeReadingOrder.internalNumber(forBookNumber: $0) }
-    }
-
-    /// Every lesson of every chapter in this part, in reading
-    /// order, deduped by id.
-    private var lessons: [SearchEntry] {
-        var seen: Set<String> = []
-        var result: [SearchEntry] = []
-        for number in partChapterNumbers {
-            for lesson in PFChapterHelper.lessons(forChapter: number, in: contentService) {
-                if seen.insert(lesson.id).inserted {
-                    result.append(lesson)
-                }
-            }
-        }
-        return result
-    }
-
-    private var completedCount: Int {
-        lessons.filter { progressStore.isLessonComplete($0.id) }.count
-    }
-
-    /// "7 chapters, 48 lessons, 12 complete", plus the total
-    /// duration estimate when durations are known. The same
-    /// summary shape as the bundle and chapter cards.
-    private var summaryLine: String {
-        let chapterWord = partChapterNumbers.count == 1 ? "chapter" : "chapters"
-        let base = "\(partChapterNumbers.count) \(chapterWord), \(lessons.count) lessons, \(completedCount) complete"
-        guard let total = LessonDurations.totalLabel(for: lessons) else { return base }
-        return base + " · " + total
-    }
-
-    private var progress: Double {
-        guard !lessons.isEmpty else { return 0 }
-        return Double(completedCount) / Double(lessons.count)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.md) {
-            Button {
-                isExpanded.toggle()
-            } label: {
-                PFCard {
-                    HStack(alignment: .top, spacing: PFSpacing.md) {
-                        Text("\(part.number)")
-                            .font(.pfCardTitle.weight(.bold))
-                            .foregroundColor(.white)
-                            .frame(width: 44, height: 44)
-                            .background(Color.pfRoyal)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .shadow(color: Color.pfRoyal.opacity(0.30), radius: 6, x: 0, y: 3)
-                        VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                            Text("Part \(part.number)")
-                                .font(.pfCaptionBold)
-                                .foregroundColor(.pfRoyal)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(part.title)
-                                .font(.pfCardTitle)
-                                .foregroundColor(.pfNavy)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(summaryLine)
-                                .font(.pfCaptionBold)
-                                .foregroundColor(.pfSecondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if !lessons.isEmpty {
-                                PFProgressBar(progress: progress, height: 6)
-                                    .padding(.top, PFSpacing.xs)
-                            }
-                        }
-                        Spacer()
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .foregroundColor(.pfSecondaryText)
-                            .padding(.top, PFSpacing.xs)
-                            .pfDecorative()
-                    }
-                }
-            }
-            .buttonStyle(PFCardButtonStyle())
-            .accessibilityHint(isExpanded ? "Collapses the chapter list for this part." : "Expands the chapter list for this part.")
-            if isExpanded {
-                ForEach(partChapterNumbers, id: \.self) { number in
-                    NavigationLink(destination: ChapterDetailView(chapterNumber: number)) {
-                        ChapterRow(chapterNumber: number)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(PFCardButtonStyle())
-                }
             }
         }
     }
@@ -1159,30 +1401,59 @@ struct ChapterDetailView: View {
         return total + " in total, " + LessonDurations.durationText(remaining) + " left"
     }
 
-    /// True when neither the part containing this chapter nor the
+    /// True when neither the course containing this chapter nor the
     /// Integrated Course is owned.
     private var isLocked: Bool {
         !storeManager.isChapterUnlocked("ch\(chapterNumber)")
     }
 
+    /// The chapter agenda, from the chapter's opening lesson (see
+    /// PFChapterHelper.chapterAgenda). Nil when the website
+    /// exposes no agenda for the chapter: no agenda block shows.
+    private var chapterAgenda: String? {
+        PFChapterHelper.chapterAgenda(forChapter: chapterNumber, in: contentService)
+    }
+
+    /// The chapter thumbnail, when the website exposes one. It
+    /// sits beside the chapter title.
+    private var thumbnailPath: String? {
+        PFChapterHelper.chapterThumbnailPath(forChapter: chapterNumber, in: contentService)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PFSpacing.lg) {
-                VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                    Text(PFChapterHelper.chapterTitle(for: lessons, number: chapterNumber))
-                        .font(.pfSectionTitle)
-                        .foregroundColor(.pfNavy)
-                    if !lessons.isEmpty {
-                        Text("\(completedCount) of \(lessons.count) lessons complete")
-                            .font(.pfCaptionBold)
-                            .foregroundColor(.pfRoyal)
-                        if let timeLine {
-                            Text(timeLine)
-                                .font(.pfCaption)
-                                .foregroundColor(.pfSecondaryText)
-                        }
-                        PFProgressBar(progress: lessons.isEmpty ? 0 : Double(completedCount) / Double(lessons.count))
+                HStack(alignment: .top, spacing: PFSpacing.md) {
+                    if thumbnailPath != nil {
+                        PFThumbnailView(thumbnailPath: thumbnailPath, size: 64, cornerRadius: 14)
                     }
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text(PFChapterHelper.chapterTitle(for: lessons, number: chapterNumber))
+                            .font(.pfSectionTitle)
+                            .foregroundColor(.pfNavy)
+                        if !lessons.isEmpty {
+                            if completedCount > 0 {
+                                Text("\(completedCount) of \(lessons.count) lessons complete")
+                                    .font(.pfCaptionBold)
+                                    .foregroundColor(.pfRoyal)
+                            } else {
+                                Text("\(lessons.count) lessons")
+                                    .font(.pfCaptionBold)
+                                    .foregroundColor(.pfSecondaryText)
+                            }
+                            if let timeLine {
+                                Text(timeLine)
+                                    .font(.pfCaption)
+                                    .foregroundColor(.pfSecondaryText)
+                            }
+                            if completedCount > 0 {
+                                PFProgressBar(progress: Double(completedCount) / Double(lessons.count))
+                            }
+                        }
+                    }
+                }
+                if let chapterAgenda {
+                    PFAgendaBlock(title: "Why take this chapter", agenda: chapterAgenda)
                 }
                 if contentService.isLoadingIndex && lessons.isEmpty {
                     ProgressView("Loading lessons...")
@@ -1240,7 +1511,7 @@ struct ChapterDetailView: View {
     }
 
     /// Prev/next chapter footer in reading order, so chapters read
-    /// one after another like a book. The first book chapter has
+    /// one after another. The first course chapter has
     /// no previous, the last has no next, and a held-out chapter
     /// has neither. Gating is unchanged: the destination chapter
     /// applies its own lock state.
@@ -1289,7 +1560,7 @@ struct ChapterDetailView: View {
         }
     }
 
-    /// Lock banner: names the bundle that unlocks this chapter and
+    /// Lock banner: names the course that unlocks this chapter and
     /// offers checkout. The lessons below stay listed and open to
     /// the lock screen, so browsing stays open.
     private var lockBanner: some View {

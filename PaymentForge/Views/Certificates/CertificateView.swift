@@ -341,7 +341,7 @@ struct CertificatesListView: View {
     private var courseCertificatesSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
             PFSectionHeader(title: "Course certificates")
-            Text("Pass a course Final Assessment with more than 70 percent to earn its certificate. Each course allows 3 attempts. Only four courses also carry a Certifier digital credential: The Integrated Course, Part 2: How Payments Move: Rails, Schemes and Systems, Part 3: Messages: SWIFT MT, ISO 20022 and Standards, and Part 9: The Business Analyst at Work.")
+            Text("Pass a course Final Assessment with more than 70 percent to earn its certificate. Each course allows 3 attempts. Only four courses also carry a Certifier digital credential: The Integrated Course, Course 2: How Payments Move: Rails, Schemes and Systems, Course 3: Messages: SWIFT MT, ISO 20022 and Standards, and Course 9: The Business Analyst at Work.")
                 .font(.pfBody)
                 .foregroundColor(.pfSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)

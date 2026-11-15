@@ -53,7 +53,7 @@ enum CertifierService {
     /// The slugs are the server's existing template names, kept
     /// unchanged: the Integrated Course keeps "full", Part 3
     /// (messages) keeps "messaging", Part 9 (the BA at work) keeps
-    /// "ba-practice", and Part 2 (rails) keeps "rails". The
+    /// "ba-practice", and Course 2 (rails) keeps "rails". The
     /// server worker must confirm these template mappings still
     /// hold under the new product IDs.
     static func courseSlug(for productID: String) -> String? {

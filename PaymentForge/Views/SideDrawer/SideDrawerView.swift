@@ -233,7 +233,7 @@ struct SideDrawerView: View {
                 id: .myPurchases,
                 icon: "bag.fill",
                 title: "My Purchases",
-                subtitle: "Your bundles and Payment Situations, payment and access status"
+                subtitle: "Your courses and Payment Situations, payment and access status"
             ),
             DrawerRowModel(
                 id: .appearance,
@@ -550,13 +550,18 @@ private struct KeepLearningCard: View {
                     .foregroundColor(.pfSecondaryText)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                PFProgressBar(progress: progressStore.weeklyProgress, height: 6)
-                    // The progress line above already states the streak
-                    // and the weekly count, so the bar itself stays
-                    // silent for VoiceOver instead of announcing the
-                    // same progress a second time.
-                    .accessibilityHidden(true)
-                    .padding(.top, 4)
+                // No progress bar until the learner has completed
+                // a lesson: an empty bar under a starter line
+                // reads as a zero counter.
+                if hasCompletedLesson {
+                    PFProgressBar(progress: progressStore.weeklyProgress, height: 6)
+                        // The progress line above already states the streak
+                        // and the weekly count, so the bar itself stays
+                        // silent for VoiceOver instead of announcing the
+                        // same progress a second time.
+                        .accessibilityHidden(true)
+                        .padding(.top, 4)
+                }
             }
 
             Spacer(minLength: PFSpacing.sm)
@@ -588,10 +593,17 @@ private struct KeepLearningCard: View {
         )
     }
 
+    /// The line under the card title. A fresh learner (no
+    /// completed lesson, no streak) gets the starter line, not a
+    /// "0 of 5 lessons this week" counter. Once anything is
+    /// complete, the streak and weekly count show as before.
     private var progressLine: String {
         let streak = progressStore.streakCount
         let done = progressStore.lessonsCompletedThisWeek
         let goal = progressStore.weeklyGoal
+        if !hasCompletedLesson && streak == 0 {
+            return "Start with the first lesson in Course 1."
+        }
         if streak > 0 {
             return "\(streak) day streak. \(done) of \(goal) lessons this week."
         }

@@ -222,15 +222,15 @@ struct LessonView: View {
         return "Chapter \(book), Lesson \(display) of \(total)"
     }
 
-    /// "Part 3, Lesson 142 of 774 in the book": the part number
-    /// and the position among all in-book lessons in reading
+    /// "Course 3, Lesson 142 of 774 in the full course": the course number
+    /// and the position among all in-course lessons in reading
     /// order. Nil for held-out lessons and lessons outside the
     /// loaded catalogue.
     private var bookPositionCaption: String? {
         guard let number = PFChapterHelper.chapterNumber(from: entry.id),
               let part = PFBookModeReadingOrder.part(forInternalNumber: number),
               let position = contentService.bookPosition(for: entry) else { return nil }
-        return "Part \(part.number), Lesson \(position.position) of \(position.total) in the book"
+        return "Course \(part.number), Lesson \(position.position) of \(position.total) in the full course"
     }
 
     private var transcriptText: String {
@@ -629,6 +629,14 @@ struct LessonView: View {
             .id("lessonTop")
         }
         .pfScrollToTopOnAppear("lessonTop")
+        // Floating play/pause: the audio controls live inside the
+        // ScrollView and scroll away with the lesson, so this
+        // button shares the same player state and stays reachable
+        // while scrolled down. It shows only for unlocked lessons
+        // that have narration audio.
+        .overlay(alignment: .bottomTrailing) {
+            floatingAudioButton
+        }
         // Copy protection: lesson text cannot be selected, a faint
         // identity watermark sits over the content, and recording
         // blurs it out. The note composer sheet is outside this
@@ -848,10 +856,19 @@ struct LessonView: View {
                     .foregroundColor(.pfSecondaryText)
             }
 
-            Text(lessonTitle)
-                .font(.pfHeroTitle)
-                .foregroundColor(.pfNavy)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: PFSpacing.md) {
+                if entry.thumbnail != nil {
+                    PFThumbnailView(thumbnailPath: entry.thumbnail, size: 64, cornerRadius: 14)
+                }
+                Text(lessonTitle)
+                    .font(.pfHeroTitle)
+                    .foregroundColor(.pfNavy)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let agenda = entry.agenda?.trimmingCharacters(in: .whitespacesAndNewlines), !agenda.isEmpty {
+                PFAgendaBlock(title: "Why take this lesson", agenda: agenda)
+            }
 
             HStack(spacing: PFSpacing.sm) {
                 PFPill(text: entry.type.displayName)
@@ -949,6 +966,32 @@ struct LessonView: View {
     }
 
     // MARK: - 2. Lesson flow, first under the header
+
+    /// The floating play/pause button: one circular gold button,
+    /// bottom trailing, above the floating tab bar pill. It calls
+    /// the same playButtonTapped as the audio section (first tap
+    /// starts the narration, later taps toggle), and its icon
+    /// follows audioService.isPlaying, so it can never disagree
+    /// with the main player controls.
+    private var floatingAudioButton: some View {
+        Group {
+            if !isLessonLocked && !audioFileName.isEmpty {
+                Button(action: { playButtonTapped() }) {
+                    Image(systemName: audioService.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(.pfNavy)
+                        .frame(width: 56, height: 56)
+                        .background(Color.pfGold)
+                        .clipShape(Circle())
+                        .shadow(color: Color.black.opacity(0.25), radius: 10, x: 0, y: 4)
+                }
+                .accessibilityLabel(audioService.isPlaying ? "Pause narration" : "Play narration")
+                .accessibilityHint("Plays or pauses this lesson's narration.")
+                .padding(.trailing, PFSpacing.lg)
+                .padding(.bottom, 100)
+            }
+        }
+    }
 
     /// The lesson visual for every lesson: the beats as a native
     /// vertical flow. The website's flow-diagram SVG is never
@@ -2133,17 +2176,17 @@ struct LessonView: View {
 
     /// Shown at the top of a sequential free sample lesson in a
     /// locked chapter: the first sample says it is free, and the
-    /// second (last) sample carries the buy prompt for the part.
+    /// second (last) sample carries the buy prompt for the course.
     private var sequentialSampleBanner: some View {
         PFCard {
             HStack(spacing: PFSpacing.md) {
                 PFIconTile(systemImage: "gift.fill", size: 44)
                 VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                    Text(sequentialSampleIndex == 1 ? "Last free sample in this part" : "Free sample lesson")
+                    Text(sequentialSampleIndex == 1 ? "Last free sample in this course" : "Free sample lesson")
                         .font(.pfCardTitle)
                         .foregroundColor(.pfNavy)
                     if sequentialSampleIndex == 1, let part = unlockingProduct {
-                        Text("This is the second of 2 free samples from \(part.name). Unlock the part\(storeManager.isPriceAvailable(for: part.productID) ? " for \(storeManager.priceText(for: part.productID))" : "") to keep reading, with 1 year of access.")
+                        Text("This is the second of 2 free samples from \(part.name). Unlock the course\(storeManager.isPriceAvailable(for: part.productID) ? " for \(storeManager.priceText(for: part.productID))" : "") to keep reading, with 1 year of access.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -2151,7 +2194,7 @@ struct LessonView: View {
                             showCheckout = true
                         }
                     } else {
-                        Text("This lesson is free, with the full content. The rest of this part unlocks with the course.")
+                        Text("This lesson is free, with the full content. The rest of this course unlocks when you buy it.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -2163,7 +2206,7 @@ struct LessonView: View {
 
     /// Shown in place of the lesson when its chapter is locked: the
     /// lesson stays listed and its title stays visible, but the
-    /// narration, transcript and quiz stay locked until the part
+    /// narration, transcript and quiz stay locked until the course
     /// or the Integrated Course is bought. Buying from here unlocks
     /// the lesson in place.
     private var lockedLessonSection: some View {
@@ -2175,7 +2218,7 @@ struct LessonView: View {
                         Text("Locked lesson")
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
-                        Text("Buy the part to unlock this chapter.")
+                        Text("Buy the course to unlock this chapter.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)

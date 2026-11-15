@@ -98,17 +98,19 @@ struct HomeView: View {
 
                         exploreSection(includePractice: true)
                     } else {
+                        // Newcomer home: greeting above, then one
+                        // obvious first action (the recommended
+                        // first lesson), the progress starter
+                        // state, and the Explore disclosure for
+                        // everything else. The route card, daily
+                        // challenge, practice exercise, and
+                        // habit sections stay on the returning
+                        // learner's home: a newcomer who has not
+                        // finished anything yet does not need
+                        // seven competing options.
                         primaryRecommendationSection
 
-                        recommendedRouteSection
-
-                        dailyChallengeSection
-
-                        practiceExerciseSection
-
                         yourProgressSection
-
-                        habitSection
 
                         exploreSection(includePractice: false)
                     }
@@ -364,11 +366,16 @@ struct HomeView: View {
     }
 
     /// Accessibility label for one learning plan row, with the real
-    /// progress fraction so progress is never colour-only.
+    /// progress fraction so progress is never colour-only. A
+    /// session with nothing complete says so in words, not as a
+    /// "0 of N" counter.
     private func learningPlanAccessibilityLabel(for session: GuidedSession) -> String {
         let progress = guidedSessionProgress(for: session)
-        if progress.total > 0 {
+        if progress.total > 0 && progress.completed > 0 {
             return "Session \(session.id): \(session.title), \(progress.completed) of \(progress.total) lessons complete"
+        }
+        if progress.total > 0 {
+            return "Session \(session.id): \(session.title), not started yet"
         }
         return "Session \(session.id): \(session.title)"
     }
@@ -400,11 +407,18 @@ struct HomeView: View {
                     .foregroundColor(.pfNavy)
                     .fixedSize(horizontal: false, vertical: true)
                 if progress.total > 0 {
-                    Text("\(progress.completed) of \(progress.total) lessons complete")
-                        .font(.pfCaption)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    PFProgressBar(progress: Double(progress.completed) / Double(progress.total), height: 6)
+                    if progress.completed > 0 {
+                        Text("\(progress.completed) of \(progress.total) lessons complete")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        PFProgressBar(progress: Double(progress.completed) / Double(progress.total), height: 6)
+                    } else {
+                        Text("\(progress.total) lessons · Not started yet")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 } else {
                     Text(session.description)
                         .font(.pfCaption)
@@ -478,7 +492,11 @@ struct HomeView: View {
                     PFHomeTabCard(accent: .gold) {
                         VStack(alignment: .leading, spacing: PFSpacing.md) {
                             HStack(spacing: PFSpacing.md) {
-                                PFIconTile(systemImage: "play.fill", size: 52)
+                                if recommendation.lesson.thumbnail != nil {
+                                    PFThumbnailView(thumbnailPath: recommendation.lesson.thumbnail, size: 52, cornerRadius: 12)
+                                } else {
+                                    PFIconTile(systemImage: "play.fill", size: 52)
+                                }
                                 VStack(alignment: .leading, spacing: PFSpacing.xs) {
                                     Text(recommendation.lesson.title)
                                         .font(.pfCardTitle)
@@ -500,6 +518,18 @@ struct HomeView: View {
                                 .font(.pfBody)
                                 .foregroundColor(.pfSecondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
+                            // Learners who skipped onboarding never
+                            // answered the setup questions, so the
+                            // journey line from the explanation
+                            // screen repeats here: start at Course
+                            // 1, or pick the course that matches
+                            // the gap.
+                            if effectiveProfile == nil {
+                                Text("Start with Course 1 and work through in order, or pick the course that matches the gap you need to close. Your progress saves as you go.")
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                             Text("Start this lesson")
                                 .font(.pfBody.weight(.semibold))
                                 .foregroundColor(.white)
@@ -954,10 +984,17 @@ struct HomeView: View {
                             .foregroundColor(.pfNavy)
                             .fixedSize(horizontal: false, vertical: true)
                         if activePathProgress.total > 0 {
-                            Text("\(activePathProgress.completed) of \(activePathProgress.total) lessons complete")
-                                .font(.pfBody)
-                                .foregroundColor(.pfSecondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
+                            if activePathProgress.completed > 0 {
+                                Text("\(activePathProgress.completed) of \(activePathProgress.total) lessons complete")
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else {
+                                Text("\(activePathProgress.total) lessons · Not started yet")
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
                     Spacer()
@@ -965,7 +1002,7 @@ struct HomeView: View {
                         .foregroundColor(.pfSecondaryText)
                         .padding(.top, PFSpacing.xs)
                 }
-                if activePathProgress.total > 0 {
+                if activePathProgress.total > 0 && activePathProgress.completed > 0 {
                     HStack(spacing: PFSpacing.sm) {
                         PFProgressBar(progress: Double(activePathProgress.completed) / Double(activePathProgress.total), height: 6)
                         Text(activePathPercentText)
@@ -1508,7 +1545,9 @@ struct HomeView: View {
     /// whole-catalogue fraction against ContentManifest.lessonCount
     /// with 0%. While the catalogue is still loading it says so instead
     /// of flashing 0%. A new user sees a neutral "No active streak"
-    /// baseline, not a missing streak.
+    /// baseline, not a missing streak. And until the first whole
+    /// chapter is complete, the whole section is a starter state:
+    /// a fresh user never sees a ring at 0% or a "0 of N" counter.
     private var yourProgressSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
             if let tabBinding = selectedTab {
@@ -1530,6 +1569,8 @@ struct HomeView: View {
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                } else if !hasMeaningfulProgress {
+                    progressStarterCard
                 } else {
                     HStack(spacing: PFSpacing.md) {
                         VStack(spacing: PFSpacing.sm) {
@@ -1553,11 +1594,18 @@ struct HomeView: View {
                                     .font(.pfCardTitle)
                                     .foregroundColor(.pfNavy)
                             }
-                            Text("\(progressStore.lessonsCompletedThisWeek) of \(progressStore.weeklyGoal) lessons this week")
-                                .font(.pfBody)
-                                .foregroundColor(.pfSecondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                            PFProgressBar(progress: progressStore.weeklyProgress)
+                            if progressStore.lessonsCompletedThisWeek > 0 {
+                                Text("\(progressStore.lessonsCompletedThisWeek) of \(progressStore.weeklyGoal) lessons this week")
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                PFProgressBar(progress: progressStore.weeklyProgress)
+                            } else {
+                                Text("No lessons completed this week yet.")
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                             if progressStore.streakCount > 0 {
                                 Label("\(progressStore.streakCount) day streak", systemImage: "flame.fill")
                                     .font(.pfCaptionBold)
@@ -1573,6 +1621,39 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    /// True once the learner has finished a whole chapter:
+    /// the point where progress UI may appear. Before that, the
+    /// progress section shows the starter state instead.
+    private var hasMeaningfulProgress: Bool {
+        ProgressVisibility.hasMeaningfulProgress(
+            completedIDs: progressStore.completedLessonIDs,
+            lessonEntries: contentService.allLessons
+        )
+    }
+
+    /// The starter state shown instead of the progress ring and
+    /// counters until the first chapter is complete: what will
+    /// appear here, and a link to the first lesson to start with.
+    /// No zero counter, no empty ring.
+    private var progressStarterCard: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.sm) {
+            Text("Your progress will show here once you finish your first chapter.")
+                .font(.pfBody)
+                .foregroundColor(.pfSecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            if let firstLesson = primaryRecommendation?.lesson ?? contentService.readingOrderLessons.first {
+                NavigationLink(destination: LessonView(entry: firstLesson)) {
+                    Text("Start with the first lesson")
+                        .font(.pfBody.weight(.semibold))
+                        .foregroundColor(.pfRoyal)
+                }
+                .accessibilityLabel("Start with the first lesson: \(firstLesson.title)")
+                .accessibilityHint("Opens the first lesson")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Progress in the current session as a fraction, for the ring.
@@ -1591,12 +1672,15 @@ struct HomeView: View {
         return "Guided path complete"
     }
 
-    /// "2 of 12 lessons" for the current session.
+    /// "2 of 12 lessons" for the current session, or "Not
+    /// started yet" when nothing in the session is complete: no
+    /// "0 of 12" counter.
     private var sessionProgressDetail: String {
         guard let session = currentGuidedSession else {
             return "\(progressStore.totalLessonsCompleted) lessons complete"
         }
         let progress = guidedSessionProgress(for: session)
+        guard progress.completed > 0 else { return "Not started yet" }
         return "\(progress.completed) of \(progress.total) lessons"
     }
 
@@ -2119,10 +2203,16 @@ struct GuidedPathDetailView: View {
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
                     if !lessons.isEmpty {
-                        Text("\(completedCount) of \(lessons.count) lessons complete")
-                            .font(.pfCaptionBold)
-                            .foregroundColor(.pfRoyal)
-                        PFProgressBar(progress: lessons.isEmpty ? 0 : Double(completedCount) / Double(lessons.count))
+                        if completedCount > 0 {
+                            Text("\(completedCount) of \(lessons.count) lessons complete")
+                                .font(.pfCaptionBold)
+                                .foregroundColor(.pfRoyal)
+                            PFProgressBar(progress: Double(completedCount) / Double(lessons.count))
+                        } else {
+                            Text("\(lessons.count) lessons · Not started yet")
+                                .font(.pfCaptionBold)
+                                .foregroundColor(.pfSecondaryText)
+                        }
                     }
                 }
                 if let next = nextLesson {
@@ -2202,14 +2292,14 @@ struct LessonRow: View {
     var showsLessonNumber: Bool = false
 
     /// True when this lesson's chapter is not unlocked: neither the
-    /// part containing it nor the Integrated Course is owned.
+    /// course containing it nor the Integrated Course is owned.
     private var isLocked: Bool {
         guard let number = PFChapterHelper.chapterNumber(from: entry.id) else { return false }
         return !storeManager.isChapterUnlocked("ch\(number)")
     }
 
     /// True when this lesson is free without any purchase: the
-    /// first lesson of its chapter, or one of its part's
+    /// first lesson of its chapter, or one of its course's
     /// sequential free samples. Free with full content even when
     /// the chapter is locked.
     private var isFreeSample: Bool {
@@ -2219,21 +2309,41 @@ struct LessonRow: View {
     var body: some View {
         PFCard {
             HStack(spacing: PFSpacing.md) {
-                ZStack {
-                    PFIconTile(
-                        systemImage: progressStore.isLessonComplete(entry.id) ? "checkmark" : "play.fill",
-                        size: 44
-                    )
-                    if progressStore.isLessonComplete(entry.id) {
-                        Circle()
-                            .fill(Color.pfSuccess)
-                            .frame(width: 18, height: 18)
-                            .overlay(
-                                Image(systemName: "checkmark")
-                                    .font(.pfCaption.weight(.bold))
-                                    .foregroundColor(.white)
-                            )
-                            .offset(x: 16, y: -16)
+                // The thumbnail sits beside the title when the
+                // website exposes one; the play/check tile
+                // otherwise, with the completed badge on top.
+                if entry.thumbnail != nil {
+                    ZStack(alignment: .topTrailing) {
+                        PFThumbnailView(thumbnailPath: entry.thumbnail, size: 44, cornerRadius: 12)
+                        if progressStore.isLessonComplete(entry.id) {
+                            Circle()
+                                .fill(Color.pfSuccess)
+                                .frame(width: 18, height: 18)
+                                .overlay(
+                                    Image(systemName: "checkmark")
+                                        .font(.pfCaption.weight(.bold))
+                                        .foregroundColor(.white)
+                                )
+                                .offset(x: 6, y: -6)
+                        }
+                    }
+                } else {
+                    ZStack {
+                        PFIconTile(
+                            systemImage: progressStore.isLessonComplete(entry.id) ? "checkmark" : "play.fill",
+                            size: 44
+                        )
+                        if progressStore.isLessonComplete(entry.id) {
+                            Circle()
+                                .fill(Color.pfSuccess)
+                                .frame(width: 18, height: 18)
+                                .overlay(
+                                    Image(systemName: "checkmark")
+                                        .font(.pfCaption.weight(.bold))
+                                        .foregroundColor(.white)
+                                )
+                                .offset(x: 16, y: -16)
+                        }
                     }
                 }
                 VStack(alignment: .leading, spacing: PFSpacing.xs) {
@@ -2277,11 +2387,13 @@ struct LessonRow: View {
                         }
                         .foregroundColor(.pfGold)
                     }
-                    PFProgressBar(
-                        progress: progressStore.isLessonComplete(entry.id) ? 1 : 0,
-                        height: 6
-                    )
-                    .padding(.top, PFSpacing.xs)
+                    // The progress bar shows only for a completed
+                    // lesson: an empty bar under every unfinished
+                    // lesson reads as a zero counter.
+                    if progressStore.isLessonComplete(entry.id) {
+                        PFProgressBar(progress: 1, height: 6)
+                            .padding(.top, PFSpacing.xs)
+                    }
                 }
                 Spacer()
                 Image(systemName: "chevron.right")

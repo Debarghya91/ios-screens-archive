@@ -709,6 +709,36 @@ final class ProgressStore: ObservableObject {
     }
 }
 
+// MARK: - Progress visibility (the fresh-user rule)
+
+/// Decides when progress UI may show at all. A fresh user must
+/// never see a "0 of N" counter: progress UI appears only after
+/// meaningful progress, defined as one whole chapter completed
+/// (every regular lesson in some chapter marked complete).
+/// Before that, callers show a starter state instead of a zero
+/// counter, an empty bar, or a 0% ring. Supplemental lessons do
+/// not count toward completing a chapter: they are extra lessons
+/// bundled with the app, not part of the chapter sequence, so a
+/// chapter completes on its regular lessons alone. An empty
+/// catalogue means no meaningful progress yet. Pure logic, covered
+/// by unit tests.
+enum ProgressVisibility {
+    static func hasMeaningfulProgress(completedIDs: Set<String>, lessonEntries: [SearchEntry]) -> Bool {
+        var lessonsByChapter: [Int: [String]] = [:]
+        for entry in lessonEntries where entry.type == .lesson && !entry.isSupplemental {
+            guard let chapter = entry.chapterNumber else { continue }
+            lessonsByChapter[chapter, default: []].append(entry.id)
+        }
+        for lessonIDs in lessonsByChapter.values {
+            guard !lessonIDs.isEmpty else { continue }
+            if lessonIDs.allSatisfy({ completedIDs.contains($0) }) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
 // MARK: - Recently opened lessons
 
 /// Recently opened lessons, most recent first, kept in

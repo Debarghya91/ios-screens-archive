@@ -127,6 +127,62 @@ enum PFChapterHelper {
         return "Chapter \(book)"
     }
 
+    /// The agenda for a chapter: the agenda of the chapter's first
+    /// lesson that carries one, in catalogue order. The website
+    /// exposes agendas on lesson data; the app has no separate
+    /// chapter data fetch, and a chapter's opening lesson agenda
+    /// introduces the chapter, so it stands in for the chapter
+    /// agenda until the website exposes chapter-level agendas.
+    /// Nil when no lesson in the chapter carries an agenda: the
+    /// chapter view then shows no agenda block, never a
+    /// placeholder. Blank agendas are skipped, never shown.
+    static func chapterAgenda(forChapter number: Int, in service: ContentService) -> String? {
+        for lesson in lessons(forChapter: number, in: service) {
+            if let agenda = lesson.agenda?.trimmingCharacters(in: .whitespacesAndNewlines), !agenda.isEmpty {
+                return agenda
+            }
+        }
+        return nil
+    }
+
+    /// The thumbnail path for a chapter: the thumbnail of the
+    /// chapter's first lesson that carries one, in catalogue
+    /// order. Nil when no lesson in the chapter carries a
+    /// thumbnail: the chapter row keeps its number badge.
+    static func chapterThumbnailPath(forChapter number: Int, in service: ContentService) -> String? {
+        for lesson in lessons(forChapter: number, in: service) {
+            if let path = lesson.thumbnail?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
+                return path
+            }
+        }
+        return nil
+    }
+
+    /// The thumbnail path for a course: the thumbnail of the first
+    /// lesson, across the course's chapters in the given order,
+    /// that carries one. Nil when none does.
+    static func courseThumbnailPath(chapterNumbers: [Int], in service: ContentService) -> String? {
+        for number in chapterNumbers {
+            if let path = chapterThumbnailPath(forChapter: number, in: service) {
+                return path
+            }
+        }
+        return nil
+    }
+
+    /// A course product's chapter numbers in reading order, from
+    /// the reading-order map: the catalogue lists course chapters
+    /// in topic order, and course and catalogue listings must
+    /// read in course order.
+    static func readingOrderChapterNumbers(for product: CourseProduct) -> [Int] {
+        product.chapterIDs
+            .compactMap { chapterNumber(from: $0) }
+            .sorted {
+                PFBookModeReadingOrder.readingOrderIndex(forInternalNumber: $0)
+                    < PFBookModeReadingOrder.readingOrderIndex(forInternalNumber: $1)
+            }
+    }
+
     /// All chapter numbers present in the loaded index, numeric order.
     static func chapterNumbers(in service: ContentService) -> [Int] {
         let numbers = Set(service.allLessons.compactMap { chapterNumber(from: $0.id) })

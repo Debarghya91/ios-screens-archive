@@ -172,4 +172,36 @@ final class ProgressStoreTests: XCTestCase {
         XCTAssertEqual(firstStoreAgain.totalLessonsCompleted, 1, "Returning to the first namespace restores its progress.")
         XCTAssertTrue(firstStoreAgain.isLessonComplete("ch1s1"))
     }
+
+    // MARK: - Progress visibility (v91)
+
+    /// Fixture lessons: chapter 1 has two regular lessons, chapter
+    /// 2 has one regular lesson and one supplemental lesson (the
+    /// "-supp" suffix), which never counts toward chapter
+    /// completion.
+    private var visibilityEntries: [SearchEntry] {
+        [
+            SearchEntry(id: "ch1s1", title: "L1", url: "lessons/ch1s1", type: .lesson, text: "t"),
+            SearchEntry(id: "ch1s2", title: "L2", url: "lessons/ch1s2", type: .lesson, text: "t"),
+            SearchEntry(id: "ch2s1", title: "L3", url: "lessons/ch2s1", type: .lesson, text: "t"),
+            SearchEntry(id: "ch2s1-supp", title: "L4", url: "lessons/ch2s1-supp", type: .lesson, text: "t")
+        ]
+    }
+
+    func testNoMeaningfulProgressWhenNothingComplete() {
+        XCTAssertFalse(ProgressVisibility.hasMeaningfulProgress(completedIDs: [], lessonEntries: visibilityEntries))
+    }
+
+    func testNoMeaningfulProgressForPartialChapter() {
+        XCTAssertFalse(ProgressVisibility.hasMeaningfulProgress(completedIDs: ["ch1s1"], lessonEntries: visibilityEntries))
+    }
+
+    func testMeaningfulProgressWhenAChapterIsComplete() {
+        XCTAssertTrue(ProgressVisibility.hasMeaningfulProgress(completedIDs: ["ch1s1", "ch1s2"], lessonEntries: visibilityEntries))
+    }
+
+    func testSupplementalLessonsDoNotCompleteAChapter() {
+        XCTAssertFalse(ProgressVisibility.hasMeaningfulProgress(completedIDs: ["ch2s1-supp"], lessonEntries: visibilityEntries))
+        XCTAssertTrue(ProgressVisibility.hasMeaningfulProgress(completedIDs: ["ch2s1"], lessonEntries: visibilityEntries))
+    }
 }

@@ -201,4 +201,62 @@ final class SearchAndPracticeTests: XCTestCase {
         XCTAssertEqual(ContentService.stageSource(forFullItem: item), .authoritative)
         XCTAssertEqual(ContentService.stageName(forFullItem: item), "Operational exceptions")
     }
+
+    // MARK: - Difficulty filter (multi-select, v91)
+
+    /// Fixture hits for the filter tests: a Foundation lesson (text
+    /// hint), an Advanced lesson (text hint), a lesson with no
+    /// derivable level, and a situation with no level in the map
+    /// (defaults to Core, as situation(from:) does).
+    private var filterHits: [SearchHit] {
+        [
+            SearchHit(entry: entry(id: "ch1s1", title: "Foundation lesson", text: "foundation concepts for beginners"), score: 10, reason: "", matchedTerm: nil),
+            SearchHit(entry: entry(id: "ch1s2", title: "Advanced lesson", text: "advanced topics for experts"), score: 9, reason: "", matchedTerm: nil),
+            SearchHit(entry: entry(id: "ch1s3", title: "Plain lesson", text: "plain payment text with no level hint"), score: 8, reason: "", matchedTerm: nil),
+            SearchHit(entry: entry(id: "ABH-01", title: "A case", text: "plain case text", type: .situation), score: 7, reason: "", matchedTerm: nil)
+        ]
+    }
+
+    func testLevelFilterInactiveWhenEmptyOrFull() {
+        XCTAssertFalse(SearchService.isLevelFilterActive([]))
+        XCTAssertFalse(SearchService.isLevelFilterActive(Set(SearchService.allLevels)))
+        XCTAssertTrue(SearchService.isLevelFilterActive([.foundation]))
+        XCTAssertTrue(SearchService.isLevelFilterActive([.foundation, .core]))
+    }
+
+    func testAllLevelsSelectedReturnsHitsUnchanged() {
+        let filtered = SearchService.applyLevelFilter(filterHits, selectedLevels: Set(SearchService.allLevels), situationLevelsByID: [:])
+        XCTAssertEqual(filtered.map(\.entry.id), filterHits.map(\.entry.id))
+        let unfiltered = SearchService.applyLevelFilter(filterHits, selectedLevels: [], situationLevelsByID: [:])
+        XCTAssertEqual(unfiltered.map(\.entry.id), filterHits.map(\.entry.id))
+    }
+
+    func testPartialFilterKeepsOnlySelectedLevels() {
+        let filtered = SearchService.applyLevelFilter(filterHits, selectedLevels: [.foundation, .core], situationLevelsByID: [:])
+        XCTAssertEqual(Set(filtered.map(\.entry.id)), ["ch1s1", "ABH-01"])
+    }
+
+    func testUnknownLevelEntriesExcludedUnderPartialFilter() {
+        let filtered = SearchService.applyLevelFilter(filterHits, selectedLevels: [.foundation], situationLevelsByID: [:])
+        XCTAssertEqual(filtered.map(\.entry.id), ["ch1s1"])
+    }
+
+    func testSituationDefaultsToCoreLevel() {
+        let situation = entry(id: "ABH-01", title: "A case", text: "plain case text", type: .situation)
+        XCTAssertEqual(SearchService.levelForEntry(situation, situationLevelsByID: [:]), .core)
+        XCTAssertEqual(
+            SearchService.levelForEntry(situation, situationLevelsByID: ["ABH-01": "advanced"]),
+            .advanced
+        )
+        let lesson = entry(id: "ch1s3", title: "Plain lesson", text: "plain payment text with no level hint")
+        XCTAssertNil(SearchService.levelForEntry(lesson, situationLevelsByID: [:]))
+    }
+
+    func testSearchLimitCapsHits() {
+        let many = (1...70).map { entry(id: "ch1s\($0)", title: "Payment lesson \($0)", text: "payment text") }
+        let capped = SearchService.search(entries: many, query: "payment", limit: 60)
+        XCTAssertEqual(capped.count, 60)
+        let uncapped = SearchService.search(entries: many, query: "payment", limit: 200)
+        XCTAssertEqual(uncapped.count, 70)
+    }
 }

@@ -92,6 +92,17 @@ struct DashboardView: View {
         return Double(progressStore.totalLessonsCompleted) / Double(totalLessonCount)
     }
 
+    /// True once the learner has finished a whole chapter: the
+    /// point where the overall progress ring and counters may
+    /// appear. Before that, the progress section shows the
+    /// starter state, never a "0 of N" counter or a 0% ring.
+    private var hasMeaningfulProgress: Bool {
+        ProgressVisibility.hasMeaningfulProgress(
+            completedIDs: progressStore.completedLessonIDs,
+            lessonEntries: contentService.allLessons
+        )
+    }
+
     /// Learning time, from recorded durations only. Hours when there
     /// is at least an hour, minutes when there is some recorded time
     /// under an hour, 0h when nothing was ever recorded.
@@ -656,28 +667,41 @@ struct DashboardView: View {
             } else if let fraction = pathwayInsight.fraction {
                 PFCard {
                     VStack(alignment: .leading, spacing: PFSpacing.md) {
-                        HStack(spacing: PFSpacing.lg) {
-                            PFProgressRing(progress: fraction, size: 110, color: .pfRoyal)
+                        if pathwayInsight.completed > 0 {
+                            HStack(spacing: PFSpacing.lg) {
+                                PFProgressRing(progress: fraction, size: 110, color: .pfRoyal)
+                                VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                                    Text(pathwayTitle)
+                                        .font(.pfCardTitle)
+                                        .foregroundColor(.pfNavy)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text("\(pathwayInsight.completed) of \(pathwayInsight.total) lessons completed")
+                                        .font(.pfBody)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text("Completed means marked complete. Demonstrated is counted separately below.")
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            Divider()
+                            Text("Demonstrated on quizzes in this pathway: \(pathwayInsight.demonstratedLessonCount) of \(pathwayInsight.total) lessons at 80% or above on their best quiz score. \(pathwayInsight.quizAttemptedLessonCount) lessons have a quiz attempt recorded.")
+                                .font(.pfBody)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
                             VStack(alignment: .leading, spacing: PFSpacing.sm) {
                                 Text(pathwayTitle)
                                     .font(.pfCardTitle)
                                     .foregroundColor(.pfNavy)
                                     .fixedSize(horizontal: false, vertical: true)
-                                Text("\(pathwayInsight.completed) of \(pathwayInsight.total) lessons completed")
+                                Text("No lessons completed on this pathway yet.")
                                     .font(.pfBody)
-                                    .foregroundColor(.pfSecondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                Text("Completed means marked complete. Demonstrated is counted separately below.")
-                                    .font(.pfCaption)
                                     .foregroundColor(.pfSecondaryText)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
-                        Divider()
-                        Text("Demonstrated on quizzes in this pathway: \(pathwayInsight.demonstratedLessonCount) of \(pathwayInsight.total) lessons at 80% or above on their best quiz score. \(pathwayInsight.quizAttemptedLessonCount) lessons have a quiz attempt recorded.")
-                            .font(.pfBody)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
                         if let path = pathwayPath {
                             NavigationLink(destination: PathDetailView(path: path)) {
                                 Text("Open \(path.title)")
@@ -800,12 +824,12 @@ struct DashboardView: View {
                                 }
                             }
                             if let average = insight.quizAverageFraction {
-                                Text("Quiz average \(Int((average * 100).rounded()))% across \(insight.quizAttemptsWithTotal) \(insight.quizAttemptsWithTotal == 1 ? "attempt" : "attempts"). \(insight.lessonsCompleted) of \(insight.lessonsTotal) lessons completed in this area.")
+                                Text("Quiz average \(Int((average * 100).rounded()))% across \(insight.quizAttemptsWithTotal) \(insight.quizAttemptsWithTotal == 1 ? "attempt" : "attempts"). \(insight.lessonsCompleted > 0 ? "\(insight.lessonsCompleted) of \(insight.lessonsTotal) lessons completed in this area." : "No lessons completed in this area yet.")")
                                     .font(.pfCaption)
                                     .foregroundColor(.pfSecondaryText)
                                     .fixedSize(horizontal: false, vertical: true)
                             } else {
-                                Text("No quiz attempts with a recorded total in this area yet. \(insight.lessonsCompleted) of \(insight.lessonsTotal) lessons completed in this area.")
+                                Text("No quiz attempts with a recorded total in this area yet. \(insight.lessonsCompleted > 0 ? "\(insight.lessonsCompleted) of \(insight.lessonsTotal) lessons completed in this area." : "No lessons completed in this area yet.")")
                                     .font(.pfCaption)
                                     .foregroundColor(.pfSecondaryText)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -1007,6 +1031,23 @@ struct DashboardView: View {
                 PFCard {
                     if contentService.searchIndex == nil {
                         PFLoadingView(message: "Loading your progress...")
+                    } else if !hasMeaningfulProgress {
+                        VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                            Text("Your progress will show here once you finish your first chapter.")
+                                .font(.pfCardTitle)
+                                .foregroundColor(.pfNavy)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Complete your first lesson to start your progress.")
+                                .font(.pfBody)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let tabBinding = selectedTab {
+                                PFPrimaryButton(title: "Start learning") {
+                                    tabBinding.wrappedValue = 1
+                                }
+                                .accessibilityLabel("Start learning")
+                            }
+                        }
                     } else {
                         HStack(spacing: PFSpacing.lg) {
                             PFProgressRing(progress: overallProgress, size: 110, color: .pfRoyal)
@@ -1023,12 +1064,6 @@ struct DashboardView: View {
                                     .font(.pfBody)
                                     .foregroundColor(.pfSecondaryText)
                                     .fixedSize(horizontal: false, vertical: true)
-                                if progressStore.totalLessonsCompleted == 0 {
-                                    Text("Complete your first lesson to start your progress.")
-                                        .font(.pfBody)
-                                        .foregroundColor(.pfSecondaryText)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
                             }
                         }
                     }
@@ -1061,12 +1096,21 @@ struct DashboardView: View {
         }
     }
 
+    /// "3 of 5 lessons this week", or a starter sentence when
+    /// nothing is complete this week: no "0 of 5" counter.
+    private var weeklyGoalLine: String {
+        if progressStore.lessonsCompletedThisWeek > 0 {
+            return "\(progressStore.lessonsCompletedThisWeek) of \(progressStore.weeklyGoal) lessons this week"
+        }
+        return "No lessons completed this week yet."
+    }
+
     private var weeklyActivitySummarySection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
             PFSectionHeader(title: "Weekly activity")
             PFCard {
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
-                    Text("\(progressStore.lessonsCompletedThisWeek) of \(progressStore.weeklyGoal) lessons this week")
+                    Text(weeklyGoalLine)
                         .font(.pfCardTitle)
                         .foregroundColor(.pfNavy)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1193,7 +1237,7 @@ struct DashboardView: View {
             PFSectionHeader(title: "Weekly activity")
             PFCard {
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
-                    Text("\(progressStore.lessonsCompletedThisWeek) of \(progressStore.weeklyGoal) lessons this week")
+                    Text(weeklyGoalLine)
                         .font(.pfCardTitle)
                         .foregroundColor(.pfNavy)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1229,10 +1273,12 @@ struct DashboardView: View {
             PFSectionHeader(title: "Weekly goal")
             PFCard {
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
-                    Text("\(progressStore.lessonsCompletedThisWeek) of \(progressStore.weeklyGoal) lessons this week")
+                    Text(weeklyGoalLine)
                         .font(.pfCardTitle)
                         .foregroundColor(.pfNavy)
-                    PFProgressBar(progress: progressStore.weeklyProgress)
+                    if progressStore.lessonsCompletedThisWeek > 0 {
+                        PFProgressBar(progress: progressStore.weeklyProgress)
+                    }
                     Text("How many lessons do you want to finish each week?")
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
@@ -1720,12 +1766,12 @@ struct DashboardView: View {
                             PFProgressBar(progress: (competencyStore.score(for: dimension) ?? 0) / 100, height: 6)
                             if let insight = dimensionInsights.first(where: { $0.dimension == dimension }) {
                                 if let average = insight.quizAverageFraction {
-                                    Text("Lesson quizzes in this area: average \(Int((average * 100).rounded()))% across \(insight.quizAttemptsWithTotal) \(insight.quizAttemptsWithTotal == 1 ? "attempt" : "attempts"). \(insight.lessonsCompleted) of \(insight.lessonsTotal) lessons completed, \(insight.demonstratedLessonCount) demonstrated at 80% or above.")
+                                    Text("Lesson quizzes in this area: average \(Int((average * 100).rounded()))% across \(insight.quizAttemptsWithTotal) \(insight.quizAttemptsWithTotal == 1 ? "attempt" : "attempts"). \(insight.lessonsCompleted > 0 ? "\(insight.lessonsCompleted) of \(insight.lessonsTotal) lessons completed, \(insight.demonstratedLessonCount) demonstrated at 80% or above." : "No lessons completed in this area yet.")")
                                         .font(.pfCaption)
                                         .foregroundColor(.pfSecondaryText)
                                         .fixedSize(horizontal: false, vertical: true)
                                 } else {
-                                    Text("No lesson quiz attempts with a recorded total in this area yet. \(insight.lessonsCompleted) of \(insight.lessonsTotal) lessons completed.")
+                                    Text("No lesson quiz attempts with a recorded total in this area yet. \(insight.lessonsCompleted > 0 ? "\(insight.lessonsCompleted) of \(insight.lessonsTotal) lessons completed." : "No lessons completed in this area yet.")")
                                         .font(.pfCaption)
                                         .foregroundColor(.pfSecondaryText)
                                         .fixedSize(horizontal: false, vertical: true)

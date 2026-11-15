@@ -117,7 +117,7 @@ enum SupabaseConfig {
 ///
 /// One buyable product in the decided 16-product lineup (see
 /// ProductCatalogue.swift, the one authoritative catalogue). A
-/// book part's chapters are the chapters it unlocks; standalone
+/// course's chapters are the chapters it unlocks; standalone
 /// products (Studio, Simulator, Investigation Lab, Practice
 /// Experiences, Interview Ready) have no chapters and unlock their
 /// own content instead. Prices are INR reference data only: the
@@ -135,7 +135,7 @@ struct CourseProduct: Identifiable, Hashable {
     let id: String
     /// The App Store Connect purchase product ID.
     let productID: String
-    /// Display name, for example "Part 1: Foundations of Money and Payments".
+    /// Display name, for example "Course 1: Foundations of Money and Payments".
     let name: String
     /// Short description shown on the Purchases screen.
     let tagline: String
@@ -212,7 +212,7 @@ struct CourseProduct: Identifiable, Hashable {
     }
 
     /// Short contents line for the Purchases screen: "7 chapters,
-    /// 49 lessons" for a part, "99 chapters, 874 lessons" for the
+    /// 49 lessons" for a course, "99 chapters, 874 lessons" for the
     /// Integrated Course, the contents summary for a standalone
     /// product, "564 situations" when only a situation count exists.
     var contentsText: String {

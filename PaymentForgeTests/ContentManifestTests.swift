@@ -54,4 +54,39 @@ final class ContentManifestTests: XCTestCase {
         XCTAssertEqual(ProductCatalogue.freeSampleSituationIDs.count, 2)
         XCTAssertLessThan(ProductCatalogue.freeSampleSituationIDs.count, ContentManifest.situationCount)
     }
+
+    // MARK: - Thumbnail URLs (v91)
+
+    func testThumbnailURLResolvesRelativePathsAgainstBase() {
+        let base = URL(string: "https://www.paymentstraininghub.com")!
+        XCTAssertEqual(
+            PFThumbnailURL.resolve("assets/thumbs/ch1s1.svg", base: base)?.absoluteString,
+            "https://www.paymentstraininghub.com/assets/thumbs/ch1s1.svg"
+        )
+        XCTAssertEqual(
+            PFThumbnailURL.resolve("/assets/thumbs/ch1s1.png", base: base)?.absoluteString,
+            "https://www.paymentstraininghub.com/assets/thumbs/ch1s1.png"
+        )
+    }
+
+    func testThumbnailURLPassesAbsoluteURLsThrough() {
+        let base = URL(string: "https://www.paymentstraininghub.com")!
+        XCTAssertEqual(
+            PFThumbnailURL.resolve("https://cdn.example.com/thumb.png", base: base)?.absoluteString,
+            "https://cdn.example.com/thumb.png"
+        )
+    }
+
+    func testThumbnailURLReturnsNilForMissingOrBlankPaths() {
+        let base = URL(string: "https://www.paymentstraininghub.com")!
+        XCTAssertNil(PFThumbnailURL.resolve(nil, base: base))
+        XCTAssertNil(PFThumbnailURL.resolve("", base: base))
+        XCTAssertNil(PFThumbnailURL.resolve("   ", base: base))
+    }
+
+    func testThumbnailSVGDetection() {
+        XCTAssertTrue(PFThumbnailURL.isSVG(URL(string: "https://example.com/thumb.svg")!))
+        XCTAssertTrue(PFThumbnailURL.isSVG(URL(string: "https://example.com/thumb.SVG?v=2")!))
+        XCTAssertFalse(PFThumbnailURL.isSVG(URL(string: "https://example.com/thumb.png")!))
+    }
 }

@@ -13,7 +13,7 @@
 // signatures were read from the final app source before writing.
 //
 // v90 reconciliation (15 Nov 2026): the catalogue is the decided
-// 16-product lineup in ProductCatalogue (10 book parts, BA/PO
+// 16-product lineup in ProductCatalogue (10 courses, BA/PO
 // Studio, Payment Simulator, Investigation Lab, Practice
 // Experiences, Interview Ready, The Integrated Course), each with
 // 1 year of access and a renewal subscription at half the sale
@@ -78,16 +78,16 @@ final class StoreManagerTests: XCTestCase {
         XCTAssertEqual(ProductCatalogue.products.count, 16)
         let expected: [(String, String, Int, Int, Int)] = [
             ("com.paymentforge.app.integrated", "The Integrated Course", 2999, 4499, 1500),
-            ("com.paymentforge.app.part-1", "Part 1: Foundations of Money and Payments", 399, 599, 200),
-            ("com.paymentforge.app.part-2", "Part 2: How Payments Move: Rails, Schemes and Systems", 399, 599, 200),
-            ("com.paymentforge.app.part-3", "Part 3: Messages: SWIFT MT, ISO 20022 and Standards", 399, 599, 200),
-            ("com.paymentforge.app.part-4", "Part 4: Cross-Border Payments and Correspondent Banking", 399, 599, 200),
-            ("com.paymentforge.app.part-5", "Part 5: Clearing, Settlement, Liquidity and Reconciliation", 399, 599, 200),
-            ("com.paymentforge.app.part-6", "Part 6: Exceptions, Investigations, Returns and Claims", 399, 599, 200),
-            ("com.paymentforge.app.part-7", "Part 7: Cards and Customer Payments", 399, 599, 200),
-            ("com.paymentforge.app.part-8", "Part 8: Architecture, APIs, Hubs and Engineering", 399, 599, 200),
-            ("com.paymentforge.app.part-9", "Part 9: The Business Analyst at Work", 399, 599, 200),
-            ("com.paymentforge.app.part-10", "Part 10: Emerging Payments and the Future", 399, 599, 200),
+            ("com.paymentforge.app.part-1", "Course 1: Foundations of Money and Payments", 399, 599, 200),
+            ("com.paymentforge.app.part-2", "Course 2: How Payments Move: Rails, Schemes and Systems", 399, 599, 200),
+            ("com.paymentforge.app.part-3", "Course 3: Messages: SWIFT MT, ISO 20022 and Standards", 399, 599, 200),
+            ("com.paymentforge.app.part-4", "Course 4: Cross-Border Payments and Correspondent Banking", 399, 599, 200),
+            ("com.paymentforge.app.part-5", "Course 5: Clearing, Settlement, Liquidity and Reconciliation", 399, 599, 200),
+            ("com.paymentforge.app.part-6", "Course 6: Exceptions, Investigations, Returns and Claims", 399, 599, 200),
+            ("com.paymentforge.app.part-7", "Course 7: Cards and Customer Payments", 399, 599, 200),
+            ("com.paymentforge.app.part-8", "Course 8: Architecture, APIs, Hubs and Engineering", 399, 599, 200),
+            ("com.paymentforge.app.part-9", "Course 9: The Business Analyst at Work", 399, 599, 200),
+            ("com.paymentforge.app.part-10", "Course 10: Emerging Payments and the Future", 399, 599, 200),
             ("com.paymentforge.app.studio", "BA/PO Studio", 799, 1199, 400),
             ("com.paymentforge.app.simulator", "Payment Simulator", 499, 749, 250),
             ("com.paymentforge.app.investigation-lab", "Investigation Lab", 499, 749, 250),

@@ -322,7 +322,7 @@ enum NotificationSchedulers {
     ///      so full course owners already have Practice
     ///      unlocked and never receive this message. It goes
     ///      only to learners who hold neither product.
-    ///   3. The book part for the chapter the learner most
+    ///   3. The course for the chapter the learner most
     ///      recently worked in, via unlockingProduct(for:), when
     ///      that chapter is locked and maps to a part.
     /// When every eligible product is unlocked, nothing schedules.
