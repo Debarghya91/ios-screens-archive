@@ -560,3 +560,75 @@ struct GuidedSession: Identifiable, Hashable {
 struct WeeklyGoal: Codable, Hashable {
     var targetLessonsPerWeek: Int = 5
 }
+
+// MARK: - Entry access rules
+
+/// The access rules for search-index entries shown in full text:
+/// the SearchEntrySheet in Search and the FAQ answers in Help and
+/// Support. Titles stay visible everywhere (discovery); only the
+/// full text locks. Pure logic, covered by unit tests.
+///
+/// FAQ answers belong to Interview Ready: the first 5 in catalogue
+/// order are free samples. Labs belong to Practice Experiences:
+/// the first 2 in catalogue order are free samples. Tests belong
+/// to their chapter's part: a test locks when its chapter is
+/// locked, and a test with no chapter number stays open
+/// (diagnostic and placement tests are free). Lessons and
+/// situations never reach the sheet: they open LessonView and the
+/// situation detail, which carry their own gates. Guides are
+/// intentionally ungated: their product home is undecided (only
+/// the 5 Studio career guides map to a product), so no mapping is
+/// invented here.
+enum EntryAccessRules {
+
+    /// True when this entry's full text is locked.
+    /// - Parameters:
+    ///   - entry: the entry being opened.
+    ///   - indexInType: the entry's 0-based position among entries
+    ///     of its type in catalogue order, or nil when it is not
+    ///     in the loaded list (fail closed for FAQ and lab).
+    ///   - isPracticeUnlocked: Practice Experiences entitlement.
+    ///   - isInterviewUnlocked: Interview Ready entitlement.
+    ///   - isChapterUnlocked: whether the entry's chapter is
+    ///     unlocked; pass true for a test with no chapter number.
+    static func isLocked(
+        _ entry: SearchEntry,
+        indexInType: Int?,
+        isPracticeUnlocked: Bool,
+        isInterviewUnlocked: Bool,
+        isChapterUnlocked: Bool
+    ) -> Bool {
+        switch entry.type {
+        case .faq:
+            if isInterviewUnlocked { return false }
+            guard let index = indexInType else { return true }
+            return index >= FreeSampleRules.faqFreeCount
+        case .lab:
+            if isPracticeUnlocked { return false }
+            guard let index = indexInType else { return true }
+            return index >= FreeSampleRules.labFreeCount
+        case .test:
+            return !isChapterUnlocked
+        case .lesson, .situation, .guide:
+            return false
+        }
+    }
+
+    /// The product that unlocks this entry, for lock copy. Nil for
+    /// entry types that never lock. For a test, the caller passes
+    /// the chapter's unlocking product ID, or nil when the chapter
+    /// is unknown: the Integrated Course is the fallback, because
+    /// it unlocks every chapter.
+    static func unlockingProductID(for entry: SearchEntry, chapterUnlockingProductID: String?) -> String? {
+        switch entry.type {
+        case .faq:
+            return ProductCatalogue.interviewProductID
+        case .lab:
+            return ProductCatalogue.practiceProductID
+        case .test:
+            return chapterUnlockingProductID ?? ProductCatalogue.integratedProductID
+        case .lesson, .situation, .guide:
+            return nil
+        }
+    }
+}

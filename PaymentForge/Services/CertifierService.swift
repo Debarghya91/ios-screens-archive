@@ -50,12 +50,18 @@ enum CertifierService {
 
     /// The four certificate courses, by App Store product ID.
     /// Any other course has no Certifier template and is never sent.
+    /// The slugs are the server's existing template names, kept
+    /// unchanged: the Integrated Course keeps "full", Part 3
+    /// (messages) keeps "messaging", Part 9 (the BA at work) keeps
+    /// "ba-practice", and Part 2 (rails) keeps "rails". The
+    /// server worker must confirm these template mappings still
+    /// hold under the new product IDs.
     static func courseSlug(for productID: String) -> String? {
         switch productID {
-        case "com.paymentforge.app.full": return "full"
-        case "com.paymentforge.app.messaging": return "messaging"
-        case "com.paymentforge.app.ba-practice": return "ba-practice"
-        case "com.paymentforge.app.rails": return "rails"
+        case "com.paymentforge.app.integrated": return "full"
+        case "com.paymentforge.app.part-3": return "messaging"
+        case "com.paymentforge.app.part-9": return "ba-practice"
+        case "com.paymentforge.app.part-2": return "rails"
         default: return nil
         }
     }

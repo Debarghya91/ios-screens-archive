@@ -1157,14 +1157,14 @@ private struct SearchResultRow: View {
     var situationsByID: [String: FullSituationItem]? = nil
 
     /// True when this row is a locked situation: not a free sample
-    /// and Payment Situations not unlocked. The row itself shows
+    /// and Practice Experiences not unlocked. The row itself shows
     /// teaser fields only (title, tags, read time, match reason),
     /// never excerpt text; the identifier lets the D101 UI test
     /// open a locked result from search and assert the detail gate.
     private var isLockedSituation: Bool {
         entry.type == .situation
             && !ContentService.freeSampleIDs.contains(entry.id)
-            && !storeManager.isSituationsUnlocked
+            && !storeManager.isPracticeUnlocked
     }
 
     private var systemImage: String {
@@ -1265,7 +1265,7 @@ private struct SearchResultRow: View {
             }
             if entry.type == .situation
                 && !ContentService.freeSampleIDs.contains(entry.id)
-                && !storeManager.isSituationsUnlocked {
+                && !storeManager.isPracticeUnlocked {
                 PFPill(text: "Premium", background: Color.pfGoldSoft, foreground: .pfGold)
             }
             if entry.type == .lesson && isLessonLocked {
@@ -1275,7 +1275,7 @@ private struct SearchResultRow: View {
     }
 
     /// True when this lesson's chapter is not unlocked: neither the
-    /// bundle containing it nor the Integrated Course is owned. An
+    /// part containing it nor the Integrated Course is owned. An
     /// entry with no chapter number is never locked.
     private var isLessonLocked: Bool {
         guard entry.type == .lesson,
@@ -1565,7 +1565,55 @@ private struct SearchTypeListView: View {
 /// Private to this file so it cannot collide with types other screens own.
 private struct SearchEntrySheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var storeManager: StoreManager
+    @EnvironmentObject private var contentService: ContentService
     let entry: SearchEntry
+
+    @State private var showCheckout = false
+
+    /// The entry's position among entries of its type, in catalogue
+    /// order. Nil when the entry is not in the loaded list.
+    private var indexInType: Int? {
+        switch entry.type {
+        case .faq:
+            return contentService.allFAQs.firstIndex(of: entry)
+        case .lab:
+            return contentService.allLabs.firstIndex(of: entry)
+        case .lesson, .guide, .situation, .test:
+            return nil
+        }
+    }
+
+    /// Whether the entry's chapter is unlocked, for tests. True for
+    /// every other type, and for a test with no chapter number.
+    private var isChapterUnlocked: Bool {
+        guard entry.type == .test,
+              let number = entry.chapterNumber else { return true }
+        return storeManager.isChapterUnlocked("ch\(number)")
+    }
+
+    private var isLocked: Bool {
+        EntryAccessRules.isLocked(
+            entry,
+            indexInType: indexInType,
+            isPracticeUnlocked: storeManager.isPracticeUnlocked,
+            isInterviewUnlocked: storeManager.isInterviewUnlocked,
+            isChapterUnlocked: isChapterUnlocked
+        )
+    }
+
+    /// The product that unlocks this entry, for the lock card.
+    private var unlockingProduct: CourseProduct? {
+        let chapterProductID: String?
+        if entry.type == .test, let number = entry.chapterNumber {
+            chapterProductID = storeManager.unlockingProduct(for: "ch\(number)")?.productID
+        } else {
+            chapterProductID = nil
+        }
+        guard let productID = EntryAccessRules.unlockingProductID(
+            for: entry, chapterUnlockingProductID: chapterProductID) else { return nil }
+        return ProductCatalogue.product(for: productID)
+    }
 
     var body: some View {
         NavigationStack {
@@ -1575,7 +1623,11 @@ private struct SearchEntrySheet: View {
                     Text(entry.title)
                         .font(.pfSectionTitle)
                         .foregroundColor(.pfNavy)
-                    PFBodyText(text: entry.text)
+                    if isLocked {
+                        lockCard
+                    } else {
+                        PFBodyText(text: entry.text)
+                    }
                 }
                 .padding(PFSpacing.lg)
             }
@@ -1594,6 +1646,47 @@ private struct SearchEntrySheet: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .sheet(isPresented: $showCheckout) {
+                CheckoutView()
+            }
+        }
+    }
+
+    /// The lock card shown in place of locked full text. The title
+    /// stays visible (discovery); only the text is gated.
+    private var lockCard: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            Label("\(entry.type.displayName) locked", systemImage: "lock.fill")
+                .font(.pfCaptionBold)
+                .foregroundColor(.pfNavy)
+            if let product = unlockingProduct {
+                Text(lockCopy(for: product))
+                    .font(.pfBody)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                PFPrimaryButton(title: "View \(product.name)") {
+                    showCheckout = true
+                }
+            }
+        }
+    }
+
+    private func lockCopy(for product: CourseProduct) -> String {
+        let pricePart = storeManager.isPriceAvailable(for: product.productID)
+            ? " for \(storeManager.priceText(for: product.productID))"
+            : ""
+        let integratedNote = product.productID == ProductCatalogue.integratedProductID
+            ? ""
+            : " The Integrated Course includes it too."
+        switch entry.type {
+        case .faq:
+            return "This FAQ answer is part of Interview Ready: \(ContentManifest.faqCount) FAQ answers and \(ContentManifest.interviewQuestionCount) interview questions\(pricePart), with 1 year of access.\(integratedNote)"
+        case .lab:
+            return "This lab is part of \(product.name)\(pricePart), with 1 year of access.\(integratedNote)"
+        case .test:
+            return "This test belongs to \(product.name)\(pricePart), with 1 year of access.\(integratedNote)"
+        case .lesson, .guide, .situation:
+            return ""
         }
     }
 }

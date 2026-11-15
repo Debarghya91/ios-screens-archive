@@ -58,7 +58,7 @@ final class GrowthShareTests: XCTestCase {
     private func sampleCourseCertificate() -> CourseCertificate {
         CourseCertificate(
             id: "PF-FULL-DEF67890",
-            courseID: "com.paymentforge.app.full",
+            courseID: "com.paymentforge.app.integrated",
             courseName: "Digital Payments and Transaction Banking",
             learnerName: "Test Learner",
             issuedAt: Date(timeIntervalSince1970: 1_793_000_000),

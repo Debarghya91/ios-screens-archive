@@ -5,7 +5,9 @@ import Foundation
 
 /// Verified live numbers: 100 chapters, 881 narrated lessons, 564
 /// situations, 320 FAQ, 10 simulators, exactly 500 interview
-/// questions, 45 guides, 15 tests, 10 labs, 15 domains.
+/// questions, 45 guides, 15 tests, 10 labs, 15 domains, 52 weekly
+/// cases. The Investigation Experience covers every situation plus
+/// every weekly case: 616 items.
 ///
 /// This file is the single source of truth for counts. No Swift file
 /// should hardcode these numbers: refer to ContentManifest instead,
@@ -24,4 +26,8 @@ enum ContentManifest {
     static let testCount = 15
     static let labCount = 10
     static let domainCount = 15
+    static let weeklyCaseCount = 52
+    /// Investigation Experience items: every situation plus every
+    /// weekly case. The Investigation Lab product covers all of them.
+    static let investigationCaseCount = 616
 }

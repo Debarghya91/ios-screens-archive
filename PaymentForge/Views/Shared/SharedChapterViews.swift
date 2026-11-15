@@ -37,10 +37,28 @@ enum PFChapterHelper {
     /// True when this entry is the first lesson of its chapter: the
     /// free sample lesson. One per chapter, full content, no purchase
     /// needed. The remaining lessons in the chapter stay locked
-    /// behind the bundle or the Integrated Course.
+    /// behind the part or the Integrated Course, except the
+    /// sequential samples (see isFreeLesson).
     static func isSampleLesson(_ entry: SearchEntry, in service: ContentService) -> Bool {
         guard let number = chapterNumber(from: entry.id) else { return false }
         return lessons(forChapter: number, in: service).first?.id == entry.id
+    }
+
+    /// True when this lesson is one of its part's sequential free
+    /// samples: the first 2 lessons of the part in reading-order
+    /// order, in addition to the D77 first-lesson-of-chapter rule.
+    /// Empty when the reading-order map has no lesson lists loaded.
+    static func isSequentialSampleLesson(_ entry: SearchEntry) -> Bool {
+        FreeSampleRules.isSequentialSampleLesson(entry.id)
+    }
+
+    /// True when this lesson is free without any purchase: the
+    /// first lesson of its chapter (D77), or one of its part's
+    /// sequential free samples. Lesson gating uses this; deep-link
+    /// sharing, onboarding, and the dashboard keep using
+    /// isSampleLesson (D77 only) on purpose.
+    static func isFreeLesson(_ entry: SearchEntry, in service: ContentService) -> Bool {
+        isSampleLesson(entry, in: service) || isSequentialSampleLesson(entry)
     }
 
     /// Lessons for a guided session, in session chapter order, deduped by id.

@@ -336,12 +336,12 @@ struct CertificatesListView: View {
     /// One row per assessable course: the certificate when earned, the
     /// Final Assessment when the course is owned and attempts remain, a
     /// locked note when all attempts were used, and a buy note when the
-    /// course is not owned yet. Situations has no chapters and is not
-    /// listed.
+    /// course is not owned yet. Standalone products have no chapters
+    /// and are not listed.
     private var courseCertificatesSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
             PFSectionHeader(title: "Course certificates")
-            Text("Pass a course Final Assessment with more than 70 percent to earn its certificate. Each course allows 3 attempts. Only four courses also carry a Certifier digital credential: The Integrated Course, ISO 20022 and SWIFT Messaging, AI Product Owner and Product Manager for Payments, and Global Payment Rails.")
+            Text("Pass a course Final Assessment with more than 70 percent to earn its certificate. Each course allows 3 attempts. Only four courses also carry a Certifier digital credential: The Integrated Course, Part 2: How Payments Move: Rails, Schemes and Systems, Part 3: Messages: SWIFT MT, ISO 20022 and Standards, and Part 9: The Business Analyst at Work.")
                 .font(.pfBody)
                 .foregroundColor(.pfSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)

@@ -2,188 +2,586 @@
   "identifier": "PaymentForge",
   "products": [
     {
-      "displayPrice": "9999.00",
+      "displayPrice": "2999.00",
       "familyShareable": true,
-      "internalID": "paymentforge-full-001",
+      "internalID": "paymentforge-integrated-001",
       "localizations": [
         {
-          "description": "The flagship. Everything in the academy, all 15 domains.",
+          "description": "Everything in the academy, in one course.",
           "displayName": "The Integrated Course",
           "locale": "en_IN"
         }
       ],
-      "productID": "com.paymentforge.app.full",
+      "productID": "com.paymentforge.app.integrated",
       "referenceName": "The Integrated Course",
       "type": "Non-Consumable"
     },
     {
-      "displayPrice": "1499.00",
+      "displayPrice": "399.00",
       "familyShareable": true,
-      "internalID": "paymentforge-foundations-001",
+      "internalID": "paymentforge-part-1-001",
       "localizations": [
         {
-          "description": "What a payment is, and how the ecosystem fits together.",
-          "displayName": "Payment Foundations",
+          "description": "Speak the language of payments, from zero.",
+          "displayName": "Part 1: Foundations of Money and Payments",
           "locale": "en_IN"
         }
       ],
-      "productID": "com.paymentforge.app.foundations",
-      "referenceName": "Payment Foundations",
+      "productID": "com.paymentforge.app.part-1",
+      "referenceName": "Part 1: Foundations of Money and Payments",
       "type": "Non-Consumable"
     },
     {
-      "displayPrice": "2999.00",
+      "displayPrice": "399.00",
       "familyShareable": true,
-      "internalID": "paymentforge-messaging-001",
-      "localizations": [
-        {
-          "description": "MT and MX messages, field by field, with real examples.",
-          "displayName": "ISO 20022 and SWIFT Messaging",
-          "locale": "en_IN"
-        }
-      ],
-      "productID": "com.paymentforge.app.messaging",
-      "referenceName": "ISO 20022 and SWIFT Messaging",
-      "type": "Non-Consumable"
-    },
-    {
-      "displayPrice": "2499.00",
-      "familyShareable": true,
-      "internalID": "paymentforge-rails-001",
+      "internalID": "paymentforge-part-2-001",
       "localizations": [
         {
           "description": "India, US, Europe and UK rails, plus TARGET and TIPS.",
-          "displayName": "Global Payment Rails",
+          "displayName": "Part 2: How Payments Move: Rails, Schemes and Systems",
           "locale": "en_IN"
         }
       ],
-      "productID": "com.paymentforge.app.rails",
-      "referenceName": "Global Payment Rails",
+      "productID": "com.paymentforge.app.part-2",
+      "referenceName": "Part 2: How Payments Move: Rails, Schemes and Systems",
       "type": "Non-Consumable"
     },
     {
-      "displayPrice": "1999.00",
+      "displayPrice": "399.00",
       "familyShareable": true,
-      "internalID": "paymentforge-crossborder-001",
+      "internalID": "paymentforge-part-3-001",
+      "localizations": [
+        {
+          "description": "MT and MX messages, field by field, with real examples.",
+          "displayName": "Part 3: Messages: SWIFT MT, ISO 20022 and Standards",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.part-3",
+      "referenceName": "Part 3: Messages: SWIFT MT, ISO 20022 and Standards",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "399.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-part-4-001",
       "localizations": [
         {
           "description": "How international payments really work, end to end.",
-          "displayName": "Cross-Border and Correspondent Banking",
+          "displayName": "Part 4: Cross-Border Payments and Correspondent Banking",
           "locale": "en_IN"
         }
       ],
-      "productID": "com.paymentforge.app.crossborder",
-      "referenceName": "Cross-Border and Correspondent Banking",
+      "productID": "com.paymentforge.app.part-4",
+      "referenceName": "Part 4: Cross-Border Payments and Correspondent Banking",
       "type": "Non-Consumable"
     },
     {
-      "displayPrice": "999.00",
+      "displayPrice": "399.00",
       "familyShareable": true,
-      "internalID": "paymentforge-clearing-001",
+      "internalID": "paymentforge-part-5-001",
       "localizations": [
         {
           "description": "Clearing is not settlement. Learn the difference properly.",
-          "displayName": "Clearing, Settlement and Liquidity",
+          "displayName": "Part 5: Clearing, Settlement, Liquidity and Reconciliation",
           "locale": "en_IN"
         }
       ],
-      "productID": "com.paymentforge.app.clearing",
-      "referenceName": "Clearing, Settlement and Liquidity",
+      "productID": "com.paymentforge.app.part-5",
+      "referenceName": "Part 5: Clearing, Settlement, Liquidity and Reconciliation",
       "type": "Non-Consumable"
     },
     {
-      "displayPrice": "1499.00",
+      "displayPrice": "399.00",
       "familyShareable": true,
-      "internalID": "paymentforge-cards-001",
+      "internalID": "paymentforge-part-6-001",
       "localizations": [
         {
-          "description": "Authorisation, clearing, settlement, wallets and POS.",
-          "displayName": "Cards and Domestic Payments",
+          "description": "Run an investigation to closure, and prove the control worked.",
+          "displayName": "Part 6: Exceptions, Investigations, Returns and Claims",
           "locale": "en_IN"
         }
       ],
-      "productID": "com.paymentforge.app.cards",
-      "referenceName": "Cards and Domestic Payments",
+      "productID": "com.paymentforge.app.part-6",
+      "referenceName": "Part 6: Exceptions, Investigations, Returns and Claims",
       "type": "Non-Consumable"
     },
     {
-      "displayPrice": "1999.00",
+      "displayPrice": "399.00",
       "familyShareable": true,
-      "internalID": "paymentforge-compliance-ops-001",
+      "internalID": "paymentforge-part-7-001",
       "localizations": [
         {
-          "description": "Sanctions, AML, exceptions, returns and the daily ops grind.",
-          "displayName": "Compliance, Risk, Operations and Reconciliation",
+          "description": "From tap to settlement, wallets and POS included.",
+          "displayName": "Part 7: Cards and Customer Payments",
           "locale": "en_IN"
         }
       ],
-      "productID": "com.paymentforge.app.compliance-ops",
-      "referenceName": "Compliance, Risk, Operations and Reconciliation",
+      "productID": "com.paymentforge.app.part-7",
+      "referenceName": "Part 7: Cards and Customer Payments",
       "type": "Non-Consumable"
     },
     {
-      "displayPrice": "2499.00",
+      "displayPrice": "399.00",
       "familyShareable": true,
-      "internalID": "paymentforge-architecture-apis-001",
+      "internalID": "paymentforge-part-8-001",
       "localizations": [
         {
           "description": "Hubs, platforms, gateways and integration, the engineering view.",
-          "displayName": "Payment Architecture and APIs",
+          "displayName": "Part 8: Architecture, APIs, Hubs and Engineering",
           "locale": "en_IN"
         }
       ],
-      "productID": "com.paymentforge.app.architecture-apis",
-      "referenceName": "Payment Architecture and APIs",
+      "productID": "com.paymentforge.app.part-8",
+      "referenceName": "Part 8: Architecture, APIs, Hubs and Engineering",
       "type": "Non-Consumable"
     },
     {
-      "displayPrice": "1999.00",
+      "displayPrice": "399.00",
       "familyShareable": true,
-      "internalID": "paymentforge-ba-practice-001",
+      "internalID": "paymentforge-part-9-001",
       "localizations": [
         {
-          "description": "AI for the payments BA and PO: foundations, assisted work, product ownership, governance and the capstone.",
-          "displayName": "AI Product Owner and Product Manager for Payments",
+          "description": "Do the BA job end to end, and deliver the capstone.",
+          "displayName": "Part 9: The Business Analyst at Work",
           "locale": "en_IN"
         }
       ],
-      "productID": "com.paymentforge.app.ba-practice",
-      "referenceName": "AI Product Owner and Product Manager for Payments",
+      "productID": "com.paymentforge.app.part-9",
+      "referenceName": "Part 9: The Business Analyst at Work",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "399.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-part-10-001",
+      "localizations": [
+        {
+          "description": "CBDCs, stablecoins, embedded finance, and where payments goes next.",
+          "displayName": "Part 10: Emerging Payments and the Future",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.part-10",
+      "referenceName": "Part 10: Emerging Payments and the Future",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "799.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-studio-001",
+      "localizations": [
+        {
+          "description": "BABOK teaching for the payments BA and PO, plus career guides.",
+          "displayName": "BA/PO Studio",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.studio",
+      "referenceName": "BA/PO Studio",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "499.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-simulator-001",
+      "localizations": [
+        {
+          "description": "Run a payment yourself, and watch it move.",
+          "displayName": "Payment Simulator",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.simulator",
+      "referenceName": "Payment Simulator",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "499.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-investigation-lab-001",
+      "localizations": [
+        {
+          "description": "Investigate real payment incidents, briefing to report.",
+          "displayName": "Investigation Lab",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.investigation-lab",
+      "referenceName": "Investigation Lab",
       "type": "Non-Consumable"
     },
     {
       "displayPrice": "999.00",
       "familyShareable": true,
-      "internalID": "paymentforge-emerging-001",
-      "localizations": [
-        {
-          "description": "CBDCs, stablecoins, AI, and where payments goes next.",
-          "displayName": "Emerging Technologies and the Future",
-          "locale": "en_IN"
-        }
-      ],
-      "productID": "com.paymentforge.app.emerging",
-      "referenceName": "Emerging Technologies and the Future",
-      "type": "Non-Consumable"
-    },
-    {
-      "displayPrice": "4999.00",
-      "familyShareable": true,
-      "internalID": "paymentforge-situations-001",
+      "internalID": "paymentforge-practice-001",
       "localizations": [
         {
           "description": "End-to-end payments knowledge, one real situation at a time.",
-          "displayName": "Payment Situations",
+          "displayName": "Practice Experiences",
           "locale": "en_IN"
         }
       ],
-      "productID": "com.paymentforge.app.situations",
-      "referenceName": "Payment Situations",
+      "productID": "com.paymentforge.app.practice",
+      "referenceName": "Practice Experiences",
       "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "1599.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-interview-001",
+      "localizations": [
+        {
+          "description": "Walk into a payments interview able to answer.",
+          "displayName": "Interview Ready",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.interview",
+      "referenceName": "Interview Ready",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "1500.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-integrated-renewal-001",
+      "localizations": [
+        {
+          "description": "Everything in the academy, in one course. Renewal for 1 more year.",
+          "displayName": "The Integrated Course Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.integrated.renewal",
+      "referenceName": "The Integrated Course Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "7dbcf02c-47b2-5ce9-b81d-8fccafee9f45",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "200.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-part-1-renewal-001",
+      "localizations": [
+        {
+          "description": "Speak the language of payments, from zero. Renewal for 1 more year.",
+          "displayName": "Part 1: Foundations of Money and Payments Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.part-1.renewal",
+      "referenceName": "Part 1: Foundations of Money and Payments Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "bcacaad8-9fd8-5c17-8213-063e97d262ba",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "200.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-part-2-renewal-001",
+      "localizations": [
+        {
+          "description": "India, US, Europe and UK rails, plus TARGET and TIPS. Renewal for 1 more year.",
+          "displayName": "Part 2: How Payments Move: Rails, Schemes and Systems Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.part-2.renewal",
+      "referenceName": "Part 2: How Payments Move: Rails, Schemes and Systems Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "91320fdf-341b-5a70-8a9b-48aeb121ebcd",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "200.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-part-3-renewal-001",
+      "localizations": [
+        {
+          "description": "MT and MX messages, field by field, with real examples. Renewal for 1 more year.",
+          "displayName": "Part 3: Messages: SWIFT MT, ISO 20022 and Standards Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.part-3.renewal",
+      "referenceName": "Part 3: Messages: SWIFT MT, ISO 20022 and Standards Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "cdc23d36-e651-5d91-a4a8-25e361c43cc1",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "200.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-part-4-renewal-001",
+      "localizations": [
+        {
+          "description": "How international payments really work, end to end. Renewal for 1 more year.",
+          "displayName": "Part 4: Cross-Border Payments and Correspondent Banking Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.part-4.renewal",
+      "referenceName": "Part 4: Cross-Border Payments and Correspondent Banking Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "e6fc8d2b-cd77-5f9e-90a1-401b6a7f71bd",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "200.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-part-5-renewal-001",
+      "localizations": [
+        {
+          "description": "Clearing is not settlement. Learn the difference properly. Renewal for 1 more year.",
+          "displayName": "Part 5: Clearing, Settlement, Liquidity and Reconciliation Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.part-5.renewal",
+      "referenceName": "Part 5: Clearing, Settlement, Liquidity and Reconciliation Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "d0ba9e1f-116e-51d4-9e1c-555aed8812ec",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "200.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-part-6-renewal-001",
+      "localizations": [
+        {
+          "description": "Run an investigation to closure, and prove the control worked. Renewal for 1 more year.",
+          "displayName": "Part 6: Exceptions, Investigations, Returns and Claims Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.part-6.renewal",
+      "referenceName": "Part 6: Exceptions, Investigations, Returns and Claims Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "147a4ef4-26a4-5052-831d-f9a35b42f2cb",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "200.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-part-7-renewal-001",
+      "localizations": [
+        {
+          "description": "From tap to settlement, wallets and POS included. Renewal for 1 more year.",
+          "displayName": "Part 7: Cards and Customer Payments Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.part-7.renewal",
+      "referenceName": "Part 7: Cards and Customer Payments Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "6f9cedeb-c604-5daa-8c95-c6c7ac9e5a7c",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "200.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-part-8-renewal-001",
+      "localizations": [
+        {
+          "description": "Hubs, platforms, gateways and integration, the engineering view. Renewal for 1 more year.",
+          "displayName": "Part 8: Architecture, APIs, Hubs and Engineering Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.part-8.renewal",
+      "referenceName": "Part 8: Architecture, APIs, Hubs and Engineering Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "70285128-6824-51db-a769-53c377f11caf",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "200.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-part-9-renewal-001",
+      "localizations": [
+        {
+          "description": "Do the BA job end to end, and deliver the capstone. Renewal for 1 more year.",
+          "displayName": "Part 9: The Business Analyst at Work Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.part-9.renewal",
+      "referenceName": "Part 9: The Business Analyst at Work Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "6adb774c-66d6-573c-a512-a7cb12bde6e5",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "200.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-part-10-renewal-001",
+      "localizations": [
+        {
+          "description": "CBDCs, stablecoins, embedded finance, and where payments goes next. Renewal for 1 more year.",
+          "displayName": "Part 10: Emerging Payments and the Future Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.part-10.renewal",
+      "referenceName": "Part 10: Emerging Payments and the Future Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "142f9481-dcd2-53ef-afa1-989691f7b1eb",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "400.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-studio-renewal-001",
+      "localizations": [
+        {
+          "description": "BABOK teaching for the payments BA and PO, plus career guides. Renewal for 1 more year.",
+          "displayName": "BA/PO Studio Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.studio.renewal",
+      "referenceName": "BA/PO Studio Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "67d338f5-1801-55d8-8487-da2a5dab5037",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "250.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-simulator-renewal-001",
+      "localizations": [
+        {
+          "description": "Run a payment yourself, and watch it move. Renewal for 1 more year.",
+          "displayName": "Payment Simulator Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.simulator.renewal",
+      "referenceName": "Payment Simulator Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "ecfefdc1-6470-5c3a-85d4-ac251ee2d1ec",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "250.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-investigation-lab-renewal-001",
+      "localizations": [
+        {
+          "description": "Investigate real payment incidents, briefing to report. Renewal for 1 more year.",
+          "displayName": "Investigation Lab Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.investigation-lab.renewal",
+      "referenceName": "Investigation Lab Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "54064723-dead-5de3-9237-7ebf090120b4",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "500.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-practice-renewal-001",
+      "localizations": [
+        {
+          "description": "End-to-end payments knowledge, one real situation at a time. Renewal for 1 more year.",
+          "displayName": "Practice Experiences Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.practice.renewal",
+      "referenceName": "Practice Experiences Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "c72d71b7-a225-54dc-bf6e-06ef7ba217db",
+      "type": "Auto-Renewable Subscription"
+    },
+    {
+      "displayPrice": "800.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-interview-renewal-001",
+      "localizations": [
+        {
+          "description": "Walk into a payments interview able to answer. Renewal for 1 more year.",
+          "displayName": "Interview Ready Renewal",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.interview.renewal",
+      "referenceName": "Interview Ready Renewal",
+      "subscriptionDuration": "One Year",
+      "subscriptionGroupID": "19c00844-dc60-590e-859d-5b4f29574ee7",
+      "type": "Auto-Renewable Subscription"
     }
   ],
   "settings": {
     "locale": "en_IN"
   },
+  "subscriptionGroups": [
+    {
+      "id": "7dbcf02c-47b2-5ce9-b81d-8fccafee9f45",
+      "name": "The Integrated Course Renewal"
+    },
+    {
+      "id": "bcacaad8-9fd8-5c17-8213-063e97d262ba",
+      "name": "Part 1: Foundations of Money and Payments Renewal"
+    },
+    {
+      "id": "91320fdf-341b-5a70-8a9b-48aeb121ebcd",
+      "name": "Part 2: How Payments Move: Rails, Schemes and Systems Renewal"
+    },
+    {
+      "id": "cdc23d36-e651-5d91-a4a8-25e361c43cc1",
+      "name": "Part 3: Messages: SWIFT MT, ISO 20022 and Standards Renewal"
+    },
+    {
+      "id": "e6fc8d2b-cd77-5f9e-90a1-401b6a7f71bd",
+      "name": "Part 4: Cross-Border Payments and Correspondent Banking Renewal"
+    },
+    {
+      "id": "d0ba9e1f-116e-51d4-9e1c-555aed8812ec",
+      "name": "Part 5: Clearing, Settlement, Liquidity and Reconciliation Renewal"
+    },
+    {
+      "id": "147a4ef4-26a4-5052-831d-f9a35b42f2cb",
+      "name": "Part 6: Exceptions, Investigations, Returns and Claims Renewal"
+    },
+    {
+      "id": "6f9cedeb-c604-5daa-8c95-c6c7ac9e5a7c",
+      "name": "Part 7: Cards and Customer Payments Renewal"
+    },
+    {
+      "id": "70285128-6824-51db-a769-53c377f11caf",
+      "name": "Part 8: Architecture, APIs, Hubs and Engineering Renewal"
+    },
+    {
+      "id": "6adb774c-66d6-573c-a512-a7cb12bde6e5",
+      "name": "Part 9: The Business Analyst at Work Renewal"
+    },
+    {
+      "id": "142f9481-dcd2-53ef-afa1-989691f7b1eb",
+      "name": "Part 10: Emerging Payments and the Future Renewal"
+    },
+    {
+      "id": "67d338f5-1801-55d8-8487-da2a5dab5037",
+      "name": "BA/PO Studio Renewal"
+    },
+    {
+      "id": "ecfefdc1-6470-5c3a-85d4-ac251ee2d1ec",
+      "name": "Payment Simulator Renewal"
+    },
+    {
+      "id": "54064723-dead-5de3-9237-7ebf090120b4",
+      "name": "Investigation Lab Renewal"
+    },
+    {
+      "id": "c72d71b7-a225-54dc-bf6e-06ef7ba217db",
+      "name": "Practice Experiences Renewal"
+    },
+    {
+      "id": "19c00844-dc60-590e-859d-5b4f29574ee7",
+      "name": "Interview Ready Renewal"
+    }
+  ],
   "version": "1"
 }

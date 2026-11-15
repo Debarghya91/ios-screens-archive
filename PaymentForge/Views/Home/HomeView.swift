@@ -2202,17 +2202,18 @@ struct LessonRow: View {
     var showsLessonNumber: Bool = false
 
     /// True when this lesson's chapter is not unlocked: neither the
-    /// bundle containing it nor the Integrated Course is owned.
+    /// part containing it nor the Integrated Course is owned.
     private var isLocked: Bool {
         guard let number = PFChapterHelper.chapterNumber(from: entry.id) else { return false }
         return !storeManager.isChapterUnlocked("ch\(number)")
     }
 
-    /// True when this lesson is the free sample of its chapter: the
-    /// first lesson, free with full content even when the chapter
-    /// is locked.
+    /// True when this lesson is free without any purchase: the
+    /// first lesson of its chapter, or one of its part's
+    /// sequential free samples. Free with full content even when
+    /// the chapter is locked.
     private var isFreeSample: Bool {
-        PFChapterHelper.isSampleLesson(entry, in: contentService)
+        PFChapterHelper.isFreeLesson(entry, in: contentService)
     }
 
     var body: some View {

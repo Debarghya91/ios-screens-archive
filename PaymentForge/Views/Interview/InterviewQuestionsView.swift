@@ -7,9 +7,12 @@
 // questions, and expandable model answers. Tapping a question shows
 // its answer; only one answer is open at a time, and the question
 // scrolls into view so a long answer is not left below the fold.
-// When the bundled bank cannot be loaded, the section shows a
-// local-data error state with a Try again action instead of an
-// empty list or a misleading zero-results message.
+// Question text is discovery and always visible. Model answers are
+// gated by Interview Ready: the first 5 answers in bank order are
+// free samples, and every other answer needs Interview Ready or the
+// Integrated Course. When the bundled bank cannot be loaded, the
+// section shows a local-data error state with a Try again action
+// instead of an empty list or a misleading zero-results message.
 
 import SwiftUI
 
@@ -260,8 +263,10 @@ struct InterviewQuestionList: View {
     var showCategory: Bool = false
     var onExpand: ((String) -> Void)? = nil
 
+    @EnvironmentObject private var storeManager: StoreManager
     @State private var expandedQuestionID: String? = nil
     @State private var visibleCount: Int = 20
+    @State private var showCheckout = false
 
     private static let pageSize = 20
 
@@ -271,6 +276,12 @@ struct InterviewQuestionList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
+            if !storeManager.isInterviewUnlocked {
+                Text("The first \(FreeSampleRules.interviewFreeQuestionCount) model answers are free. Unlock Interview Ready for every model answer.")
+                    .font(.pfBody)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             ForEach(Array(visibleQuestions.enumerated()), id: \.element.id) { index, question in
                 questionRow(question, number: index + 1)
             }
@@ -294,6 +305,9 @@ struct InterviewQuestionList: View {
                 expandedQuestionID = nil
             }
         }
+        .sheet(isPresented: $showCheckout) {
+            CheckoutView()
+        }
     }
 
     /// One question row, in the Situations case-study presentation:
@@ -306,6 +320,8 @@ struct InterviewQuestionList: View {
     /// Situations format.
     private func questionRow(_ question: InterviewQuestion, number: Int) -> some View {
         let isExpanded = expandedQuestionID == question.id
+        let isLocked = InterviewReadyGating.isAnswerLocked(
+            question, isInterviewUnlocked: storeManager.isInterviewUnlocked)
         let categoryTitle: String? = showCategory
             ? InterviewQuestionStore.categoryTitle(for: question.id)
             : nil
@@ -350,19 +366,29 @@ struct InterviewQuestionList: View {
                             }
                         }
                         Spacer()
+                        if isLocked {
+                            Image(systemName: "lock.fill")
+                                .font(.pfBody.weight(.semibold))
+                                .foregroundColor(.pfSecondaryText)
+                                .accessibilityLabel("Model answer locked")
+                        }
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.pfBody.weight(.semibold))
                             .foregroundColor(.pfSecondaryText)
                     }
                     if isExpanded {
-                        VStack(alignment: .leading, spacing: PFSpacing.lg) {
-                            if let readLabel = ReadTime.label(for: question.question + " " + question.answer) {
-                                Label(readLabel, systemImage: "clock")
-                                    .font(.pfCaptionBold)
-                                    .foregroundColor(.pfSecondaryText)
-                            }
-                            answerSection(title: "Model answer") {
-                                bodyText(question.answer)
+                        if isLocked {
+                            lockCard
+                        } else {
+                            VStack(alignment: .leading, spacing: PFSpacing.lg) {
+                                if let readLabel = ReadTime.label(for: question.question + " " + question.answer) {
+                                    Label(readLabel, systemImage: "clock")
+                                        .font(.pfCaptionBold)
+                                        .foregroundColor(.pfSecondaryText)
+                                }
+                                answerSection(title: "Model answer") {
+                                    bodyText(question.answer)
+                                }
                             }
                         }
                     }
@@ -373,7 +399,27 @@ struct InterviewQuestionList: View {
         .id(question.id)
         .accessibilityLabel(categoryTitle.map { "\(question.question), in \($0)" } ?? question.question)
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-        .accessibilityHint(isExpanded ? "Hides the model answer" : "Shows the model answer")
+        .accessibilityHint(isLocked
+            ? "Shows how to unlock the model answer"
+            : (isExpanded ? "Hides the model answer" : "Shows the model answer"))
+    }
+
+    /// The lock card shown in place of a locked model answer. The
+    /// question itself stays visible (discovery); only the answer
+    /// is gated. The buy prompt opens the Purchases screen.
+    private var lockCard: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            Label("Model answer locked", systemImage: "lock.fill")
+                .font(.pfCaptionBold)
+                .foregroundColor(.pfNavy)
+            Text("This model answer is part of Interview Ready: \(ContentManifest.interviewQuestionCount) interview questions and \(ContentManifest.faqCount) FAQ answers\(storeManager.isPriceAvailable(for: ProductCatalogue.interviewProductID) ? " for \(storeManager.priceText(for: ProductCatalogue.interviewProductID))" : ""), with 1 year of access. The Integrated Course includes Interview Ready too.")
+                .font(.pfBody)
+                .foregroundColor(.pfSecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            PFPrimaryButton(title: "View Interview Ready") {
+                showCheckout = true
+            }
+        }
     }
 
     /// One body-text paragraph, as in the Situations detail tabs.

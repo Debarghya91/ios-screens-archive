@@ -78,3 +78,57 @@ final class ReferralStore: ObservableObject {
         ].joined(separator: "\n")
     }
 }
+
+// MARK: - Referral and promo rules
+
+/// The decided referral and promo rules, encoded in one place so
+/// every surface states the same terms. These rules are
+/// WEBSITE-VALIDATED: the website checks every code at redemption,
+/// and Apple In-App Purchase cannot take an external discount, so
+/// nothing here is wired into any purchase path. The referral code
+/// issuer itself is still unbuilt queued work: the code shown in
+/// the app is locally derived and provisional (see the file
+/// header), and no invite or share text promises a credit.
+enum ReferralRules {
+
+    /// The credit the referrer earns, in rupees, when a referred
+    /// person buys a qualifying product. Referrer only: the
+    /// referred person gets no credit.
+    static let referrerCreditINR = 100
+
+    /// Minimum sale price for a product to qualify for referral
+    /// credit: Rs 999. In the current catalogue that is Practice
+    /// Experiences, Interview Ready, and The Integrated Course.
+    static let minimumQualifyingSalePriceINR = 999
+
+    /// The launch promo code. It applies as the coupon layer on
+    /// sale prices for parts and standalone items only, never on
+    /// The Integrated Course, and never stacked with a referral.
+    static let launchPromoCode = "FIRSTLAUNCH25"
+
+    /// True when this product qualifies for referral credit: its
+    /// sale price is Rs 999 or more. The credit is earned only
+    /// when the referred person buys.
+    static func qualifiesForReferralCredit(_ product: CourseProduct) -> Bool {
+        product.priceINR >= minimumQualifyingSalePriceINR
+    }
+
+    /// The products that qualify for referral credit, in catalogue
+    /// order.
+    static var qualifyingProducts: [CourseProduct] {
+        ProductCatalogue.products.filter(qualifiesForReferralCredit)
+    }
+
+    /// True when the launch promo applies to this product: every
+    /// product except The Integrated Course. It never stacks with
+    /// a referral.
+    static func promoApplies(to product: CourseProduct) -> Bool {
+        product.productID != ProductCatalogue.integratedProductID
+    }
+
+    /// One rules line for the referrals section, in the
+    /// website-validated framing the app already uses.
+    static var rulesLine: String {
+        "Refer a friend: you earn Rs. 100 when they buy Practice Experiences, Interview Ready, or The Integrated Course. Promo code FIRSTLAUNCH25 does not apply to The Integrated Course and cannot be combined with a referral. All referral and promo terms are confirmed on the website."
+    }
+}

@@ -1,44 +1,55 @@
 // StoreManager.swift
 // Payments Training Hub iOS - Apple In-App Purchase (StoreKit 2) for the
-// catalogue products: the chapter bundles plus Payment Situations.
-// Every product is a non-consumable, one-time purchase. Product IDs
-// and catalogue data live in ProductCatalogue (Models); StoreKit is
-// the only source of a purchase price.
+// catalogue products: the 10 book parts, BA/PO Studio, Payment
+// Simulator, Investigation Lab, Practice Experiences, Interview
+// Ready, and The Integrated Course. Every purchase product is a
+// non-consumable that gives 1 year of access from the verified
+// purchase timestamp. Every product also has a renewal product: a
+// 1-year auto-renewable subscription at half the sale price, with
+// the same product ID plus ".renewal". Product IDs and catalogue
+// data live in ProductCatalogue (Models); StoreKit is the only
+// source of a purchase price.
 // There are no App Store Connect products yet. Until they exist,
 // the products are served by the local StoreKit Configuration file
-// PaymentForge.storekit (same product IDs, same prices) when it is
-// selected in the Xcode scheme. Once the real products exist in App
-// Store Connect with these EXACT product IDs and the same prices,
+// PaymentForge.storekit (same product IDs, same sale prices) when it
+// is selected in the Xcode scheme. Once the real products exist in
+// App Store Connect with these EXACT product IDs and the same prices,
 // the app will fetch them from the App Store instead of the local
 // file. DEBUG simulated
 // purchases use ONLY that .storekit configuration: there is no local
 // test-purchase path that unlocks without a StoreKit transaction.
 //
-// Access rules (ProductCatalogue): a buyer of a bundle gets ONLY that
-// bundle's chapters. The Integrated Course unlocks all chapter
-// products AND all Payment Situations. Situations is also sold
-// standalone: buyers of the situations product, or the signed-in
-// user with an active server entitlement for it, can open the paid
-// situations without the full course. The free sample situations
-// stay free without purchase; that mechanism lives in SituationsView,
-// not here.
+// Access rules (ProductCatalogue): a buyer of a part gets ONLY that
+// part's chapters. The Integrated Course unlocks every product.
+// Each standalone product unlocks only its own content. A product
+// is unlocked while the buyer holds an ACTIVE purchase of it, an
+// ACTIVE renewal subscription for it, or an ACTIVE Integrated
+// purchase or renewal. Expired entitlements lock again: a
+// non-consumable purchase expires 1 year after its verified
+// purchase date, and a renewal subscription expires at the
+// subscription expiry StoreKit reports. The held-out ch37 is in no
+// product and is never sold, so it is never locked. The free sample
+// situations stay free without purchase; that mechanism lives in
+// SituationsView, not here.
 //
 // SECURITY: purchases are App Store In-App Purchase only. There is
 // no manual payment path in this file. In Release builds a product
-// unlocks ONLY when (a) a verified StoreKit transaction is active on
-// this device, or (b) the signed-in user has an active row in
-// Supabase user_purchases for this product, or (c) a failed server
-// read falls back to the server-verified entitlement cache for that
-// same account, which replays only rows the server itself confirmed,
-// only for 7 days, and never for guests or for another account (see
-// the cache helpers below). No other UserDefaults flag alone ever
-// unlocks anything in Release: the store starts locked and only
-// verified entitlements open it. A failed, cancelled,
-// pending or unverified purchase NEVER unlocks content. Only verified
-// transactions are finished. This file only READS the server row
-// back through SupabaseClient; server writes go through the
-// record-purchase Edge Function, which holds the service-role key
-// server-side. No service-role key is ever in the app.
+// unlocks ONLY when (a) a verified, unexpired StoreKit transaction
+// is active on this device, or (b) the signed-in user has an active,
+// unexpired row in Supabase user_purchases for this product, or (c)
+// a failed server read falls back to the server-verified entitlement
+// cache for that same account, which replays only rows the server
+// itself confirmed, only for 7 days, only while their recorded
+// expiry is still in the future, and never for guests or for
+// another account (see the cache helpers below). No other
+// UserDefaults flag alone ever unlocks anything in Release: the
+// store starts locked and only verified entitlements open it. A
+// failed, cancelled, pending, unverified or expired purchase NEVER
+// unlocks content. Only verified transactions are finished. This
+// file only READS the server row back through SupabaseClient;
+// server writes go through the record-purchase Edge Function, which
+// holds the service-role key server-side. No service-role key is
+// ever in the app.
 //
 // Refunds and revocations (C3): a revoked transaction is NOT finished
 // until its server revoke is confirmed, or a definitive server read
@@ -71,6 +82,7 @@ private struct UserPurchaseRow: Codable {
     var store: String
     var transactionID: String?
     var purchasedAt: String?
+    var expiresAt: String?
     var status: String
 
     enum CodingKeys: String, CodingKey {
@@ -79,6 +91,7 @@ private struct UserPurchaseRow: Codable {
         case store
         case transactionID = "transaction_id"
         case purchasedAt = "purchased_at"
+        case expiresAt = "expires_at"
         case status
     }
 }
@@ -100,15 +113,19 @@ private struct PendingRevoke: Codable {
 
 /// One server-verified entitlement cache record (H2): the exact set
 /// of product IDs a definitive server read returned for one account,
-/// with the time the server confirmed it. Written only from decoded
+/// with the time the server confirmed it and the expiry recorded
+/// for each product ID (Unix time). Written only from decoded
 /// server rows, never from any local purchase or bypass state. An
 /// empty set is a real record: it means the server definitively
 /// reported no active row, and it overwrites any older record so a
-/// revoked entitlement cannot be resurrected offline.
+/// revoked entitlement cannot be resurrected offline. Records
+/// written before expiries were stored decode with expiries nil
+/// and unlock nothing on replay (fail closed).
 private struct ServerEntitlementCache: Codable {
     var userID: String
     var productIDs: [String]
     var verifiedAt: TimeInterval
+    var expiries: [String: TimeInterval]?
 }
 
 @MainActor
@@ -120,18 +137,37 @@ final class StoreManager: ObservableObject {
     /// instance the UI observes. There is exactly one StoreManager.
     static let shared = StoreManager()
 
-    /// The App Store Connect product ID for Payment Situations.
-    /// Single source of truth is ProductCatalogue; kept here so
-    /// existing call sites reading StoreManager.situationsProductID
-    /// keep working.
-    static let situationsProductID = ProductCatalogue.situationsProductID
+    /// The Integrated Course product ID: it unlocks every product.
+    static let integratedProductID = ProductCatalogue.integratedProductID
 
-    /// All catalogue product IDs, from ProductCatalogue.
+    /// Alias kept for existing call sites: the full course is The
+    /// Integrated Course.
+    static let fullCourseProductID = ProductCatalogue.fullCourseProductID
+
+    /// The Practice Experiences product ID.
+    static let practiceProductID = ProductCatalogue.practiceProductID
+
+    /// The BA/PO Studio product ID.
+    static let studioProductID = ProductCatalogue.studioProductID
+
+    /// The Payment Simulator product ID.
+    static let simulatorProductID = ProductCatalogue.simulatorProductID
+
+    /// The Investigation Lab product ID.
+    static let investigationLabProductID = ProductCatalogue.investigationLabProductID
+
+    /// The Interview Ready product ID.
+    static let interviewProductID = ProductCatalogue.interviewProductID
+
+    /// All catalogue purchase product IDs, from ProductCatalogue.
     static let allProductIDs = ProductCatalogue.allProductIDs
 
-    /// The Integrated Course product ID: it unlocks all chapter
-    /// products and all Payment Situations.
-    static let fullCourseProductID = ProductCatalogue.fullCourseProductID
+    /// All renewal subscription product IDs, from ProductCatalogue.
+    static let allRenewalProductIDs = ProductCatalogue.allRenewalProductIDs
+
+    /// All store product IDs (purchases plus renewals), from
+    /// ProductCatalogue. StoreKit fetches this full set.
+    static let allStoreProductIDs = ProductCatalogue.allStoreProductIDs
 
     /// Retired 13 Nov 2026: always false. It used to let a DEBUG
     /// build open content on a Buy tap without a StoreKit purchase,
@@ -141,13 +177,9 @@ final class StoreManager: ObservableObject {
     /// Other files read this symbol for purchase copy; keep it.
     static let buildPhaseBuyOpensContent = false
 
-    /// Local record of the IAP purchases, so the unlocked state
-    /// survives app restarts in DEBUG builds. The source of truth is
-    /// the App Store entitlement, re-checked on launch and on
-    /// restore; this flag is only a cache, and Release builds never
-    /// read it to unlock anything. Kept for the Situations purchase,
-    /// so older builds' cached state is not lost; the per-product set
-    /// below is the cache for all products.
+    /// Retired legacy key for the abolished standalone Situations
+    /// purchase. Kept only so init() can purge it; nothing reads it
+    /// to unlock anything any more, and nothing writes it.
     private static let purchasedKey = "pf.iap.situationsPurchased.v1"
 
     /// Local record of all purchased product IDs, as an array in
@@ -155,6 +187,12 @@ final class StoreManager: ObservableObject {
     /// source of truth, re-checked on launch and on restore. Release
     /// builds write this cache but never read it to unlock anything.
     private static let purchasedProductIDsKey = "pf.iap.purchasedProductIDs.v1"
+
+    /// Local record of entitlement expiry timestamps (product ID
+    /// to Unix time), written alongside the purchased cache from
+    /// verified transactions only. DEBUG restore only; Release
+    /// builds never read it to unlock anything.
+    private static let entitlementExpiriesKey = "pf.iap.entitlementExpiries.v1"
 
     /// Key for product IDs the retired build-phase Buy bypass once
     /// unlocked. Kept only so init() can purge it; nothing reads it
@@ -180,22 +218,27 @@ final class StoreManager: ObservableObject {
     /// the server entitlements until a read succeeds.
     private static let serverEntitlementCacheValidity: TimeInterval = 7 * 24 * 60 * 60
 
+    /// Medium date style for access-until messages, for example
+    /// "15 Nov 2027".
+    private static let displayDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
+
     /// The fetched products, empty until the store loads them.
     @Published private(set) var products: [Product] = []
 
-    /// The fetched product for Payment Situations, nil until the store
-    /// loads it. Kept so existing call sites reading
-    /// storeManager.product keep working.
-    var product: Product? {
-        products.first { $0.id == Self.situationsProductID }
-    }
-
-    /// The StoreKit product for one product ID, nil until loaded.
+    /// The StoreKit product for one store ID (a purchase ID or a
+    /// renewal ID), nil until loaded.
     func storeProduct(for productID: String) -> Product? {
         products.first { $0.id == productID }
     }
 
-    /// True when every catalogue product has loaded from StoreKit.
+    /// True when every catalogue purchase product has loaded from
+    /// StoreKit. Renewal products load with the same fetch; a
+    /// renewal price is checked on its own ID when renewing.
     var allProductsLoaded: Bool {
         !products.isEmpty && Self.allProductIDs.allSatisfy { storeProduct(for: $0) != nil }
     }
@@ -216,27 +259,23 @@ final class StoreManager: ObservableObject {
     /// one; their StoreKit purchase is what unlocks them.
     @Published private(set) var serverEntitledProductIDs: Set<String> = []
 
+    /// Expiry per store product ID from verified on-device
+    /// transactions: the purchase date plus 1 year for a purchase,
+    /// the subscription expiry for a renewal. Set only by
+    /// refreshEntitlement, from verified transactions.
+    @Published private(set) var deviceEntitlementExpiries: [String: Date] = [:]
+
+    /// Expiry per store product ID from definitive server reads:
+    /// the row's expires_at when present, else purchased_at plus
+    /// 1 year. Set only by applyDefinitiveServerEntitlements and
+    /// by replaying the server-verified cache.
+    @Published private(set) var serverEntitlementExpiries: [String: Date] = [:]
+
     /// Product IDs the retired build-phase Buy bypass unlocked.
     /// Always empty now: the bypass is retired, init() purges its
     /// stored key, and isProductOwned() never consults this set.
     /// Kept so existing call sites and tests keep compiling.
     @Published private(set) var buildPhaseUnlockedProductIDs: Set<String> = []
-
-    /// True when the App Store entitlement for Situations is active
-    /// on this device (bought, and verified from the transaction).
-    var isPurchased: Bool {
-        purchasedProductIDs.contains(Self.situationsProductID)
-    }
-
-    /// True when the signed-in user has an active user_purchases row
-    /// for Situations on the server, or a fresh server-verified
-    /// cache record for the same account after a failed server read.
-    /// This is the ONLY server path that unlocks Situations. Guests
-    /// (no account) never have one; their StoreKit purchase is what
-    /// unlocks them.
-    var isServerEntitlementVerified: Bool {
-        serverEntitledProductIDs.contains(Self.situationsProductID)
-    }
 
     /// The verified App Store transactions behind the current
     /// entitlements, latest purchase first. Empty when nothing is
@@ -271,19 +310,13 @@ final class StoreManager: ObservableObject {
     /// learner dismisses the alert that showed it.
     func clearStatusMessage() { statusMessage = nil }
 
-    /// The display price for Payment Situations from StoreKit when the
-    /// product is loaded, otherwise "Price unavailable". A hardcoded
-    /// catalogue price is NEVER shown as a purchase price.
-    var priceText: String {
-        priceText(for: Self.situationsProductID)
-    }
-
-    /// The display price for one product from StoreKit when it is
-    /// loaded, otherwise "Price unavailable". The StoreKit localised
-    /// displayPrice is the only price ever presented as a purchase
-    /// price; the catalogue priceINR is reference data only and is
-    /// never shown here. Callers must check isPriceAvailable(for:)
-    /// before offering a purchase.
+    /// The display price for one store ID (a purchase ID or a
+    /// renewal ID) from StoreKit when it is loaded, otherwise
+    /// "Price unavailable". The StoreKit localised displayPrice is
+    /// the only price ever presented as a purchase price; the
+    /// catalogue priceINR is reference data only and is never shown
+    /// here. Callers must check isPriceAvailable(for:) before
+    /// offering a purchase.
     func priceText(for productID: String) -> String {
         if let product = storeProduct(for: productID) {
             return product.displayPrice
@@ -299,67 +332,126 @@ final class StoreManager: ObservableObject {
         storeProduct(for: productID) != nil
     }
 
-    /// How the current Situations entitlement was obtained, for the
-    /// Purchases screen. App Store wins when both exist.
-    var purchaseMethod: String? {
-        if isPurchased { return "App Store" }
-        if isServerEntitlementVerified { return "Verified purchase" }
-        return nil
-    }
-
     /// The date the latest entitlement was purchased, from the
     /// verified App Store transaction when there is one.
     var purchasedOnDate: Date? {
         latestTransaction?.purchaseDate
     }
 
-    /// True when this product is owned outright: a verified StoreKit
-    /// transaction on this device, or an active server entitlement
-    /// for the signed-in user (a definitive server read, or a fresh
-    /// server-verified cache record after a failed read). The full
-    /// course is not counted here: see isProductUnlocked. ONLY those
-    /// two sources count, in every build; no stored flag other than
-    /// the server-verified cache is ever consulted.
+    /// True when this product is owned outright with an ACTIVE
+    /// entitlement: a verified, unexpired StoreKit transaction on
+    /// this device, or an active, unexpired server entitlement for
+    /// the signed-in user (a definitive server read, or a fresh
+    /// server-verified cache record after a failed read), for the
+    /// purchase product or for its renewal subscription. The
+    /// Integrated Course is not counted here: see
+    /// isProductUnlocked. A renewal product ID passed directly
+    /// answers for that renewal alone. An unknown ID owns nothing.
+    /// ONLY those two sources count, in every build; no stored flag
+    /// other than the server-verified cache is ever consulted.
     func isProductOwned(_ productID: String) -> Bool {
-        purchasedProductIDs.contains(productID) || serverEntitledProductIDs.contains(productID)
+        if ProductCatalogue.isRenewalProductID(productID) {
+            guard ProductCatalogue.productForStoreID(productID) != nil else { return false }
+            return isStoreIDActive(productID)
+        }
+        guard let base = ProductCatalogue.product(for: productID) else { return false }
+        return isStoreIDActive(base.productID) || isStoreIDActive(base.renewalProductID)
     }
 
-    /// True when this product is unlocked: owned outright, or the
-    /// Integrated Course is owned. The Integrated Course unlocks
-    /// all chapter products and all Payment Situations. Situations
-    /// is also sold standalone: owning the situations product
-    /// unlocks it without the full course.
+    /// True when one store ID (a purchase ID or a renewal ID) holds
+    /// an active entitlement from either source, with an unexpired
+    /// expiry. An ID with no recorded expiry counts as active: that
+    /// happens only for DEBUG-seeded cache state in tests, because
+    /// every Release path records an expiry.
+    private func isStoreIDActive(_ storeID: String, at now: Date = Date()) -> Bool {
+        guard purchasedProductIDs.contains(storeID) || serverEntitledProductIDs.contains(storeID) else { return false }
+        return EntitlementValidity.isActive(expiry: latestExpiry(for: storeID), at: now)
+    }
+
+    /// The latest recorded expiry for one store ID across both
+    /// entitlement sources, or nil when none was recorded.
+    private func latestExpiry(for storeID: String) -> Date? {
+        [deviceEntitlementExpiries[storeID], serverEntitlementExpiries[storeID]].compactMap { $0 }.max()
+    }
+
+    /// True when this product is unlocked: owned outright with an
+    /// active entitlement, or the Integrated Course is owned with
+    /// an active entitlement. The Integrated Course unlocks every
+    /// product. Owning one product does NOT unlock another: the
+    /// parts and the standalone products are independent unless
+    /// the Integrated Course is owned.
     func isProductUnlocked(_ productID: String) -> Bool {
         if isProductOwned(productID) { return true }
         if productID == Self.fullCourseProductID { return false }
         return isProductOwned(Self.fullCourseProductID)
     }
 
-    /// Situations are unlocked for paid access when the situations
-    /// product is owned outright (an In-App Purchase active on
-    /// this device, or an active server entitlement in Supabase
-    /// user_purchases for the signed-in user), or when the
-    /// Integrated Course is owned. The free sample situations are
-    /// handled in SituationsView and stay free regardless of this
-    /// value.
-    var isSituationsUnlocked: Bool {
-        isProductUnlocked(Self.situationsProductID)
+    /// The date this product's access runs until, for the Purchases
+    /// screen: the latest active expiry among the product's own
+    /// purchase and renewal entitlements, or the Integrated
+    /// Course's expiry when the product is unlocked through it.
+    /// Nil when the product is not unlocked, or when no expiry was
+    /// recorded (DEBUG-seeded state).
+    func expiryDate(for productID: String) -> Date? {
+        guard let base = ProductCatalogue.productForStoreID(productID),
+              isProductUnlocked(productID) else { return nil }
+        var candidates: [Date] = []
+        for storeID in [base.productID, base.renewalProductID] {
+            if let expiry = latestExpiry(for: storeID) { candidates.append(expiry) }
+        }
+        if base.productID != Self.fullCourseProductID, isProductOwned(Self.fullCourseProductID) {
+            for storeID in [Self.fullCourseProductID, ProductCatalogue.renewalProductID(for: Self.fullCourseProductID)] {
+                if let expiry = latestExpiry(for: storeID) { candidates.append(expiry) }
+            }
+        }
+        return candidates.max()
     }
 
-    /// True when a chapter is unlocked: the Integrated Course is
-    /// owned, or the bundle containing this chapter is owned. A
-    /// chapter no bundle contains is LOCKED (fail closed): an
-    /// unmapped chapter is a catalogue error, and it must never be
-    /// given away silently. All 100 manifest chapters are mapped
-    /// (see the M1 test), so no real chapter is affected.
+    /// Practice Experiences is unlocked when the Practice product
+    /// is owned outright with an active entitlement (an In-App
+    /// Purchase active on this device, or an active server
+    /// entitlement in Supabase user_purchases for the signed-in
+    /// user), or when the Integrated Course is owned. The free
+    /// sample situations are handled in SituationsView and stay
+    /// free regardless of this value.
+    var isPracticeUnlocked: Bool { isProductUnlocked(Self.practiceProductID) }
+
+    /// BA/PO Studio is unlocked when the Studio product is owned
+    /// with an active entitlement, or when the Integrated Course
+    /// is owned.
+    var isStudioUnlocked: Bool { isProductUnlocked(Self.studioProductID) }
+
+    /// The Payment Simulator is unlocked when the Simulator product
+    /// is owned with an active entitlement, or when the Integrated
+    /// Course is owned.
+    var isSimulatorUnlocked: Bool { isProductUnlocked(Self.simulatorProductID) }
+
+    /// The Investigation Lab is unlocked when the Lab product is
+    /// owned with an active entitlement, or when the Integrated
+    /// Course is owned.
+    var isInvestigationLabUnlocked: Bool { isProductUnlocked(Self.investigationLabProductID) }
+
+    /// Interview Ready is unlocked when the Interview product is
+    /// owned with an active entitlement, or when the Integrated
+    /// Course is owned.
+    var isInterviewUnlocked: Bool { isProductUnlocked(Self.interviewProductID) }
+
+    /// True when a chapter is unlocked. The held-out ch37 is always
+    /// reachable: it is in no product and is never sold, so it is
+    /// never locked behind a product that does not exist. For every
+    /// other chapter, the Integrated Course being owned unlocks it,
+    /// or the part containing this chapter being owned unlocks it.
+    /// A chapter that is in no part (unknown) is LOCKED: fail
+    /// closed, so unmapped content is never free by accident.
     func isChapterUnlocked(_ chapterID: String) -> Bool {
+        if ProductCatalogue.isHeldOutChapter(chapterID) { return true }
         if isProductOwned(Self.fullCourseProductID) { return true }
-        guard let bundle = ProductCatalogue.productContaining(chapterID: chapterID) else { return false }
-        return isProductOwned(bundle.productID)
+        guard let part = ProductCatalogue.productContaining(chapterID: chapterID) else { return false }
+        return isProductOwned(part.productID)
     }
 
-    /// The bundle that unlocks a chapter, for the lock screen copy.
-    /// Nil when the chapter is in no bundle, or when it is already
+    /// The part that unlocks a chapter, for the lock screen copy.
+    /// Nil when the chapter is in no part, or when it is already
     /// unlocked.
     func unlockingProduct(for chapterID: String) -> CourseProduct? {
         guard !isChapterUnlocked(chapterID) else { return nil }
@@ -380,21 +472,30 @@ final class StoreManager: ObservableObject {
     private var isLoadingProducts = false
 
     init() {
-        // The retired bypass key is purged in every build, so a
-        // bypass unlock left by an older DEBUG build can never
+        // The retired bypass key and the retired legacy Situations
+        // key are purged in every build, so a bypass unlock left by
+        // an older DEBUG build, or a cached standalone Situations
+        // purchase from the abolished 12-product division, can never
         // unlock anything again.
         UserDefaults.standard.removeObject(forKey: Self.buildPhaseUnlockedProductIDsKey)
+        UserDefaults.standard.removeObject(forKey: Self.purchasedKey)
 #if DEBUG
-        // DEBUG only: restore the verified-transaction cache so a
-        // development build keeps its unlocked state across
-        // restarts until refreshEntitlement() re-checks it. This
-        // cache is written only from verified transactions.
+        // DEBUG only: restore the verified-transaction cache and
+        // the cached expiry map so a development build keeps its
+        // unlocked state across restarts until
+        // refreshEntitlement() re-checks it. This cache is written
+        // only from verified transactions. Cached IDs are filtered
+        // to the current store IDs, so stale IDs from an older
+        // catalogue unlock nothing. IDs with no cached expiry stay
+        // active, matching how tests seed ownership.
         let cached = UserDefaults.standard.stringArray(forKey: Self.purchasedProductIDsKey) ?? []
-        purchasedProductIDs = Set(cached.filter { Self.allProductIDs.contains($0) })
-        // Older builds cached only the Situations purchase under the
-        // single key; carry it into the per-product set once.
-        if UserDefaults.standard.bool(forKey: Self.purchasedKey) {
-            purchasedProductIDs.insert(Self.situationsProductID)
+        let restored = Set(cached.filter { Self.allStoreProductIDs.contains($0) })
+        purchasedProductIDs = restored
+        if let data = UserDefaults.standard.data(forKey: Self.entitlementExpiriesKey),
+           let decoded = try? JSONDecoder().decode([String: TimeInterval].self, from: data) {
+            deviceEntitlementExpiries = decoded
+                .filter { restored.contains($0.key) }
+                .mapValues { Date(timeIntervalSince1970: $0) }
         }
 #else
         // Release: start locked. Verified entitlements populate this
@@ -444,12 +545,12 @@ final class StoreManager: ObservableObject {
             isLoadingProducts = false
         }
         do {
-            let fetched = try await Product.products(for: Self.allProductIDs)
+            let fetched = try await Product.products(for: Self.allStoreProductIDs)
             products = fetched.sorted { $0.id < $1.id }
             productLoadFailed = fetched.isEmpty
             if fetched.isEmpty {
                 statusMessage = "The products could not be loaded. Check your connection and try again."
-            } else if fetched.count < Self.allProductIDs.count {
+            } else if fetched.count < Self.allStoreProductIDs.count {
                 statusMessage = "Some course prices could not be loaded. Check your connection and try again."
             }
         } catch {
@@ -458,25 +559,25 @@ final class StoreManager: ObservableObject {
         }
     }
 
-    /// Fetch the products. Kept so existing call sites reading
-    /// loadProduct keep working; it loads all catalogue products.
-    func loadProduct() async {
-        await loadProducts()
-    }
-
-    /// Buy Payment Situations. Kept so existing call sites keep
-    /// working; it buys the situations product.
-    func purchase() async {
-        await purchase(productID: Self.situationsProductID)
-    }
-
-    /// Buy one product. Handles success, cancellation, pending and
-    /// failure with a clear message for each. A failed, cancelled,
-    /// pending or unverified purchase never unlocks anything. A
-    /// purchase is only offered when the StoreKit product (and its
-    /// real price) has loaded; otherwise the buyer is told the price
-    /// is unavailable and nothing is charged.
+    /// Buy one product. A renewal product ID is routed to
+    /// purchaseRenewal(for:), which enforces the direct-ownership
+    /// rule. Handles success, cancellation, pending and failure
+    /// with a clear message for each. A failed, cancelled, pending
+    /// or unverified purchase never unlocks anything. A purchase is
+    /// only offered when the StoreKit product (and its real price)
+    /// has loaded; otherwise the buyer is told the price is
+    /// unavailable and nothing is charged. Buying again while the
+    /// product is already unlocked through the Integrated Course
+    /// is refused: the buyer already has access.
     func purchase(productID: String) async {
+        if ProductCatalogue.isRenewalProductID(productID) {
+            guard let base = ProductCatalogue.productForStoreID(productID) else {
+                statusMessage = "That product is not available. Please try again."
+                return
+            }
+            await purchaseRenewal(for: base.productID)
+            return
+        }
         guard let catalogueProduct = ProductCatalogue.product(for: productID) else {
             statusMessage = "That product is not available. Please try again."
             return
@@ -485,16 +586,54 @@ final class StoreManager: ObservableObject {
             statusMessage = "\(catalogueProduct.name) is already unlocked."
             return
         }
-        // Every build buys through StoreKit: in test builds the
-        // product comes from the local PaymentForge.storekit
-        // configuration, and only a verified transaction unlocks.
-        if storeProduct(for: productID) == nil {
-            await loadProducts()
-        }
-        guard let product = storeProduct(for: productID) else {
+        guard let product = await loadedStoreProduct(for: productID) else {
             statusMessage = "The price is not available yet. Check your connection and try again."
             return
         }
+        await buyStoreProduct(product)
+    }
+
+    /// Renew one product for 1 more year at half the sale price, by
+    /// buying its renewal subscription. The buyer must DIRECTLY own
+    /// the product (an active purchase or an active renewal of that
+    /// product itself): access through the Integrated Course does
+    /// not qualify, because the renewal price must never be a cheap
+    /// first buy. A renewal bought while the current access is
+    /// still active extends from the subscription expiry StoreKit
+    /// reports.
+    func purchaseRenewal(for baseProductID: String) async {
+        guard let catalogueProduct = ProductCatalogue.product(for: baseProductID) else {
+            statusMessage = "That product is not available. Please try again."
+            return
+        }
+        guard isProductOwned(baseProductID) else {
+            statusMessage = "Renewal is only available once you own \(catalogueProduct.name). Buy it first, then renew."
+            return
+        }
+        guard let product = await loadedStoreProduct(for: catalogueProduct.renewalProductID) else {
+            statusMessage = "The renewal price is not available yet. Check your connection and try again."
+            return
+        }
+        await buyStoreProduct(product)
+    }
+
+    /// The loaded StoreKit product for one store ID, refetching once
+    /// when it has not loaded yet. Nil when the product is still
+    /// not loaded: the caller must not offer a purchase then.
+    private func loadedStoreProduct(for storeID: String) async -> Product? {
+        // Every build buys through StoreKit: in test builds the
+        // product comes from the local PaymentForge.storekit
+        // configuration, and only a verified transaction unlocks.
+        if storeProduct(for: storeID) == nil {
+            await loadProducts()
+        }
+        return storeProduct(for: storeID)
+    }
+
+    /// Run the StoreKit purchase sheet for one loaded product and
+    /// handle every outcome. Shared by purchase(productID:) and
+    /// purchaseRenewal(for:).
+    private func buyStoreProduct(_ product: Product) async {
         isBusy = true
         defer { isBusy = false }
         do {
@@ -541,28 +680,38 @@ final class StoreManager: ObservableObject {
     }
 
     /// Re-check the current App Store entitlements for all catalogue
-    /// products. A refunded or revoked transaction removes the
-    /// entitlement and clears the stored transaction, so the UI goes
-    /// back to Not purchased. This function deliberately never calls
-    /// the server revoke: absence from currentEntitlements is not
-    /// proof of a revocation (a transaction can be absent for other
-    /// reasons), and revoking on absence could permanently revoke a
-    /// live purchase. The authoritative revocation signal is the
-    /// revocationDate on a delivered transaction update (see
-    /// handleRevokedTransaction) or in the transaction history (see
+    /// products. A refunded, revoked, or EXPIRED transaction removes
+    /// the entitlement and clears the stored transaction, so the UI
+    /// goes back to Not purchased: a purchase expires 1 year after
+    /// its verified purchase date, and a renewal subscription
+    /// expires at the subscription expiry StoreKit reports. This
+    /// function deliberately never calls the server revoke: absence
+    /// from currentEntitlements is not proof of a revocation (a
+    /// transaction can be absent for other reasons), and revoking
+    /// on absence could permanently revoke a live purchase. The
+    /// authoritative revocation signal is the revocationDate on a
+    /// delivered transaction update (see handleRevokedTransaction)
+    /// or in the transaction history (see
     /// enqueueRevokesFromTransactionHistory, run at launch); both
     /// persist a pending revoke that retries until confirmed.
     /// Server entitlements are untouched by this function.
     func refreshEntitlement() async {
         var entitled: [Transaction] = []
+        var expiries: [String: Date] = [:]
         for await result in Transaction.currentEntitlements {
             guard case .verified(let transaction) = result else { continue }
             guard isEntitlingTransaction(transaction) else { continue }
             entitled.append(transaction)
+            let expiry = transactionExpiryDate(transaction)
+            if let existing = expiries[transaction.productID] {
+                expiries[transaction.productID] = max(existing, expiry)
+            } else {
+                expiries[transaction.productID] = expiry
+            }
         }
         entitled.sort { $0.purchaseDate > $1.purchaseDate }
         ownedTransactions = entitled
-        setPurchasedProductIDs(Set(entitled.map { $0.productID }))
+        setPurchasedProductIDs(Set(entitled.map { $0.productID }), expiries: expiries)
     }
 
     /// Re-read the server entitlements for the signed-in user from
@@ -581,16 +730,31 @@ final class StoreManager: ObservableObject {
         guard SupabaseConfig.isConfigured,
               let userID = AuthService.shared.currentUser?.id else {
             serverEntitledProductIDs = []
+            serverEntitlementExpiries = [:]
             return
         }
         guard let token = await AuthService.shared.validAccessToken() else {
-            serverEntitledProductIDs = cachedServerEntitlements(for: userID) ?? []
+            applyCachedServerEntitlementsOrClear(userID: userID)
             return
         }
-        if let definitive = await fetchServerEntitledProductIDs(userID: userID, accessToken: token) {
+        if let definitive = await fetchServerEntitlements(userID: userID, accessToken: token) {
             applyDefinitiveServerEntitlements(definitive, userID: userID)
         } else {
-            serverEntitledProductIDs = cachedServerEntitlements(for: userID) ?? []
+            applyCachedServerEntitlementsOrClear(userID: userID)
+        }
+    }
+
+    /// Replay the fresh server-verified cache for one account after
+    /// a failed server read, or clear the server entitlements when
+    /// there is no usable record. The replayed map holds only
+    /// unexpired rows for known store IDs.
+    private func applyCachedServerEntitlementsOrClear(userID: String) {
+        if let cached = cachedServerEntitlements(for: userID) {
+            serverEntitledProductIDs = Set(cached.keys)
+            serverEntitlementExpiries = cached
+        } else {
+            serverEntitledProductIDs = []
+            serverEntitlementExpiries = [:]
         }
     }
 
@@ -621,6 +785,7 @@ final class StoreManager: ObservableObject {
     /// never replay this account's cache.
     func clearAccountEntitlements() {
         serverEntitledProductIDs = []
+        serverEntitlementExpiries = [:]
         serverEntitlementSyncPending = false
     }
 
@@ -836,8 +1001,8 @@ final class StoreManager: ObservableObject {
         }
         let remaining = loadPendingRevokes(namespace: userID)
         guard !remaining.isEmpty else { return }
-        guard let definitive = await fetchServerEntitledProductIDs(userID: userID, accessToken: token) else { return }
-        for record in remaining where !definitive.contains(record.productID) {
+        guard let definitive = await fetchServerEntitlements(userID: userID, accessToken: token) else { return }
+        for record in remaining where definitive[record.productID] == nil {
             removePendingRevoke(transactionID: record.transactionID, namespace: userID)
             removeDownloadsForRevokedProduct(record.productID)
         }
@@ -856,7 +1021,7 @@ final class StoreManager: ObservableObject {
         let ownerID = AuthService.shared.currentUser?.id
         for await result in Transaction.all {
             guard case .verified(let transaction) = result else { continue }
-            guard Self.allProductIDs.contains(transaction.productID) else { continue }
+            guard Self.allStoreProductIDs.contains(transaction.productID) else { continue }
             guard transaction.revocationDate != nil else { continue }
             enqueuePendingRevoke(PendingRevoke(
                 transactionID: String(transaction.id),
@@ -869,42 +1034,80 @@ final class StoreManager: ObservableObject {
     // MARK: - Server entitlement cache (H2)
 
     /// One server read for the signed-in user's active rows. Returns
-    /// the product IDs when the server answered definitively (the
-    /// set may be empty: that means no active row), or nil on ANY
-    /// failure (no network, a server error, an undecodable reply).
-    /// Nil is never evidence about the rows; only a returned set is.
-    /// Callers must not treat nil as empty. This helper writes no
-    /// state: applying a definitive answer belongs to
+    /// the expiry per store ID when the server answered definitively
+    /// (the map may be empty: that means no active row), or nil on
+    /// ANY failure (no network, a server error, an undecodable
+    /// reply). Nil is never evidence about the rows; only a
+    /// returned map is. Callers must not treat nil as empty. Only
+    /// known store IDs with a parseable, still-future expiry are
+    /// returned; rows with unparseable or missing dates and expired
+    /// rows unlock nothing. When several rows cover one product,
+    /// the latest expiry wins. This helper writes no state:
+    /// applying a definitive answer belongs to
     /// applyDefinitiveServerEntitlements.
-    private func fetchServerEntitledProductIDs(userID: String, accessToken: String) async -> Set<String>? {
+    private func fetchServerEntitlements(userID: String, accessToken: String) async -> [String: Date]? {
         do {
             let data = try await SupabaseClient.shared.restGet(
                 table: "user_purchases",
-                query: "select=user_id,product_id,store,status&user_id=eq.\(userID)&status=eq.active",
+                query: "select=user_id,product_id,store,status,purchased_at,expires_at&user_id=eq.\(userID)&status=eq.active",
                 accessToken: accessToken
             )
             let rows = try SupabaseClient.shared.decodeRows(data, as: UserPurchaseRow.self)
-            return Set(rows.map { $0.productID }.filter { Self.allProductIDs.contains($0) })
+            var expiries: [String: Date] = [:]
+            let now = Date()
+            for row in rows {
+                guard Self.allStoreProductIDs.contains(row.productID) else { continue }
+                guard let expiry = Self.serverRowExpiry(row), expiry > now else { continue }
+                if let existing = expiries[row.productID] {
+                    expiries[row.productID] = max(existing, expiry)
+                } else {
+                    expiries[row.productID] = expiry
+                }
+            }
+            return expiries
         } catch {
             return nil
         }
     }
 
+    /// The expiry of one server row: the server's expires_at when
+    /// present and parseable, else purchased_at plus 1 year. Nil
+    /// when neither timestamp parses: such a row unlocks nothing
+    /// (fail closed).
+    private static func serverRowExpiry(_ row: UserPurchaseRow) -> Date? {
+        if let raw = row.expiresAt, let date = Self.parseServerTimestamp(raw) { return date }
+        guard let raw = row.purchasedAt, let purchased = Self.parseServerTimestamp(raw) else { return nil }
+        return EntitlementValidity.expiryDate(forPurchaseAt: purchased)
+    }
+
+    /// Parse a Supabase timestamptz string, with or without
+    /// fractional seconds.
+    private static func parseServerTimestamp(_ raw: String) -> Date? {
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFraction.date(from: raw) { return date }
+        return ISO8601DateFormatter().date(from: raw)
+    }
+
     /// Apply one definitive server answer: replace the in-memory set
-    /// and overwrite the cache record for this account, even when
-    /// the answer is empty. An empty definitive answer is what
-    /// clears a cached entitlement; nothing else may clear it.
-    private func applyDefinitiveServerEntitlements(_ productIDs: Set<String>, userID: String) {
-        serverEntitledProductIDs = productIDs
-        saveServerEntitlementCache(productIDs: productIDs, userID: userID)
+    /// and expiry map, and overwrite the cache record for this
+    /// account, even when the answer is empty. An empty definitive
+    /// answer is what clears a cached entitlement; nothing else may
+    /// clear it.
+    private func applyDefinitiveServerEntitlements(_ expiries: [String: Date], userID: String) {
+        serverEntitledProductIDs = Set(expiries.keys)
+        serverEntitlementExpiries = expiries
+        saveServerEntitlementCache(expiries: expiries, userID: userID)
     }
 
     /// The fresh server-verified cache for one account, or nil when
     /// there is no usable record: missing, corrupt, filed for a
     /// different account, or older than the validity window. A
     /// record dated in the future is also unusable (fail closed on
-    /// clock or storage surprises). The returned set holds only
-    /// known catalogue product IDs.
+    /// clock or storage surprises). The returned map holds only
+    /// known store IDs with a still-future recorded expiry. A
+    /// record written before expiries were stored (no expiry data)
+    /// replays as an empty map: it unlocks nothing.
     ///
     /// Release safety and DEBUG separation: this cache holds ONLY
     /// records written by saveServerEntitlementCache from decoded
@@ -922,7 +1125,7 @@ final class StoreManager: ObservableObject {
     /// second line of defence behind the account-scoped key: even
     /// if a key were ever misfiled, a record for another account
     /// is refused.
-    private func cachedServerEntitlements(for userID: String) -> Set<String>? {
+    private func cachedServerEntitlements(for userID: String) -> [String: Date]? {
         let key = AccountScopedStorage.key(Self.serverEntitlementCacheBaseKey, namespace: userID)
         guard let data = UserDefaults.standard.data(forKey: key),
               let cache = try? JSONDecoder().decode(ServerEntitlementCache.self, from: data),
@@ -931,18 +1134,28 @@ final class StoreManager: ObservableObject {
         }
         let age = Date().timeIntervalSince1970 - cache.verifiedAt
         guard age >= 0, age < Self.serverEntitlementCacheValidity else { return nil }
-        return Set(cache.productIDs.filter { Self.allProductIDs.contains($0) })
+        guard let expiries = cache.expiries else { return [:] }
+        let now = Date()
+        var active: [String: Date] = [:]
+        for (productID, timestamp) in expiries {
+            guard Self.allStoreProductIDs.contains(productID) else { continue }
+            let expiry = Date(timeIntervalSince1970: timestamp)
+            guard expiry > now else { continue }
+            active[productID] = expiry
+        }
+        return active
     }
 
     /// Write one cache record from a definitive server answer. The
     /// ONLY writer is applyDefinitiveServerEntitlements, fed only by
-    /// fetchServerEntitledProductIDs. Never call this from any
+    /// fetchServerEntitlements. Never call this from any
     /// purchase, bypass, or local-cache path.
-    private func saveServerEntitlementCache(productIDs: Set<String>, userID: String) {
+    private func saveServerEntitlementCache(expiries: [String: Date], userID: String) {
         let cache = ServerEntitlementCache(
             userID: userID,
-            productIDs: Array(productIDs),
-            verifiedAt: Date().timeIntervalSince1970
+            productIDs: Array(expiries.keys),
+            verifiedAt: Date().timeIntervalSince1970,
+            expiries: expiries.mapValues { $0.timeIntervalSince1970 }
         )
         let key = AccountScopedStorage.key(Self.serverEntitlementCacheBaseKey, namespace: userID)
         if let data = try? JSONEncoder().encode(cache) {
@@ -953,14 +1166,25 @@ final class StoreManager: ObservableObject {
     // MARK: - Private
 
     /// True when a verified transaction grants an entitlement: a
-    /// known catalogue product, not revoked, and owned outright or
-    /// shared through Family Sharing (the products are family
-    /// shareable). All products are non-consumable, so there is no
-    /// expiry to check.
+    /// known store product (a purchase or a renewal), not revoked,
+    /// owned outright or shared through Family Sharing (the
+    /// products are family shareable), and unexpired. A purchase
+    /// expires 1 year after its verified purchase date; a renewal
+    /// subscription expires at the subscription expiry StoreKit
+    /// reports.
     private func isEntitlingTransaction(_ transaction: Transaction) -> Bool {
-        guard Self.allProductIDs.contains(transaction.productID) else { return false }
+        guard Self.allStoreProductIDs.contains(transaction.productID) else { return false }
         guard transaction.revocationDate == nil else { return false }
-        return transaction.ownershipType == .purchased || transaction.ownershipType == .familyShared
+        guard transaction.ownershipType == .purchased || transaction.ownershipType == .familyShared else { return false }
+        return transactionExpiryDate(transaction) > Date()
+    }
+
+    /// The expiry of a verified transaction: the subscription
+    /// expiry for a renewal subscription, else the purchase date
+    /// plus 1 year. Every product gives 1 year of access.
+    private func transactionExpiryDate(_ transaction: Transaction) -> Date {
+        if let expiration = transaction.expirationDate { return expiration }
+        return EntitlementValidity.expiryDate(forPurchaseAt: transaction.purchaseDate)
     }
 
     /// Handle a completed purchase. Only a verified transaction for
@@ -978,7 +1202,7 @@ final class StoreManager: ObservableObject {
             statusMessage = "Purchase could not be verified. Please try again."
             return
         }
-        guard Self.allProductIDs.contains(transaction.productID) else {
+        guard Self.allStoreProductIDs.contains(transaction.productID) else {
             statusMessage = "Purchase could not be verified. Please try again."
             return
         }
@@ -996,8 +1220,12 @@ final class StoreManager: ObservableObject {
         // unlock or its confirmation; the launch, sign-in, and
         // restore retries re-record it until the server confirms.
         Task { await syncPurchaseEntitlementToServer(transaction) }
-        let name = ProductCatalogue.product(for: transaction.productID)?.name ?? "The course"
-        statusMessage = "Thank you. \(name) is unlocked on this device."
+        let name = ProductCatalogue.productForStoreID(transaction.productID)?.name ?? "The course"
+        if let expiry = expiryDate(for: transaction.productID) {
+            statusMessage = "Thank you. \(name) is unlocked until \(Self.displayDateFormatter.string(from: expiry))."
+        } else {
+            statusMessage = "Thank you. \(name) is unlocked on this device."
+        }
     }
 
     /// Handle one revoked or refunded transaction (C3). Design choice:
@@ -1041,22 +1269,22 @@ final class StoreManager: ObservableObject {
     /// the transaction stays unfinished. The sign-in retry attempts
     /// orphans, and redelivery re-offers the transaction.
     /// Remove downloaded audio for a revoked product, once the server
-    /// revoke is confirmed. A full-course revoke clears all downloads;
-    /// a bundle revoke clears only that bundle's chapters; a situations
-    /// revoke clears nothing (situations have no audio downloads).
+    /// revoke is confirmed. An Integrated Course revoke (purchase or
+    /// renewal) clears all downloads; a part revoke clears only that
+    /// part's chapters; a standalone product revoke clears nothing
+    /// (those products have no lesson audio downloads).
     /// Best-effort for files already on disk: a download still in
     /// flight is not stopped and re-creates its file on completion.
     /// Runs on the main actor (this class is @MainActor), which the
     /// download store's published-state updates require.
     private func removeDownloadsForRevokedProduct(_ productID: String) {
-        if productID == Self.fullCourseProductID {
+        guard let base = ProductCatalogue.productForStoreID(productID) else { return }
+        if base.productID == Self.fullCourseProductID {
             LessonDownloadStore.shared.removeAllDownloads()
             return
         }
-        guard productID != Self.situationsProductID,
-              let chapters = ProductCatalogue.product(for: productID)?.chapterIDs,
-              !chapters.isEmpty else { return }
-        LessonDownloadStore.shared.removeDownloads(forChapterIDs: Set(chapters))
+        guard !base.chapterIDs.isEmpty else { return }
+        LessonDownloadStore.shared.removeDownloads(forChapterIDs: Set(base.chapterIDs))
     }
 
     private func handleRevokedTransaction(_ transaction: Transaction) async {
@@ -1084,12 +1312,12 @@ final class StoreManager: ObservableObject {
             return
         }
         guard let token = await AuthService.shared.validAccessToken(),
-              let definitive = await fetchServerEntitledProductIDs(userID: userID, accessToken: token) else {
+              let definitive = await fetchServerEntitlements(userID: userID, accessToken: token) else {
             await refreshEntitlementFromServer()
             return
         }
         applyDefinitiveServerEntitlements(definitive, userID: userID)
-        guard !definitive.contains(transaction.productID) else { return }
+        guard definitive[transaction.productID] == nil else { return }
         removePendingRevoke(transactionID: transactionID, namespace: userID)
         removeDownloadsForRevokedProduct(transaction.productID)
         await transaction.finish()
@@ -1107,7 +1335,7 @@ final class StoreManager: ObservableObject {
     /// sync flag and its retry paths, not by holding the finish).
     private func handleTransactionUpdate(_ update: VerificationResult<Transaction>) async {
         guard case .verified(let transaction) = update else { return }
-        guard Self.allProductIDs.contains(transaction.productID) else { return }
+        guard Self.allStoreProductIDs.contains(transaction.productID) else { return }
         guard transaction.revocationDate == nil else {
             await handleRevokedTransaction(transaction)
             return
@@ -1120,14 +1348,17 @@ final class StoreManager: ObservableObject {
         }
     }
 
-    /// Cache the purchased product IDs locally. Cache only: the App
-    /// Store entitlement is the source of truth, re-checked on launch
-    /// and on restore, and Release builds never read this cache to
-    /// unlock anything. The legacy single key is kept in step so
-    /// older builds' cached Situations purchase is not lost.
-    private func setPurchasedProductIDs(_ value: Set<String>) {
+    /// Cache the purchased product IDs and their expiry timestamps
+    /// locally. Cache only: the App Store entitlement is the source
+    /// of truth, re-checked on launch and on restore, and Release
+    /// builds never read this cache to unlock anything. Written
+    /// only from verified transactions.
+    private func setPurchasedProductIDs(_ value: Set<String>, expiries: [String: Date]) {
         purchasedProductIDs = value
+        deviceEntitlementExpiries = expiries
         UserDefaults.standard.set(Array(value), forKey: Self.purchasedProductIDsKey)
-        UserDefaults.standard.set(value.contains(Self.situationsProductID), forKey: Self.purchasedKey)
+        if let data = try? JSONEncoder().encode(expiries.mapValues { $0.timeIntervalSince1970 }) {
+            UserDefaults.standard.set(data, forKey: Self.entitlementExpiriesKey)
+        }
     }
 }

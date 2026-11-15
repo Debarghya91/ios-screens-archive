@@ -210,12 +210,12 @@ struct PracticeModeView: View {
 
     /// The v69 hard gate predicate, with the weekly case
     /// identified by id: locked when the situation is not a
-    /// free sample, not this week's free case, and Payment
-    /// Situations is not unlocked.
+    /// free sample, not this week's free case, and Practice
+    /// Experiences is not unlocked.
     private var isLocked: Bool {
         PracticeModeBuilder.isLocked(
             situation,
-            isSituationsUnlocked: storeManager.isSituationsUnlocked,
+            isPracticeUnlocked: storeManager.isPracticeUnlocked,
             weeklyCaseID: weeklyCaseID
         )
     }
@@ -226,7 +226,7 @@ struct PracticeModeView: View {
     private var gatedPool: [Situation] {
         PracticeModeBuilder.eligiblePool(
             from: allSituations,
-            isSituationsUnlocked: storeManager.isSituationsUnlocked,
+            isPracticeUnlocked: storeManager.isPracticeUnlocked,
             weeklyCaseID: weeklyCaseID
         )
     }
@@ -247,7 +247,7 @@ struct PracticeModeView: View {
         PracticeModeBuilder.decision(
             for: situation,
             in: allSituations,
-            isSituationsUnlocked: storeManager.isSituationsUnlocked,
+            isPracticeUnlocked: storeManager.isPracticeUnlocked,
             weeklyCaseID: weeklyCaseID
         )
     }
@@ -258,7 +258,7 @@ struct PracticeModeView: View {
         PracticeModeBuilder.decision(
             for: situation,
             in: allSituations,
-            isSituationsUnlocked: storeManager.isSituationsUnlocked,
+            isPracticeUnlocked: storeManager.isPracticeUnlocked,
             weeklyCaseID: weeklyCaseID,
             seedSalt: 1000
         )
@@ -395,7 +395,7 @@ struct PracticeModeView: View {
                                 .foregroundColor(.pfNavy)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        PFBodyText(text: "This case is part of the full Payment Situations set. Unlock all \(ContentManifest.situationCount)\(storeManager.isPriceAvailable(for: ProductCatalogue.situationsProductID) ? " for \(storeManager.priceText)" : ""). The 6 free samples stay free, and you can practise them now. The Integrated Course includes all situations too.", textColor: .pfSecondaryText)
+                        PFBodyText(text: "This case is part of Practice Experiences: all \(ContentManifest.situationCount) situations, Practice Mode, the Daily Challenge, labs, ISO exercises and weekly cases\(storeManager.isPriceAvailable(for: ProductCatalogue.practiceProductID) ? " for \(storeManager.priceText(for: ProductCatalogue.practiceProductID))" : ""), with 1 year of access. The \(ProductCatalogue.freeSampleSituationIDs.count) free samples stay free, and you can practise them now. The Integrated Course includes Practice Experiences too.", textColor: .pfSecondaryText)
                         PFPrimaryButton(title: "Go to checkout") {
                             showCheckout = true
                         }

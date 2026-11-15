@@ -136,8 +136,8 @@ final class AccountDeletionTests: XCTestCase {
         // store and leaves it locked with no pending sync flag.
         let store = StoreManager()
         store.clearAccountEntitlements()
-        XCTAssertFalse(store.isSituationsUnlocked)
-        XCTAssertFalse(store.isServerEntitlementVerified)
+        XCTAssertFalse(store.isPracticeUnlocked)
+        XCTAssertTrue(store.serverEntitledProductIDs.isEmpty)
         XCTAssertFalse(store.serverEntitlementSyncPending)
         XCTAssertEqual(store.unlockedProductCount, 0)
     }

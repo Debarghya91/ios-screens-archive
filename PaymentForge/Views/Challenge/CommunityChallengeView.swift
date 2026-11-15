@@ -66,10 +66,13 @@ struct CommunityChallengeView: View {
     }
 
     /// True when the learner may open this week's case: it needs no
-    /// unlock, or the situations entitlement is active. The lab's
-    /// existing rule, read-only; this view changes no gating.
+    /// unlock, or the Investigation Lab entitlement is active. The
+    /// lab's existing rule, read-only; this view changes no gating.
     private func isOpen(_ exceptionCase: ExceptionCase) -> Bool {
-        !exceptionCase.requiresSituationsUnlock || storeManager.isSituationsUnlocked
+        InvestigationGate.isOpen(
+            requiresUnlock: exceptionCase.requiresSituationsUnlock,
+            isInvestigationLabUnlocked: storeManager.isInvestigationLabUnlocked
+        )
     }
 
     var body: some View {
@@ -183,7 +186,7 @@ struct CommunityChallengeView: View {
                     .font(.pfSectionTitle)
                     .foregroundColor(.pfNavy)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("This week's case is built from a Payment Situation in the full set. Unlock the full set to take part this week. Weeks built from the free sample situations are open to everyone, with no purchase needed.")
+                Text("This week's case is part of the Investigation Lab. Unlock the Lab to take part this week. Weeks built from the free sample situations are open to everyone, with no purchase needed.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)

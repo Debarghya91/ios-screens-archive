@@ -3,10 +3,11 @@
 // free case selector.
 //
 // Local only. Nothing in this file talks to a server, stores a
-// referral on a backend, or tracks who opened a link. There is no
-// referral reward, bonus, discount or credit in Payments Training Hub, and
-// no invite text here promises one. An invite is plain text plus a
-// link to the free experience: the website, or the app deep link
+// referral on a backend, or tracks who opened a link. The decided
+// referral and promo rules live in ReferralRules (ReferralStore)
+// and are website-validated; no invite text here promises a
+// reward, bonus, discount or credit. An invite is plain text plus
+// a link to the free experience: the website, or the app deep link
 // for a device that already has the app.
 //
 // Deep links. The app already registers the custom scheme

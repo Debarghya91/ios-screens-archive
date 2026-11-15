@@ -32,7 +32,7 @@ import Combine
 struct CourseCertificate: Identifiable, Codable, Hashable {
     let id: String
     /// The App Store product ID of the course, for example
-    /// com.paymentforge.app.foundations.
+    /// com.paymentforge.app.part-1.
     let courseID: String
     let courseName: String
     let learnerName: String
@@ -48,20 +48,19 @@ struct CourseCertificate: Identifiable, Codable, Hashable {
     var scoreText: String { "\(correctCount)/\(totalQuestions)" }
 
     /// The logical, industry-trendy subject name shown on the
-    /// certificate, instead of the raw course bundle name. Only the
-    /// four certificate courses have a mapped name; anything else
-    /// falls back to the bundle name. The certificate view already
+    /// certificate, instead of the raw course part name. Only the
+    /// mapped courses have a special name; anything else falls
+    /// back to the part name, including Part 9, whose certificate
+    /// carries its own part name. The certificate view already
     /// says "Certificate of Completion", so this is the subject,
-    /// for example "AI Product Ownership for Payments".
+    /// for example "ISO 20022 and SWIFT Messaging".
     static func certificateSubjectName(for productID: String, fallback: String) -> String {
         switch productID {
-        case "com.paymentforge.app.full":
+        case "com.paymentforge.app.integrated":
             return "Digital Payments and Transaction Banking"
-        case "com.paymentforge.app.messaging":
+        case "com.paymentforge.app.part-3":
             return "ISO 20022 and SWIFT Messaging"
-        case "com.paymentforge.app.ba-practice":
-            return "AI Product Ownership for Payments"
-        case "com.paymentforge.app.rails":
+        case "com.paymentforge.app.part-2":
             return "Global Payment Rails"
         default:
             return fallback

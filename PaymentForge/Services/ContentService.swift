@@ -30,10 +30,12 @@ final class ContentService: ObservableObject {
     static let primaryAudioBase = "https://paymentforge-audio.pages.dev/audio/"
     static let fallbackAudioBase = "https://paymentforge-audio-backup.pages.dev/audio/"
 
-    /// The 6 free Payment Situations samples, one per learning stage, ungated on the website.
-    static let freeSampleIDs: [String] = [
-        "ABH-01", "JEB-C01", "ABH-03", "SCN-21", "RUN4-008", "INS-099"
-    ]
+    /// The 2 free Payment Situations samples, ungated for everyone.
+    /// Kept in step with ProductCatalogue.freeSampleSituationIDs,
+    /// which is the authoritative list. Only these two situations
+    /// are free; every other situation needs Practice Experiences
+    /// (or the Integrated Course).
+    static let freeSampleIDs: [String] = ProductCatalogue.freeSampleSituationIDs
 
     /// The 8-session guided path. Session titles and descriptions are the
     /// site's own guided path, chapters are resolved from the search index.
@@ -518,6 +520,18 @@ final class ContentService: ObservableObject {
     /// All situations, in catalogue order.
     var allSituations: [SearchEntry] {
         searchIndex?.entries.filter { $0.type == .situation } ?? []
+    }
+
+    /// All labs, in catalogue order. The order decides the free
+    /// lab samples (see EntryAccessRules).
+    var allLabs: [SearchEntry] {
+        searchIndex?.entries.filter { $0.type == .lab } ?? []
+    }
+
+    /// All FAQ entries, in catalogue order. The order decides the
+    /// free FAQ samples (see EntryAccessRules).
+    var allFAQs: [SearchEntry] {
+        searchIndex?.entries.filter { $0.type == .faq } ?? []
     }
 
     // MARK: - Full situations data

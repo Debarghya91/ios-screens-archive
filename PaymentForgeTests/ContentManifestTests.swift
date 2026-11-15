@@ -27,25 +27,31 @@ final class ContentManifestTests: XCTestCase {
         XCTAssertEqual(ContentManifest.domainCount, 15)
     }
 
-    func testChapterCountMatchesFullCourseCatalogue() {
+    func testChapterCountMatchesIntegratedCataloguePlusHeldOut() {
+        XCTAssertEqual(ContentManifest.chapterCount, 100)
+        XCTAssertEqual(
+            ProductCatalogue.product(for: ProductCatalogue.integratedProductID)?.chapterIDs.count,
+            99,
+            "The Integrated Course covers the 99 in-book chapters; ch37 is held out and never sold."
+        )
         XCTAssertEqual(
             ContentManifest.chapterCount,
-            ProductCatalogue.product(for: ProductCatalogue.fullCourseProductID)?.chapterIDs.count,
-            "The manifest chapter count and the full course chapter list must agree."
+            (ProductCatalogue.product(for: ProductCatalogue.integratedProductID)?.chapterIDs.count ?? 0) + ProductCatalogue.heldOutChapterIDs.count,
+            "The manifest chapter count is the Integrated chapter list plus the held-out chapter."
         )
     }
 
-    func testSituationCountMatchesCatalogueSituationsProduct() {
+    func testSituationCountMatchesCataloguePracticeProduct() {
         XCTAssertEqual(
             ContentManifest.situationCount,
-            ProductCatalogue.product(for: ProductCatalogue.situationsProductID)?.situationCount,
-            "The manifest situation count and the catalogue Situations count must agree at 564, not the frozen 500 in PaymentConfig."
+            ProductCatalogue.product(for: ProductCatalogue.practiceProductID)?.situationCount,
+            "The manifest situation count and the catalogue Practice Experiences count must agree at 564, not the frozen 500 in PaymentConfig."
         )
         XCTAssertEqual(ContentManifest.situationCount, 564)
     }
 
     func testFreeSamplesAreASmallSubsetOfAllSituations() {
-        XCTAssertEqual(ProductCatalogue.freeSampleSituationIDs.count, 6)
+        XCTAssertEqual(ProductCatalogue.freeSampleSituationIDs.count, 2)
         XCTAssertLessThan(ProductCatalogue.freeSampleSituationIDs.count, ContentManifest.situationCount)
     }
 }

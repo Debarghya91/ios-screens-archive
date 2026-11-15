@@ -430,7 +430,7 @@ struct SituationsView: View {
 
                         allSituationsSection
 
-                        if !storeManager.isSituationsUnlocked {
+                        if !storeManager.isPracticeUnlocked {
                             footerCard
                         }
                     }
@@ -491,7 +491,7 @@ struct SituationsView: View {
             Text("Payment Situations")
                 .font(.pfHeroTitle)
                 .foregroundColor(.white)
-            Text("\(ContentManifest.situationCount) real-world situations across 6 learning stages. Try one free sample from each stage, then unlock the full set\(storeManager.isPriceAvailable(for: ProductCatalogue.situationsProductID) ? " for \(storeManager.priceText)" : ""). The Integrated Course includes all situations too.")
+            Text("\(ContentManifest.situationCount) real-world situations across 6 learning stages. Try the \(ProductCatalogue.freeSampleSituationIDs.count) free samples, then unlock Practice Experiences for the full set\(storeManager.isPriceAvailable(for: ProductCatalogue.practiceProductID) ? " for \(storeManager.priceText(for: ProductCatalogue.practiceProductID))" : ""), with 1 year of access. The Integrated Course includes Practice Experiences too.")
                 .font(.pfBody)
                 .foregroundColor(.white.opacity(0.85))
             PFGoldButton(title: "See the free samples", action: onSeeFreeSamples)
@@ -523,7 +523,7 @@ struct SituationsView: View {
                 actionTitle: showOnlyFree ? "Show all" : nil,
                 action: showOnlyFree ? { showOnlyFree = false } : nil
             )
-            Text("Try one situation from each stage free, no payment needed.")
+            Text("Try the free samples, no payment needed. Practice Experiences unlocks the full set.")
                 .font(.pfBody)
                 .foregroundColor(.pfSecondaryText)
             if contentService.isLoadingIndex && contentService.searchIndex == nil {
@@ -740,7 +740,7 @@ struct SituationsView: View {
                             situationRow(situation, showFreePill: situation.isFreeSample, number: index + 1)
                         }
                         .buttonStyle(PFCardButtonStyle())
-                        .accessibilityIdentifier(!situation.isFreeSample && !storeManager.isSituationsUnlocked ? "lockedSituationRow" : "situationRow")
+                        .accessibilityIdentifier(!situation.isFreeSample && !storeManager.isPracticeUnlocked ? "lockedSituationRow" : "situationRow")
                     }
                     if group.situations.count > visibleCount {
                         Text("Showing \(visibleCount) of \(group.situations.count) situations")
@@ -808,7 +808,7 @@ struct SituationsView: View {
                             foreground: .pfSuccess
                         )
                     }
-                    if !situation.isFreeSample && !storeManager.isSituationsUnlocked {
+                    if !situation.isFreeSample && !storeManager.isPracticeUnlocked {
                         PFPill(
                             text: "Locked",
                             background: Color.pfGoldSoft,
@@ -855,10 +855,10 @@ struct SituationsView: View {
     private var footerCard: some View {
         PFCard {
             VStack(alignment: .leading, spacing: PFSpacing.md) {
-                Text("Unlock all \(ContentManifest.situationCount) situations\(storeManager.isPriceAvailable(for: ProductCatalogue.situationsProductID) ? " for \(storeManager.priceText)" : "")")
+                Text("Unlock Practice Experiences: all \(ContentManifest.situationCount) situations\(storeManager.isPriceAvailable(for: ProductCatalogue.practiceProductID) ? " for \(storeManager.priceText(for: ProductCatalogue.practiceProductID))" : "")")
                     .font(.pfCardTitle)
                     .foregroundColor(.pfNavy)
-                Text("One-time payment by In-App Purchase. The 6 free samples stay free. The Integrated Course includes all situations too.")
+                Text("1 year of access, by In-App Purchase. The \(ProductCatalogue.freeSampleSituationIDs.count) free samples stay free, and the weekly free case stays free. The Integrated Course includes Practice Experiences too.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
                 PFPrimaryButton(title: "Go to checkout") {
@@ -948,12 +948,12 @@ struct SituationDetailView: View {
 
     /// D101 hard gate: locked when the situation is not a free
     /// sample, not this week's free case on the weekly path, and
-    /// Payment Situations is not unlocked. Entitlement routes
+    /// Practice Experiences is not unlocked. Entitlement routes
     /// through the existing StoreManager boolean only, which
-    /// covers both the situations product and the Integrated
+    /// covers both the Practice product and the Integrated
     /// Course. No new entitlement logic lives here.
     private var isLocked: Bool {
-        !situation.isFreeSample && !isWeeklyFreeCase && !storeManager.isSituationsUnlocked
+        !situation.isFreeSample && !isWeeklyFreeCase && !storeManager.isPracticeUnlocked
     }
 
     @State private var showCheckout = false
@@ -1148,10 +1148,10 @@ struct SituationDetailView: View {
 
                     investigationEntry
 
-                    if !situation.isFreeSample && !storeManager.isSituationsUnlocked {
+                    if !situation.isFreeSample && !storeManager.isPracticeUnlocked {
                         PFCard {
                             VStack(alignment: .leading, spacing: PFSpacing.md) {
-                                Text("This situation is part of the full Payment Situations set. Unlock all \(ContentManifest.situationCount)\(storeManager.isPriceAvailable(for: ProductCatalogue.situationsProductID) ? " for \(storeManager.priceText)" : ""). The Integrated Course includes all situations too.")
+                                Text("This situation is part of Practice Experiences. Unlock all \(ContentManifest.situationCount) situations\(storeManager.isPriceAvailable(for: ProductCatalogue.practiceProductID) ? " for \(storeManager.priceText(for: ProductCatalogue.practiceProductID))" : ""), with 1 year of access. The Integrated Course includes Practice Experiences too.")
                                     .font(.pfBody)
                                     .foregroundColor(.pfNavy)
                                 PFPrimaryButton(title: "Go to checkout") {
@@ -1208,7 +1208,7 @@ struct SituationDetailView: View {
                         .font(.pfCardTitle)
                         .foregroundColor(.pfNavy)
                 }
-                Text("This situation is part of the full Payment Situations set. Unlock all \(ContentManifest.situationCount)\(storeManager.isPriceAvailable(for: ProductCatalogue.situationsProductID) ? " for \(storeManager.priceText)" : ""). The 6 free samples stay free. The Integrated Course includes all situations too.")
+                Text("This situation is part of Practice Experiences. Unlock all \(ContentManifest.situationCount) situations\(storeManager.isPriceAvailable(for: ProductCatalogue.practiceProductID) ? " for \(storeManager.priceText(for: ProductCatalogue.practiceProductID))" : ""), with 1 year of access. The \(ProductCatalogue.freeSampleSituationIDs.count) free samples stay free. The Integrated Course includes Practice Experiences too.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)

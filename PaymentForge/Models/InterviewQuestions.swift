@@ -85,3 +85,33 @@ enum InterviewQuestionStore {
         }
     }
 }
+
+// MARK: - Interview Ready gating
+
+/// The Interview Ready gate for model answers. Question text is
+/// discovery and always stays visible; the model answer locks.
+/// The first 5 questions of the bank, in bank order, are free
+/// samples with their answers open. Every other answer needs
+/// Interview Ready (or the Integrated Course, which includes it).
+/// Pure logic over the bank, covered by unit tests through the
+/// free-sample rules.
+enum InterviewReadyGating {
+
+    /// The free sample questions: the first 5 of the bank, in
+    /// bank order.
+    static var freeQuestions: [InterviewQuestion] {
+        Array(InterviewQuestionStore.allQuestions.prefix(FreeSampleRules.interviewFreeQuestionCount))
+    }
+
+    /// True when this question is one of the 5 free samples.
+    static func isFreeQuestion(_ question: InterviewQuestion) -> Bool {
+        freeQuestions.contains(question)
+    }
+
+    /// True when this question's model answer is locked: the
+    /// learner has no Interview Ready entitlement and the question
+    /// is not a free sample.
+    static func isAnswerLocked(_ question: InterviewQuestion, isInterviewUnlocked: Bool) -> Bool {
+        !isInterviewUnlocked && !isFreeQuestion(question)
+    }
+}

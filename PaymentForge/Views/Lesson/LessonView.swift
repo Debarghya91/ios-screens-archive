@@ -579,6 +579,8 @@ struct LessonView: View {
                 } else {
                     if isFreeSample {
                         freeSampleBanner
+                    } else if isSequentialSample {
+                        sequentialSampleBanner
                     }
                     if detailSource == .cached {
                         cachedCopyBanner
@@ -667,6 +669,9 @@ struct LessonView: View {
             ) { EmptyView() }
             .hidden()
         )
+        .sheet(isPresented: $showCheckout) {
+            CheckoutView()
+        }
         .task {
             // Locked lessons start nothing: no progress event, no
             // audio, no detail load, no auto full-screen visual.
@@ -2062,12 +2067,13 @@ struct LessonView: View {
     }
 
     /// True when this lesson's chapter is not unlocked: neither the
-    /// bundle containing it nor the Integrated Course is owned. The
-    /// free sample lesson (the first lesson of each chapter) is
-    /// never locked: it opens with full content, no purchase.
+    /// part containing it nor the Integrated Course is owned. A
+    /// free lesson (the first lesson of each chapter, or one of
+    /// the part's 2 sequential samples) is never locked: it opens
+    /// with full content, no purchase.
     private var isLessonLocked: Bool {
         guard let chapterID else { return false }
-        if PFChapterHelper.isSampleLesson(entry, in: contentService) { return false }
+        if PFChapterHelper.isFreeLesson(entry, in: contentService) { return false }
         return !storeManager.isChapterUnlocked(chapterID)
     }
 
@@ -2079,7 +2085,26 @@ struct LessonView: View {
             && !storeManager.isChapterUnlocked(chapterID)
     }
 
-    /// The bundle that unlocks this lesson's chapter, for the lock
+    /// True when this lesson is one of its part's sequential free
+    /// samples (but not the chapter's first lesson, which the
+    /// free-sample banner covers) and the chapter itself is
+    /// locked, so the sequential banner can say so.
+    private var isSequentialSample: Bool {
+        guard let chapterID else { return false }
+        return !PFChapterHelper.isSampleLesson(entry, in: contentService)
+            && PFChapterHelper.isSequentialSampleLesson(entry)
+            && !storeManager.isChapterUnlocked(chapterID)
+    }
+
+    /// The 0-based position of this lesson within its part's
+    /// sequential samples, or nil when it is not one of them.
+    /// Position 1 is the second (last) free sample: the buy
+    /// prompt goes with it.
+    private var sequentialSampleIndex: Int? {
+        FreeSampleRules.sequentialSampleIndex(forLessonID: entry.id)
+    }
+
+    /// The part that unlocks this lesson's chapter, for the lock
     /// screen copy. Nil when the lesson is unlocked.
     private var unlockingProduct: CourseProduct? {
         guard let chapterID else { return nil }
@@ -2106,9 +2131,39 @@ struct LessonView: View {
         }
     }
 
+    /// Shown at the top of a sequential free sample lesson in a
+    /// locked chapter: the first sample says it is free, and the
+    /// second (last) sample carries the buy prompt for the part.
+    private var sequentialSampleBanner: some View {
+        PFCard {
+            HStack(spacing: PFSpacing.md) {
+                PFIconTile(systemImage: "gift.fill", size: 44)
+                VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                    Text(sequentialSampleIndex == 1 ? "Last free sample in this part" : "Free sample lesson")
+                        .font(.pfCardTitle)
+                        .foregroundColor(.pfNavy)
+                    if sequentialSampleIndex == 1, let part = unlockingProduct {
+                        Text("This is the second of 2 free samples from \(part.name). Unlock the part\(storeManager.isPriceAvailable(for: part.productID) ? " for \(storeManager.priceText(for: part.productID))" : "") to keep reading, with 1 year of access.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        PFSecondaryButton(title: "See purchase options") {
+                            showCheckout = true
+                        }
+                    } else {
+                        Text("This lesson is free, with the full content. The rest of this part unlocks with the course.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
     /// Shown in place of the lesson when its chapter is locked: the
     /// lesson stays listed and its title stays visible, but the
-    /// narration, transcript and quiz stay locked until the bundle
+    /// narration, transcript and quiz stay locked until the part
     /// or the Integrated Course is bought. Buying from here unlocks
     /// the lesson in place.
     private var lockedLessonSection: some View {
@@ -2120,29 +2175,29 @@ struct LessonView: View {
                         Text("Locked lesson")
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
-                        Text("Buy the course to unlock this chapter.")
+                        Text("Buy the part to unlock this chapter.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                if let bundle = unlockingProduct {
-                    Text("This lesson is part of \(bundle.name). Buy it for \(storeManager.priceText(for: bundle.productID)) to unlock this chapter, or unlock all chapters with The Integrated Course for \(storeManager.priceText(for: StoreManager.fullCourseProductID)).")
+                if let part = unlockingProduct {
+                    Text("This lesson is part of \(part.name). Buy it for \(storeManager.priceText(for: part.productID)) to unlock this chapter for 1 year, or unlock all chapters with The Integrated Course for \(storeManager.priceText(for: StoreManager.fullCourseProductID)).")
                         .font(.pfBody)
                         .foregroundColor(.pfNavy)
                         .fixedSize(horizontal: false, vertical: true)
-                    PFGoldButton(title: storeManager.isBusy ? "Please wait..." : "Buy \(bundle.name) for \(storeManager.priceText(for: bundle.productID))") {
+                    PFGoldButton(title: storeManager.isBusy ? "Please wait..." : "Buy \(part.name) for \(storeManager.priceText(for: part.productID))") {
                         // Clear any stale launch-time store message
                         // and arm the alert, so only this tap's
                         // result can pop the Purchase alert.
                         storeManager.clearStatusMessage()
                         showPurchaseAlert = true
-                        Task { await storeManager.purchase(productID: bundle.productID) }
+                        Task { await storeManager.purchase(productID: part.productID) }
                     }
                     .disabled(storeManager.isBusy)
                     .opacity(storeManager.isBusy ? 0.5 : 1)
                 } else {
-                    Text("This lesson is part of a course. Buy The Integrated Course for \(storeManager.priceText(for: StoreManager.fullCourseProductID)) to unlock it.")
+                    Text("This lesson is part of the course. Buy The Integrated Course for \(storeManager.priceText(for: StoreManager.fullCourseProductID)) to unlock it for 1 year.")
                         .font(.pfBody)
                         .foregroundColor(.pfNavy)
                         .fixedSize(horizontal: false, vertical: true)
@@ -2155,9 +2210,6 @@ struct LessonView: View {
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }
-        .sheet(isPresented: $showCheckout) {
-            CheckoutView()
         }
     }
 

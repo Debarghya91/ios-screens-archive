@@ -15,25 +15,29 @@
 // iPhone SE through to a Pro Max, in portrait and landscape.
 //
 // My Purchases lists all catalogue products from ProductCatalogue
-// (the chapter bundles plus Payment Situations), each buyable on its
-// own: a bundle unlocks only its own chapters, the Integrated Course
-// unlocks all chapter products and includes all Payment Situations,
-// and Payment Situations is also buyable on its own. One-time
-// purchases, no tiers,
-// no subscription. Prices come only from the App Store product when
-// loaded; when a price has not loaded, the price is shown as
-// unavailable and the Buy button stays disabled. Counts come from
-// ContentManifest, never from hardcoded literals.
+// (the 10 book parts plus BA/PO Studio, Payment Simulator,
+// Investigation Lab, Practice Experiences, Interview Ready, and
+// The Integrated Course), each buyable on its own: a part unlocks
+// only its own chapters, a standalone product unlocks only its own
+// content, and the Integrated Course unlocks everything. Every
+// purchase gives 1 year of access from the verified purchase date.
+// Every product also has a renewal subscription: 1 more year at
+// half the sale price, for buyers who already own the product.
+// Prices come only from the App Store product when loaded; when a
+// price has not loaded, the price is shown as unavailable and the
+// Buy button stays disabled. Counts come from ContentManifest,
+// never from hardcoded literals.
 //
 // D101 decided (hard-gate, v69): SituationsView gates locked
-// situation detail, so Situations access is buyer-exclusive
-// except for the free samples and the weekly free case. The copy
-// below states what buying gives (ownership, restore,
-// cross-device sync when signed in). Do not change any gating
-// from this file.
+// situation detail, so Practice Experiences access is
+// buyer-exclusive except for the free samples and the weekly free
+// case. The copy below states what buying gives (1 year of access,
+// renewal, restore, cross-device sync when signed in). Do not
+// change any gating from this file.
 
 import SwiftUI
 import UIKit
+import StoreKit
 
 struct CheckoutView: View {
     @Environment(\.dismiss) private var dismiss
@@ -121,7 +125,7 @@ struct CheckoutView: View {
             if let message = storeManager.statusMessage {
                 Text(message)
                     .font(.pfBody)
-                    .foregroundColor(storeManager.isPurchased ? .pfSuccess : .pfSecondaryText)
+                    .foregroundColor(storeManager.unlockedProductCount > 0 ? .pfSuccess : .pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(PFSpacing.md)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -138,10 +142,10 @@ struct CheckoutView: View {
 
     // MARK: - Catalogue intro
 
-    /// What buying means: one bundle unlocks only its own chapters,
-    /// the Integrated Course unlocks all chapter products and
-    /// includes all Payment Situations, and Payment Situations is
-    /// also buyable on its own.
+    /// What buying means: one part unlocks only its own chapters,
+    /// a standalone product unlocks only its own content, and the
+    /// Integrated Course unlocks everything. Every purchase gives
+    /// 1 year of access, renewable for 1 more year at half price.
     private var catalogueIntroCard: some View {
         PFCard {
             VStack(alignment: .leading, spacing: PFSpacing.md) {
@@ -156,10 +160,10 @@ struct CheckoutView: View {
                     }
                     .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                        Text("Courses")
+                        Text("Products")
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
-                        Text("Buy a course to unlock its chapters. The Integrated Course unlocks all chapters and includes all Payment Situations. Payment Situations is also sold on its own.")
+                        Text("Buy a part to unlock its chapters, or a standalone product to unlock its content. The Integrated Course unlocks everything. Every purchase gives 1 year of access.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -174,7 +178,7 @@ struct CheckoutView: View {
                 // D101 decided (hard-gate, v69): this text states
                 // what buying gives: ownership of the set, restore,
                 // and sync when signed in. See the file header.
-                PFBodyText(text: StoreManager.buildPhaseBuyOpensContent ? "For now, Buy opens the course on this device. No payment is taken." : "Each course is a one-time purchase, no subscription. The Integrated Course includes the full set of \(ContentManifest.situationCount) Payment Situations. Payment Situations is also sold on its own for learners who want only the situations set. Purchases restore with the same Apple ID, and sync to your account when you are signed in.")
+                PFBodyText(text: StoreManager.buildPhaseBuyOpensContent ? "For now, Buy opens the course on this device. No payment is taken." : "Each product gives 1 year of access from purchase, and can be renewed for 1 more year at half the sale price. The Integrated Course includes every part and every standalone product. Purchases restore with the same Apple ID, and sync to your account when you are signed in.")
                 if storeManager.productLoadFailed {
                     VStack(alignment: .leading, spacing: PFSpacing.sm) {
                         Text("Prices could not be loaded from the App Store. Check your connection, then try again. No purchase can be made until the price loads.")
@@ -196,16 +200,17 @@ struct CheckoutView: View {
     /// Free vs paid, driven by ProductCatalogue and ContentManifest,
     /// so the comparison cannot drift from the catalogue: free
     /// content from the settled D77 model (the first lesson of each
-    /// chapter, plus the free sample situations), and paid content
-    /// from each product's own chapter list. No price appears here:
-    /// prices live only on the product cards, from StoreKit.
+    /// chapter, plus the sequential samples, the free sample
+    /// situations, the weekly free case, and the free ISO 20022
+    /// Explorer), and paid content from each product's own scope.
+    /// No price appears here: prices live only on the product
+    /// cards, from StoreKit.
     ///
-    /// D101 PENDING: the Situations row below states that the set is
-    /// included in the Integrated Course and is also buyable on its
-    /// own. It deliberately makes no buyer-exclusivity claim,
-    /// because SituationsView currently shows the full detail when
-    /// locked. See the file header. Do not add a buyer-exclusivity
-    /// claim here until the D101 owner decision lands.
+    /// D101 decided (hard-gate, v69): the Practice row below states
+    /// that the set is included in the Integrated Course and is
+    /// also buyable on its own, and that locked situation detail
+    /// is buyer-exclusive except for the free samples and the
+    /// weekly free case.
     /// D77 settled: the first lesson of each chapter is free; the
     /// old framing that denied the free samples (D118) must not be
     /// repeated in this section.
@@ -220,11 +225,19 @@ struct CheckoutView: View {
                             .foregroundColor(.pfNavy)
                         comparisonRow(
                             icon: "checkmark",
-                            text: "The first lesson of each of the \(ContentManifest.chapterCount) chapters. Every other lesson needs its chapter bundle or the Integrated Course."
+                            text: "The first lesson of each of the \(ContentManifest.chapterCount) chapters, plus the first 2 lessons of each part in reading order. Every other lesson needs its part or the Integrated Course."
                         )
                         comparisonRow(
                             icon: "checkmark",
-                            text: "The \(ProductCatalogue.freeSampleSituationIDs.count) free sample situations."
+                            text: "The \(ProductCatalogue.freeSampleSituationIDs.count) free sample situations, and the weekly free case."
+                        )
+                        comparisonRow(
+                            icon: "checkmark",
+                            text: "The first 2 BA/PO Studio units, the first 2 career guides, the first 2 simulator runs, the first 5 interview answers, the first 5 FAQ answers, and the first 2 labs."
+                        )
+                        comparisonRow(
+                            icon: "checkmark",
+                            text: "The ISO 20022 Explorer, free for everyone."
                         )
                     }
                     Divider()
@@ -234,15 +247,15 @@ struct CheckoutView: View {
                             .foregroundColor(.pfNavy)
                         comparisonRow(
                             icon: "checkmark",
-                            text: "A chapter bundle unlocks only its own chapters, with all lessons in those chapters. There are \(chapterBundles.count) bundles."
+                            text: "A book part unlocks only its own chapters, with all lessons in those chapters. There are \(chapterParts.count) parts."
                         )
                         comparisonRow(
                             icon: "checkmark",
-                            text: "The Integrated Course unlocks all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and all \(ContentManifest.situationCount) Payment Situations."
+                            text: "Each standalone product unlocks only its own content: BA/PO Studio, the Payment Simulator, the Investigation Lab, Practice Experiences, and Interview Ready."
                         )
                         comparisonRow(
                             icon: "checkmark",
-                            text: "Payment Situations is also available as a one-time purchase on its own for the full set of \(ContentManifest.situationCount) situations, for learners who want only the situations set."
+                            text: "The Integrated Course unlocks everything: all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons, and every standalone product."
                         )
                     }
                     Divider()
@@ -250,18 +263,18 @@ struct CheckoutView: View {
                         Text("How to choose")
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
-                        comparisonRow(icon: "arrow.right", text: "One area only: buy that bundle.")
-                        comparisonRow(icon: "arrow.right", text: "Every chapter and all situations: buy the Integrated Course.")
-                        comparisonRow(icon: "arrow.right", text: "Only the situations set: buy Payment Situations on its own.")
+                        comparisonRow(icon: "arrow.right", text: "One area only: buy that part.")
+                        comparisonRow(icon: "arrow.right", text: "Only one kind of practice: buy that standalone product.")
+                        comparisonRow(icon: "arrow.right", text: "Everything: buy the Integrated Course.")
                         comparisonRow(icon: "arrow.right", text: "Each product is bought on its own at its App Store price, shown on its card below.")
                     }
-                    if bundleChaptersDoNotOverlap {
-                        Text("Each chapter sits in exactly one bundle, so bundles never overlap. Buying two bundles never buys the same chapter twice.")
+                    if partChaptersDoNotOverlap {
+                        Text("Each chapter sits in exactly one part, so parts never overlap. Buying two parts never buys the same chapter twice.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text("Every purchase is a one-time payment. There is no subscription and nothing renews. Purchases restore with the same Apple ID.")
+                    Text("Every purchase gives 1 year of access, and can be renewed for 1 more year at half the sale price. Purchases restore with the same Apple ID. Expired access locks again until renewed.")
                         .font(.pfBody)
                         .foregroundColor(.pfNavy)
                         .fixedSize(horizontal: false, vertical: true)
@@ -270,24 +283,25 @@ struct CheckoutView: View {
         }
     }
 
-    /// The chapter bundles: every catalogue product except the
-    /// Integrated Course and Payment Situations.
-    private var chapterBundles: [CourseProduct] {
+    /// The book parts: every catalogue product with chapters
+    /// except the Integrated Course. Standalone products have no
+    /// chapters and are excluded by the chapterIDs check.
+    private var chapterParts: [CourseProduct] {
         ProductCatalogue.products.filter {
             $0.productID != ProductCatalogue.fullCourseProductID
-                && $0.productID != ProductCatalogue.situationsProductID
+                && !$0.chapterIDs.isEmpty
         }
     }
 
-    /// True when no chapter appears in more than one bundle.
+    /// True when no chapter appears in more than one part.
     /// Computed from the catalogue at runtime, so the no-overlap
     /// sentence is shown only while the catalogue really has no
-    /// overlap. Verified against the v61 catalogue: the 10 bundle
-    /// chapter lists are disjoint and cover all 100 chapters.
-    private var bundleChaptersDoNotOverlap: Bool {
+    /// overlap. The 10 part chapter lists are disjoint and cover
+    /// the 99 in-book chapters; the held-out ch37 sits in no part.
+    private var partChaptersDoNotOverlap: Bool {
         var seen: Set<String> = []
-        for bundle in chapterBundles {
-            for chapterID in bundle.chapterIDs {
+        for part in chapterParts {
+            for chapterID in part.chapterIDs {
                 if seen.contains(chapterID) { return false }
                 seen.insert(chapterID)
             }
@@ -312,7 +326,7 @@ struct CheckoutView: View {
 
     private var productListSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: "All courses")
+            PFSectionHeader(title: "All products")
             ForEach(ProductCatalogue.products) { course in
                 productCard(for: course)
             }
@@ -320,11 +334,12 @@ struct CheckoutView: View {
     }
 
     /// One buyable product: name, short description, what the buyer
-    /// receives, price, and a Buy button, or an Owned pill when it is
-    /// already unlocked. The price comes only from the App Store
-    /// product when loaded; when it has not loaded, the price is
-    /// shown as unavailable and the Buy button stays disabled, so a
-    /// purchase is never offered at a hardcoded price.
+    /// receives, price, and a Buy button, or an Owned pill plus the
+    /// access-until date and a Renew button when it is already
+    /// unlocked. The price comes only from the App Store product
+    /// when loaded; when it has not loaded, the price is shown as
+    /// unavailable and the Buy button stays disabled, so a purchase
+    /// is never offered at a hardcoded price.
     private func productCard(for course: CourseProduct) -> some View {
         PFCard {
             VStack(alignment: .leading, spacing: PFSpacing.md) {
@@ -342,7 +357,7 @@ struct CheckoutView: View {
                     Spacer(minLength: PFSpacing.sm)
                     if storeManager.isProductUnlocked(course.productID) {
                         PFPill(
-                            text: "Owned",
+                            text: storeManager.isProductOwned(course.productID) ? "Owned" : "Included",
                             background: Color.pfSuccess.opacity(0.12),
                             foreground: .pfSuccess
                         )
@@ -352,7 +367,7 @@ struct CheckoutView: View {
                     Text(course.contentsText)
                         .font(.pfCaptionBold)
                         .foregroundColor(.pfRoyal)
-                    Text("One-time payment")
+                    Text(course.validityText)
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                     Spacer(minLength: 0)
@@ -362,16 +377,25 @@ struct CheckoutView: View {
                 }
                 includedDetailsView(for: course)
                 if course.productID == ProductCatalogue.fullCourseProductID {
-                    Text("Unlocks all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and all \(ContentManifest.situationCount) Payment Situations.")
+                    Text("Unlocks everything: all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons, and every standalone product.")
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if storeManager.isProductUnlocked(course.productID) {
+                    if let expiry = storeManager.expiryDate(for: course.productID) {
+                        Text("Access until \(Self.displayDateFormatter.string(from: expiry)).")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     Text(unlockedNote(for: course))
                         .font(.pfBody)
                         .foregroundColor(.pfSuccess)
                         .fixedSize(horizontal: false, vertical: true)
+                    if storeManager.isProductOwned(course.productID) {
+                        renewButton(for: course)
+                    }
                     if !course.chapterIDs.isEmpty {
                         finalAssessmentRow(for: course)
                     }
@@ -381,8 +405,8 @@ struct CheckoutView: View {
                     // while there is no App Store Connect product yet
                     // it comes from the local PaymentForge.storekit
                     // file in DEBUG builds. When the price has not
-                    // loaded, the button stays disabled. One-time
-                    // purchase, no subscription.
+                    // loaded, the button stays disabled. Every
+                    // purchase gives 1 year of access.
                     PFGoldButton(title: buyButtonTitle(for: course)) {
                         // Clear any stale store message and arm the
                         // alert, so only this tap's result can pop
@@ -411,32 +435,31 @@ struct CheckoutView: View {
     }
 
     /// What the buyer receives for one product, shown before purchase:
-    /// chapters, lessons or situations from the catalogue and the
-    /// shared content counts. Per-bundle lesson counts are not stored
-    /// anywhere, so bundles state "all lessons in those chapters"
-    /// without inventing a number.
+    /// chapters and lessons from the catalogue, or the standalone
+    /// product's own contents summary, plus the access and renewal
+    /// terms. Counts come from the catalogue and ContentManifest,
+    /// never from invented numbers.
     private func includedDetails(for course: CourseProduct) -> [String] {
         if course.productID == ProductCatalogue.fullCourseProductID {
             return [
                 "All \(ContentManifest.chapterCount) chapters",
                 "All \(ContentManifest.lessonCount) lessons",
-                "All \(ContentManifest.situationCount) Payment Situations",
-                "One-time purchase, no subscription",
+                "Every standalone product: Studio, Simulator, Investigation Lab, Practice Experiences, Interview Ready",
+                "1 year of access, renewable for 1 more year at half price",
                 "Restores with the same Apple ID"
             ]
         }
-        if course.productID == ProductCatalogue.situationsProductID {
+        if !course.contentsSummary.isEmpty {
             return [
-                "All \(ContentManifest.situationCount) situations",
-                "The \(ProductCatalogue.freeSampleSituationIDs.count) free sample situations stay free",
-                "One-time purchase, no subscription",
+                course.contentsSummary,
+                "1 year of access, renewable for 1 more year at half price",
                 "Restores with the same Apple ID"
             ]
         }
         return [
-            "\(course.chapterIDs.count) chapters",
+            "\(course.chapterIDs.count) chapters, \(course.lessonCount) lessons",
             "All lessons in those chapters",
-            "One-time purchase, no subscription",
+            "1 year of access, renewable for 1 more year at half price",
             "Restores with the same Apple ID"
         ]
     }
@@ -474,20 +497,66 @@ struct CheckoutView: View {
         storeManager.isBusy || !storeManager.isPriceAvailable(for: course.productID)
     }
 
+    /// The Renew button for a directly owned product: 1 more year
+    /// at half the sale price, through the renewal subscription.
+    /// Shown only when the buyer directly owns the product, never
+    /// when access comes through the Integrated Course.
+    private func renewButton(for course: CourseProduct) -> some View {
+        VStack(alignment: .leading, spacing: PFSpacing.sm) {
+            PFSecondaryButton(title: renewButtonTitle(for: course)) {
+                storeManager.clearStatusMessage()
+                showPurchaseAlert = true
+                Task {
+                    await storeManager.purchaseRenewal(for: course.productID)
+                }
+            }
+            .disabled(renewButtonDisabled(for: course))
+            .opacity(renewButtonDisabled(for: course) ? 0.5 : 1)
+            if !storeManager.isPriceAvailable(for: course.renewalProductID) {
+                Text("The renewal price is not available yet. Check your connection, then try again.")
+                    .font(.pfCaption)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Renewal adds 1 more year at half the sale price. It is a 1-year auto-renewable subscription; manage or cancel it in the App Store account settings.")
+                    .font(.pfCaption)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The Renew button title: the real renewal StoreKit price when
+    /// loaded, a wait message while busy, and "Renewal price
+    /// unavailable" when the renewal product has not loaded.
+    private func renewButtonTitle(for course: CourseProduct) -> String {
+        if storeManager.isBusy { return "Please wait..." }
+        if storeManager.isPriceAvailable(for: course.renewalProductID) {
+            return "Renew for \(storeManager.priceText(for: course.renewalProductID))"
+        }
+        return "Renewal price unavailable"
+    }
+
+    /// The Renew button stays disabled while busy, and whenever the
+    /// renewal StoreKit price has not loaded.
+    private func renewButtonDisabled(for course: CourseProduct) -> Bool {
+        storeManager.isBusy || !storeManager.isPriceAvailable(for: course.renewalProductID)
+    }
+
     private func unlockedNote(for course: CourseProduct) -> String {
         if course.productID == ProductCatalogue.fullCourseProductID {
-            return "All chapters and all Payment Situations are unlocked on this device."
+            return "Everything is unlocked on this device."
         }
-        if course.productID == ProductCatalogue.situationsProductID {
-            return "Payment Situations is unlocked on this device."
+        if storeManager.isProductOwned(course.productID) {
+            return "\(course.name) is unlocked on this device."
         }
-        return "\(course.name) is unlocked on this device."
+        return "\(course.name) is unlocked through The Integrated Course."
     }
 
     /// Final Assessment entry for an owned course: the certificate
     /// when earned, attempts left when open, or a locked note when
-    /// all attempts were used without a pass. Situations has no
-    /// chapters and no assessment, so it never reaches here.
+    /// all attempts were used without a pass. Standalone products
+    /// have no chapters and no assessment, so they never reach here.
     private func finalAssessmentRow(for course: CourseProduct) -> some View {
         let certificate = finalAssessmentStore.certificate(for: course.productID)
         let remaining = finalAssessmentStore.attemptsRemaining(for: course.productID)
@@ -606,7 +675,7 @@ struct CheckoutView: View {
                             Text("The Integrated Course")
                                 .font(.pfCardTitle)
                                 .foregroundColor(.pfNavy)
-                            Text("You own the Integrated Course: all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and all \(ContentManifest.situationCount) Payment Situations.")
+                            Text("You own the Integrated Course: everything is unlocked, all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and every standalone product.")
                                 .font(.pfBody)
                                 .foregroundColor(.pfSecondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -637,13 +706,13 @@ struct CheckoutView: View {
 
     /// The Integrated Course action-row subtitle: what the buyer
     /// receives, the real StoreKit price when loaded, and the clear
-    /// statement that Situations is included. No hardcoded price
+    /// statement that everything is included. No hardcoded price
     /// is ever shown.
     private func integratedCourseSubtitle() -> String {
         if storeManager.isPriceAvailable(for: ProductCatalogue.fullCourseProductID) {
-            return "Unlock all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and all \(ContentManifest.situationCount) Payment Situations for \(storeManager.priceText(for: ProductCatalogue.fullCourseProductID)), one-time payment."
+            return "Unlock everything: all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and every standalone product, for \(storeManager.priceText(for: ProductCatalogue.fullCourseProductID)), with 1 year of access."
         }
-        return "Unlock all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and all \(ContentManifest.situationCount) Payment Situations, one-time payment. The App Store price is not available yet."
+        return "Unlock everything: all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and every standalone product, with 1 year of access. The App Store price is not available yet."
     }
 
     private func integratedCourseDisabled() -> Bool {
@@ -704,10 +773,10 @@ struct CheckoutView: View {
                             HStack(spacing: PFSpacing.md) {
                                 PFIconTile(systemImage: "receipt.fill")
                                 VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                                    Text(ProductCatalogue.product(for: transaction.productID)?.name ?? transaction.productID)
+                                    Text(transactionDisplayName(for: transaction))
                                         .font(.pfCardTitle)
                                         .foregroundColor(.pfNavy)
-                                    Text("App Store purchase")
+                                    Text(ProductCatalogue.isRenewalProductID(transaction.productID) ? "Renewal subscription" : "App Store purchase")
                                         .font(.pfBody)
                                         .foregroundColor(.pfSecondaryText)
                                 }
@@ -720,6 +789,7 @@ struct CheckoutView: View {
                             }
                             Divider()
                             detailRow(label: "Date", value: Self.displayDateFormatter.string(from: transaction.purchaseDate))
+                            detailRow(label: "Access until", value: Self.displayDateFormatter.string(from: transactionAccessUntil(transaction)))
                             detailRow(label: "Transaction ID", value: String(transaction.id))
                             detailRow(label: "Product", value: transaction.productID)
                         }
@@ -727,6 +797,25 @@ struct CheckoutView: View {
                 }
             }
         }
+    }
+
+    /// The display name for one transaction row: the base product
+    /// name, with a renewal marker for renewal subscriptions, so a
+    /// renewal row never shows a bare store ID.
+    private func transactionDisplayName(for transaction: StoreKit.Transaction) -> String {
+        let baseName = ProductCatalogue.productForStoreID(transaction.productID)?.name ?? transaction.productID
+        if ProductCatalogue.isRenewalProductID(transaction.productID) {
+            return "\(baseName) (renewal)"
+        }
+        return baseName
+    }
+
+    /// The date one transaction's access runs until: the
+    /// subscription expiry for a renewal, else the purchase date
+    /// plus 1 year.
+    private func transactionAccessUntil(_ transaction: StoreKit.Transaction) -> Date {
+        if let expiration = transaction.expirationDate { return expiration }
+        return EntitlementValidity.expiryDate(forPurchaseAt: transaction.purchaseDate)
     }
 
     /// Payment methods audit: only Apple In-App Purchase works.

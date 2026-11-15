@@ -18,10 +18,14 @@
 // working from BABOK names and structure only; no BABOK Guide
 // text is used.
 //
-// Gating is unchanged (D77, keep the free samples): it applies
-// only to the existing practice exercises, through StudioGating,
-// exactly as before. Teaching lessons and career guides carry no
-// lock. Drafts stay on this device only, through
+// Gating: teaching lessons and career guides are gated by BA/PO
+// Studio through StudioGating. The first 2 teaching units and the
+// first 2 career guides are free samples; the rest need Studio
+// (or the Integrated Course). Headers and titles stay visible
+// (discovery); the teaching content locks. The existing practice
+// exercises keep their grounded gating: an exercise grounded in
+// a free sample stays open, and a situation exercise needs
+// Practice Experiences. Drafts stay on this device only, through
 // StudioDraftStore, for exercises and for lesson write-your-own
 // work alike.
 // No em dashes in any user-facing text.
@@ -30,11 +34,13 @@ import SwiftUI
 
 // MARK: - Gating helpers
 
-/// Reads the existing gating checks for one exercise. No gating
-/// rule is defined here: lesson gating is PFChapterHelper plus
+/// The Studio gating rules. Exercise gating reads the existing
+/// checks: lesson gating is PFChapterHelper plus
 /// StoreManager.isChapterUnlocked, exactly as LessonView uses
-/// them, and situation gating is isSituationsUnlocked, exactly
-/// as SituationsView uses it.
+/// them, and situation gating is isPracticeUnlocked, exactly as
+/// SituationsView uses it. Teaching and guide gating is defined
+/// here: the first 2 units and the first 2 guides are free
+/// samples, and the rest need BA/PO Studio.
 @MainActor
 enum StudioGating {
     /// The catalogue entry for a lesson exercise, nil when the
@@ -66,13 +72,37 @@ enum StudioGating {
         switch exercise.sourceKind {
         case .situation:
             if ContentService.freeSampleIDs.contains(exercise.sourceID) { return false }
-            return !storeManager.isSituationsUnlocked
+            return !storeManager.isPracticeUnlocked
         case .lesson:
             guard let entry = lessonEntry(for: exercise, in: contentService) else { return true }
             guard let number = PFChapterHelper.chapterNumber(from: entry.id) else { return false }
             if PFChapterHelper.isSampleLesson(entry, in: contentService) { return false }
             return !storeManager.isChapterUnlocked("ch\(number)")
         }
+    }
+
+    /// True when this teaching lesson is one of the 2 free samples:
+    /// the first 2 units in StudioLesson.all order.
+    static func isFreeTeachingSample(_ lesson: StudioLesson) -> Bool {
+        StudioLesson.all.prefix(FreeSampleRules.studioFreeLessonCount).contains(lesson)
+    }
+
+    /// True when this career guide is one of the 2 free samples:
+    /// the first 2 guides in StudioCareerGuide.all order.
+    static func isFreeGuideSample(_ guide: StudioCareerGuide) -> Bool {
+        StudioCareerGuide.all.prefix(FreeSampleRules.studioFreeGuideCount).contains(guide)
+    }
+
+    /// True when this teaching lesson's content must stay locked:
+    /// no Studio entitlement and not a free sample.
+    static func isTeachingLocked(_ lesson: StudioLesson, storeManager: StoreManager) -> Bool {
+        !storeManager.isStudioUnlocked && !isFreeTeachingSample(lesson)
+    }
+
+    /// True when this career guide's content must stay locked:
+    /// no Studio entitlement and not a free sample.
+    static func isGuideLocked(_ guide: StudioCareerGuide, storeManager: StoreManager) -> Bool {
+        !storeManager.isStudioUnlocked && !isFreeGuideSample(guide)
     }
 }
 
@@ -83,10 +113,10 @@ enum StudioGating {
 /// in Level 1 to Level 3 order. Practice (the existing exercises,
 /// the write-your-own workspace, scenarios and questions) follows
 /// the teaching, inside each lesson and in the Practice Studio
-/// section below. Gating is unchanged: it applies only to the
-/// existing exercises, through StudioGating, exactly as before.
-/// Teaching lessons and career guides are original Payments Training Hub
-/// content and carry no lock.
+/// section below. Teaching lessons and career guides are gated by
+/// BA/PO Studio through StudioGating: the first 2 of each are
+/// free samples. The existing exercises keep their grounded
+/// gating through StudioGating.
 struct BAProductStudioView: View {
     @EnvironmentObject private var contentService: ContentService
     @EnvironmentObject private var storeManager: StoreManager
@@ -339,6 +369,9 @@ struct BAProductStudioView: View {
                                 .font(.pfCaptionBold)
                                 .foregroundColor(.pfSecondaryText)
                         }
+                        if StudioGating.isFreeTeachingSample(lesson) {
+                            PFPill(text: "Free", background: Color.pfGoldSoft, foreground: .pfGold)
+                        }
                         if let draft = draftStore.draft(for: lesson.id) {
                             Text("Draft: \(draft.wordCount) words")
                                 .font(.pfCaptionBold)
@@ -347,6 +380,11 @@ struct BAProductStudioView: View {
                     }
                 }
                 Spacer()
+                if StudioGating.isTeachingLocked(lesson, storeManager: storeManager) {
+                    Image(systemName: "lock.fill")
+                        .foregroundColor(.pfSecondaryText)
+                        .accessibilityLabel("Locked")
+                }
                 Image(systemName: "chevron.right")
                     .foregroundColor(.pfSecondaryText)
                     .pfDecorative()
@@ -412,9 +450,19 @@ struct BAProductStudioView: View {
                                     .font(.pfCaption)
                                     .foregroundColor(.pfSecondaryText)
                                     .fixedSize(horizontal: false, vertical: true)
-                                PFPill(text: guide.level.shortName)
+                                HStack(spacing: PFSpacing.sm) {
+                                    PFPill(text: guide.level.shortName)
+                                    if StudioGating.isFreeGuideSample(guide) {
+                                        PFPill(text: "Free", background: Color.pfGoldSoft, foreground: .pfGold)
+                                    }
+                                }
                             }
                             Spacer()
+                            if StudioGating.isGuideLocked(guide, storeManager: storeManager) {
+                                Image(systemName: "lock.fill")
+                                    .foregroundColor(.pfSecondaryText)
+                                    .accessibilityLabel("Locked")
+                            }
                             Image(systemName: "chevron.right")
                                 .foregroundColor(.pfSecondaryText)
                                 .pfDecorative()
@@ -1054,6 +1102,7 @@ private struct StudioBulletListView: View {
 /// One knowledge area: its introduction, then its task lessons in
 /// order. Teaching only; practice lives inside each lesson.
 struct StudioKnowledgeAreaView: View {
+    @EnvironmentObject private var storeManager: StoreManager
     let area: StudioKnowledgeArea
 
     var body: some View {
@@ -1090,9 +1139,17 @@ struct StudioKnowledgeAreaView: View {
                                                 .font(.pfCaptionBold)
                                                 .foregroundColor(.pfSecondaryText)
                                         }
+                                        if StudioGating.isFreeTeachingSample(lesson) {
+                                            PFPill(text: "Free", background: Color.pfGoldSoft, foreground: .pfGold)
+                                        }
                                     }
                                 }
                                 Spacer()
+                                if StudioGating.isTeachingLocked(lesson, storeManager: storeManager) {
+                                    Image(systemName: "lock.fill")
+                                        .foregroundColor(.pfSecondaryText)
+                                        .accessibilityLabel("Locked")
+                                }
                                 Image(systemName: "chevron.right")
                                     .foregroundColor(.pfSecondaryText)
                                     .pfDecorative()
@@ -1125,17 +1182,31 @@ struct StudioKnowledgeAreaView: View {
 /// exercises, and the write-your-own workspace). Practice is never
 /// mixed into the explanation.
 struct StudioLessonDetailView: View {
+    @EnvironmentObject private var storeManager: StoreManager
     let lesson: StudioLesson
+
+    @State private var showCheckout = false
+
+    /// True when this lesson's teaching content must stay locked:
+    /// no Studio entitlement and not a free sample. The header
+    /// stays visible (discovery) either way.
+    private var isLocked: Bool {
+        StudioGating.isTeachingLocked(lesson, storeManager: storeManager)
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PFSpacing.lg) {
                 lessonHeader
-                teachingHeader
-                explanationCard
-                howToWriteCard
-                workedExampleCard
-                practiceSection
+                if isLocked {
+                    studioLockCard
+                } else {
+                    teachingHeader
+                    explanationCard
+                    howToWriteCard
+                    workedExampleCard
+                    practiceSection
+                }
                 Text(StudioDisclaimer.text)
                     .font(.pfCaption)
                     .foregroundColor(.pfSecondaryText)
@@ -1147,6 +1218,28 @@ struct StudioLessonDetailView: View {
         .pfTabBarClearance()
         .navigationTitle(lesson.kind.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showCheckout) {
+            CheckoutView()
+        }
+    }
+
+    /// The lock card shown in place of the teaching content. The
+    /// buy prompt opens the Purchases screen.
+    private var studioLockCard: some View {
+        PFCard {
+            VStack(alignment: .leading, spacing: PFSpacing.md) {
+                Label("Lesson locked", systemImage: "lock.fill")
+                    .font(.pfCaptionBold)
+                    .foregroundColor(.pfNavy)
+                Text("This teaching lesson is part of BA/PO Studio: \(StudioLesson.all.count) BABOK teaching units and \(StudioCareerGuide.all.count) career guides\(storeManager.isPriceAvailable(for: ProductCatalogue.studioProductID) ? " for \(storeManager.priceText(for: ProductCatalogue.studioProductID))" : ""), with 1 year of access. The Integrated Course includes the Studio too.")
+                    .font(.pfBody)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                PFPrimaryButton(title: "View BA/PO Studio") {
+                    showCheckout = true
+                }
+            }
+        }
     }
 
     // MARK: - Header
@@ -1585,7 +1678,17 @@ private struct StudioLessonWorkspaceView: View {
 /// artifacts, and common mistakes. Certification names identify the
 /// certifications only; the no-endorsement note is shown beside them.
 struct StudioCareerGuideDetailView: View {
+    @EnvironmentObject private var storeManager: StoreManager
     let guide: StudioCareerGuide
+
+    @State private var showCheckout = false
+
+    /// True when this guide's content must stay locked: no Studio
+    /// entitlement and not a free sample. The header stays visible
+    /// (discovery) either way.
+    private var isLocked: Bool {
+        StudioGating.isGuideLocked(guide, storeManager: storeManager)
+    }
 
     var body: some View {
         ScrollView {
@@ -1609,6 +1712,9 @@ struct StudioCareerGuideDetailView: View {
                     }
                 }
 
+                if isLocked {
+                    studioLockCard
+                } else {
                 ForEach(guide.sections.indices, id: \.self) { index in
                     let section = guide.sections[index]
                     PFCard {
@@ -1718,6 +1824,7 @@ struct StudioCareerGuideDetailView: View {
                         StudioBulletListView(items: guide.mistakes)
                     }
                 }
+                }
             }
             .padding(PFSpacing.lg)
         }
@@ -1725,5 +1832,27 @@ struct StudioCareerGuideDetailView: View {
         .pfTabBarClearance()
         .navigationTitle("Career guide")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showCheckout) {
+            CheckoutView()
+        }
+    }
+
+    /// The lock card shown in place of the guide content. The buy
+    /// prompt opens the Purchases screen.
+    private var studioLockCard: some View {
+        PFCard {
+            VStack(alignment: .leading, spacing: PFSpacing.md) {
+                Label("Guide locked", systemImage: "lock.fill")
+                    .font(.pfCaptionBold)
+                    .foregroundColor(.pfNavy)
+                Text("This career guide is part of BA/PO Studio: \(StudioLesson.all.count) BABOK teaching units and \(StudioCareerGuide.all.count) career guides\(storeManager.isPriceAvailable(for: ProductCatalogue.studioProductID) ? " for \(storeManager.priceText(for: ProductCatalogue.studioProductID))" : ""), with 1 year of access. The Integrated Course includes the Studio too.")
+                    .font(.pfBody)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                PFPrimaryButton(title: "View BA/PO Studio") {
+                    showCheckout = true
+                }
+            }
+        }
     }
 }

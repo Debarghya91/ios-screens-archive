@@ -18,7 +18,7 @@
 //
 // Gating: this file changes no gating. The view applies the lab's
 // existing rule to the same content (a case grounded in a
-// non-free situation needs StoreManager.isSituationsUnlocked; a case
+// non-free situation needs StoreManager.isInvestigationLabUnlocked; a case
 // grounded in a free-sample situation is open to all), read-only.
 // D101 decided (hard-gate, v69): SituationsView gates locked
 // situation detail, consistent with the lab hard-gating the same

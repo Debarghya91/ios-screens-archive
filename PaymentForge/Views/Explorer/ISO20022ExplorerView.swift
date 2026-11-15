@@ -4,7 +4,9 @@
 // Scheme usage guides decide what is mandatory in a live payment;
 // this explorer states no scheme rules. All sample values are
 // fictional. Related lessons come from the live search index, never
-// invented. No em dashes in any user-facing text.
+// invented. The Explorer is FREE for everyone: it has no product,
+// is never paywalled, and must never gain a purchase gate.
+// No em dashes in any user-facing text.
 
 import SwiftUI
 

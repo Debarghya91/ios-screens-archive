@@ -10,7 +10,7 @@
 // gate implementation itself).
 //
 // The tests run as a fresh guest with no purchase, so every
-// non-sample situation is locked (StoreManager.isSituationsUnlocked
+// non-sample situation is locked (StoreManager.isPracticeUnlocked
 // is false). The explain text itself comes from live website data,
 // so no test can name an explain string: instead each locked test
 // asserts the gate renders and every content surface is absent

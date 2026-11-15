@@ -281,11 +281,16 @@ struct InvestigationExperienceView: View {
         _run = State(initialValue: investigationEmptyRun())
     }
 
-    /// The situations gate, re-checked on every render including
-    /// appear, matching SituationDetailView: free sample, weekly free
-    /// case, or the situations unlock. Nothing else decides it.
+    /// The Investigation Lab gate, re-checked on every render
+    /// including appear, matching SituationDetailView: free sample,
+    /// weekly free case, or the Investigation Lab unlock. Nothing
+    /// else decides it.
     private var isLocked: Bool {
-        !isFreeSample && !isWeeklyFreeCase && !storeManager.isSituationsUnlocked
+        InvestigationGate.isLocked(
+            isFreeSample: isFreeSample,
+            isWeeklyFreeCase: isWeeklyFreeCase,
+            isInvestigationLabUnlocked: storeManager.isInvestigationLabUnlocked
+        )
     }
 
     private var difficulty: InvestigationDifficulty { currentCase.difficulty }
@@ -427,7 +432,7 @@ struct InvestigationExperienceView: View {
                         .font(.pfCardTitle)
                         .foregroundColor(.pfNavy)
                 }
-                Text("This investigation case is part of the full Payment Situations set. Unlock all \(ContentManifest.situationCount)\(storeManager.isPriceAvailable(for: ProductCatalogue.situationsProductID) ? " for \(storeManager.priceText)" : ""). The free samples stay free. The Integrated Course includes all situations too.")
+                Text("This investigation case is part of the Investigation Lab: all \(ContentManifest.investigationCaseCount) investigation cases\(storeManager.isPriceAvailable(for: ProductCatalogue.investigationLabProductID) ? " for \(storeManager.priceText(for: ProductCatalogue.investigationLabProductID))" : ""), with 1 year of access. The free samples and the weekly free case stay free. The Integrated Course includes the Investigation Lab too.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)

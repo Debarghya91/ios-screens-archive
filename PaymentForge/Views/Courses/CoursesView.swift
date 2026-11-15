@@ -15,7 +15,7 @@
 // prev/next, and nothing else on screen. Learning Paths is the
 // guided journey: six role paths filterable by level, then the eight
 // guided sessions from the live site in order. All Courses is the
-// catalogue grouped by bundle: every chapter under the bundle that
+// catalogue grouped by part: every chapter under the part that
 // unlocks it, with guides, labs and tests below. Lesson counts and
 // completion % come from the real catalogue and real progress, and
 // the section content sits directly under the section picker, so
@@ -23,7 +23,7 @@
 // interview and practice cards sit below the section content on the
 // Learning Paths and All Courses sections only: the Book section
 // stays uncluttered. Chapters are gated by purchase: a chapter's lessons
-// unlock when its bundle, or the Integrated Course, is owned.
+// unlock when its part, or the Integrated Course, is owned.
 // The catalogue stays browsable: locked chapters show a lock state
 // and open to a lock screen, never a dead end. Display numbers are
 // book numbers from PFBookModeReadingOrder: internal chapter IDs
@@ -50,9 +50,9 @@ struct CoursesView: View {
     /// section. The level strings match LearningPath.level exactly.
     @State private var selectedPathLevel: PathLevelFilter = .all
 
-    /// Bundle ids expanded in the All Courses section, keyed by
-    /// CourseProduct.id. All bundles start collapsed so all ten
-    /// bundle names are visible at once.
+    /// Part ids expanded in the All Courses section, keyed by
+    /// CourseProduct.id. All parts start collapsed so all ten
+    /// part names are visible at once.
     @State private var expandedBundleIDs: Set<String> = []
 
     /// Part numbers expanded in the Book section. All parts start
@@ -573,42 +573,43 @@ struct CoursesView: View {
         }
     }
 
-    // MARK: - All Courses section, grouped by bundle
+    // MARK: - All Courses section, grouped by part
 
     private var chapterNumbers: [Int] {
         PFChapterHelper.chapterNumbers(in: contentService)
     }
 
-    /// The ten chapter bundles in catalogue order: every product
-    /// except The Integrated Course (which contains every chapter)
-    /// and Payment Situations (which contains no chapters). The ten
-    /// bundles partition the catalogue exactly: 100 chapters, no
-    /// chapter in two bundles, no chapter missing, as the
-    /// entitlement tests assert. Grouping by bundle therefore
+    /// The ten book parts in catalogue order: every product with
+    /// chapters except The Integrated Course (which contains every
+    /// chapter). The standalone products contain no chapters and
+    /// are excluded by the chapterIDs check. The ten parts
+    /// partition the 99 in-book chapters exactly: no chapter in
+    /// two parts, no in-book chapter missing, as the entitlement
+    /// tests assert. The held-out ch37 sits in no part and stays
+    /// reachable without purchase. Grouping by part therefore
     /// reaches every chapter the old flat list reached, with no
     /// chapter lost and none repeated.
     private var chapterBundles: [CourseProduct] {
         ProductCatalogue.products.filter { product in
             product.productID != ProductCatalogue.fullCourseProductID
-                && product.productID != ProductCatalogue.situationsProductID
                 && !product.chapterIDs.isEmpty
         }
     }
 
-    /// All Courses, grouped by the bundle that unlocks each chapter.
-    /// Each bundle card expands in place to its chapters, and each
+    /// All Courses, grouped by the part that unlocks each chapter.
+    /// Each part card expands in place to its chapters, and each
     /// chapter row opens the same ChapterDetailView the flat list
     /// opened, with the same lock state. No chapter is paginated
-    /// away: the largest bundle holds 14 chapters, all shown when
+    /// away: the largest part holds 14 chapters, all shown when
     /// its card is expanded. Ownership is read only, through
     /// StoreManager.isProductUnlocked: no gating rule changes here.
     private var bundlesSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            Text("Browse by bundle")
+            Text("Browse by part")
                 .font(.pfScreenTitle)
                 .foregroundColor(.pfNavy)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Every chapter grouped by the bundle that unlocks it. Open a bundle to see its chapters, then open a chapter to see its lessons.")
+            Text("Every chapter grouped by the part that unlocks it. Open a part to see its chapters, then open a chapter to see its lessons.")
                 .font(.pfBody)
                 .foregroundColor(.pfSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -619,11 +620,11 @@ struct CoursesView: View {
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
             } else {
-                Text("\(chapterBundles.count) bundles, \(chapterNumbers.count) chapters in the catalogue.")
+                Text("\(chapterBundles.count) parts, \(chapterNumbers.count) chapters in the catalogue.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("A bundle shows Owned when you own it or The Integrated Course.")
+                Text("A part shows Owned when you own it or The Integrated Course.")
                     .font(.pfCaption)
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -797,7 +798,7 @@ struct ChapterRow: View {
         return base + " · " + total
     }
 
-    /// True when neither the bundle containing this chapter nor the
+    /// True when neither the part containing this chapter nor the
     /// Integrated Course is owned.
     private var isLocked: Bool {
         !storeManager.isChapterUnlocked("ch\(chapterNumber)")
@@ -870,8 +871,8 @@ struct ChapterRow: View {
 
 // MARK: - Bundle group
 
-/// One chapter bundle in the All Courses section: a header card
-/// that expands in place to the bundle's chapters. The bundle
+/// One book part in the All Courses section: a header card
+/// that expands in place to the part's chapters. The part
 /// itself has no detail screen, so the header is a Button that
 /// expands and collapses, never a NavigationLink. Each chapter
 /// row below it opens the same ChapterDetailView the old flat
@@ -879,7 +880,7 @@ struct ChapterRow: View {
 /// state are real: lessons from the catalogue, completion from
 /// ProgressStore, ownership read only through
 /// StoreManager.isProductUnlocked, which counts The Integrated
-/// Course as unlocking every bundle. No price is shown here and
+/// Course as unlocking every part. No price is shown here and
 /// no gating rule changes: the lock state on each chapter row is
 /// ChapterRow's existing state, unchanged.
 struct BundleGroupView: View {
@@ -889,9 +890,9 @@ struct BundleGroupView: View {
     let product: CourseProduct
     @Binding var isExpanded: Bool
 
-    /// This bundle's chapter numbers in numeric order, so the
+    /// This part's chapter numbers in numeric order, so the
     /// expanded list always reads in chapter order even though
-    /// the catalogue lists bundle chapters in topic order.
+    /// the catalogue lists part chapters in topic order.
     private var bundleChapterNumbers: [Int] {
         product.chapterIDs
             .compactMap { PFChapterHelper.chapterNumber(from: $0) }
@@ -1158,7 +1159,7 @@ struct ChapterDetailView: View {
         return total + " in total, " + LessonDurations.durationText(remaining) + " left"
     }
 
-    /// True when neither the bundle containing this chapter nor the
+    /// True when neither the part containing this chapter nor the
     /// Integrated Course is owned.
     private var isLocked: Bool {
         !storeManager.isChapterUnlocked("ch\(chapterNumber)")
@@ -1196,10 +1197,11 @@ struct ChapterDetailView: View {
                 ForEach(visibleLessons) { lesson in
                     // A locked lesson never navigates into LessonView:
                     // tapping it opens checkout, where the price and
-                    // the Buy button live. The free sample lesson and
-                    // unlocked lessons navigate normally. Rows show
-                    // the lesson number inside the chapter.
-                    if isLocked && !PFChapterHelper.isSampleLesson(lesson, in: contentService) {
+                    // the Buy button live. Free lessons (the first
+                    // lesson of the chapter, or a sequential sample)
+                    // and unlocked lessons navigate normally. Rows
+                    // show the lesson number inside the chapter.
+                    if isLocked && !PFChapterHelper.isFreeLesson(lesson, in: contentService) {
                         Button {
                             showCheckout = true
                         } label: {
@@ -1299,8 +1301,8 @@ struct ChapterDetailView: View {
                         Text("Locked chapter")
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
-                        if let bundle = storeManager.unlockingProduct(for: "ch\(chapterNumber)") {
-                            Text("Unlock this chapter with \(bundle.name) for \(storeManager.priceText(for: bundle.productID)).")
+                        if let part = storeManager.unlockingProduct(for: "ch\(chapterNumber)") {
+                            Text("Unlock this chapter with \(part.name) for \(storeManager.priceText(for: part.productID)), with 1 year of access.")
                                 .font(.pfBody)
                                 .foregroundColor(.pfSecondaryText)
                                 .fixedSize(horizontal: false, vertical: true)

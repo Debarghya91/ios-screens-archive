@@ -1982,3 +1982,31 @@ enum InvestigationEngine {
         }
     }
 }
+
+// MARK: - Investigation Lab gate
+
+/// The Investigation Lab gate, shared by the Investigation
+/// Experience, the Exception Investigation Lab, and the Community
+/// Challenge. A case is locked when it is grounded in a non-free
+/// situation, is not this week's free case, and the learner has no
+/// Investigation Lab entitlement. Cases grounded in a free sample
+/// stay open, and the weekly free case stays free. Pure logic,
+/// covered by the gate truth-table tests.
+enum InvestigationGate {
+
+    /// True when an investigation case must stay locked.
+    static func isLocked(
+        isFreeSample: Bool,
+        isWeeklyFreeCase: Bool,
+        isInvestigationLabUnlocked: Bool
+    ) -> Bool {
+        !isFreeSample && !isWeeklyFreeCase && !isInvestigationLabUnlocked
+    }
+
+    /// True when a lab or challenge case may open: it needs no
+    /// unlock (grounded in a free sample, or a purely authored
+    /// practice exercise), or the Lab entitlement is active.
+    static func isOpen(requiresUnlock: Bool, isInvestigationLabUnlocked: Bool) -> Bool {
+        !requiresUnlock || isInvestigationLabUnlocked
+    }
+}

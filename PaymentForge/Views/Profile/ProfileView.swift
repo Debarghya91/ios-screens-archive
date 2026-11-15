@@ -585,6 +585,10 @@ struct ProfileView: View {
                             .font(.pfCaption)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
+                        Text(ReferralRules.rulesLine)
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
                         if let code = referralStore.referralCode, !code.isEmpty {
                             ShareLink(item: referralStore.shareText, subject: Text("My Payments Training Hub referral code")) {
                                 Text("Share your code")

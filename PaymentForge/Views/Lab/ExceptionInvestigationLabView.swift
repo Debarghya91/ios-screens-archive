@@ -11,7 +11,7 @@
 //
 // Gating (settled; this file changes no gating code): a case
 // grounded in a non-free situation requires
-// StoreManager.isSituationsUnlocked. Cases grounded in a free-sample
+// StoreManager.isInvestigationLabUnlocked. Cases grounded in a free-sample
 // situation and purely authored practice exercises are open to all.
 // A locked case shows its title, incident type and level only, with
 // an unlock card and checkout path; its narrative, evidence, steps
@@ -53,9 +53,12 @@ struct ExceptionInvestigationLabView: View {
     }
 
     /// True when the learner may open this case: it needs no unlock,
-    /// or the situations entitlement is active.
+    /// or the Investigation Lab entitlement is active.
     private func isOpen(_ exceptionCase: ExceptionCase) -> Bool {
-        !exceptionCase.requiresSituationsUnlock || storeManager.isSituationsUnlocked
+        InvestigationGate.isOpen(
+            requiresUnlock: exceptionCase.requiresSituationsUnlock,
+            isInvestigationLabUnlocked: storeManager.isInvestigationLabUnlocked
+        )
     }
 
     var body: some View {
@@ -71,7 +74,7 @@ struct ExceptionInvestigationLabView: View {
                     levelSection(level: section.level, heading: section.heading)
                 }
 
-                if !storeManager.isSituationsUnlocked {
+                if !storeManager.isInvestigationLabUnlocked {
                     footerCard
                 }
             }
@@ -226,7 +229,7 @@ struct ExceptionInvestigationLabView: View {
     /// A locked case card. Only the title, incident type and level
     /// are shown, with the same unlock card and checkout path
     /// SituationsView uses. The narrative, evidence, steps and
-    /// takeaway stay hidden until the situations set is unlocked.
+    /// takeaway stay hidden until the Investigation Lab is unlocked.
     private func lockedCaseCard(_ exceptionCase: ExceptionCase) -> some View {
         PFCard {
             VStack(alignment: .leading, spacing: PFSpacing.md) {
@@ -252,7 +255,7 @@ struct ExceptionInvestigationLabView: View {
                 HStack(spacing: PFSpacing.sm) {
                     PFLevelPill(text: exceptionCase.level.displayName)
                 }
-                Text("This investigation case is built from a Payment Situation in the full set. Unlock all \(ContentManifest.situationCount) situations with the Payment Situations purchase. The Integrated Course includes all situations too.")
+                Text("This investigation case is part of the Investigation Lab: all \(ContentManifest.investigationCaseCount) investigation cases\(storeManager.isPriceAvailable(for: ProductCatalogue.investigationLabProductID) ? " for \(storeManager.priceText(for: ProductCatalogue.investigationLabProductID))" : ""), with 1 year of access. The Integrated Course includes the Investigation Lab too.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -271,16 +274,16 @@ struct ExceptionInvestigationLabView: View {
     private var footerCard: some View {
         PFCard {
             VStack(alignment: .leading, spacing: PFSpacing.md) {
-                Text("Unlock all \(ContentManifest.situationCount) situations")
+                Text("Unlock the Investigation Lab")
                     .font(.pfCardTitle)
                     .foregroundColor(.pfNavy)
-                Text("One-time payment by In-App Purchase. The free sample cases stay free. The Integrated Course includes all situations too.")
+                Text("All \(ContentManifest.investigationCaseCount) investigation cases\(storeManager.isPriceAvailable(for: ProductCatalogue.investigationLabProductID) ? " for \(storeManager.priceText(for: ProductCatalogue.investigationLabProductID))" : ""), with 1 year of access. The free sample cases stay free. The Integrated Course includes the Investigation Lab too.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
                 PFPrimaryButton(title: "Go to checkout") {
                     showCheckout = true
                 }
-                .accessibilityLabel("Go to checkout to unlock all situations")
+                .accessibilityLabel("Go to checkout to unlock the Investigation Lab")
             }
         }
     }

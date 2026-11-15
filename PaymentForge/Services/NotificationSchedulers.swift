@@ -48,8 +48,8 @@
 // streak and continue learning open a real lesson link, new
 // content opens the new lesson when one exists (weekly case
 // otherwise), and offers open a locked lesson in the offered
-// bundle, whose lock screen is the existing purchase path, or
-// the weekly case for Payment Situations. If a future build adds
+// part, whose lock screen is the existing purchase path, or
+// the weekly case for Practice Experiences. If a future build adds
 // progress and purchases routes, the route helpers here are the
 // one place to point the streak and offer requests at them.
 //
@@ -91,7 +91,7 @@ enum NotificationSchedulers {
     private static let lastOfferScheduledBaseKey = "pf.notifications.lastOfferScheduledAt.v1"
 
     /// The product id of the last scheduled offer, so a pending
-    /// offer for a bundle the learner has since unlocked can be
+    /// offer for a product the learner has since unlocked can be
     /// dropped instead of firing.
     private static let lastOfferProductBaseKey = "pf.notifications.lastOfferProductID.v1"
 
@@ -311,24 +311,24 @@ enum NotificationSchedulers {
 
     // MARK: - Offers
 
-    /// One tasteful offer about a paid bundle, at most weekly.
+    /// One tasteful offer about a paid product, at most weekly.
     /// Catalogue (at most 3 messages, all read-only against the
-    /// store, and only for bundles StoreManager reports NOT
-    /// unlocked: isProductUnlocked for bundles, and
-    /// isSituationsUnlocked for Situations):
+    /// store, and only for products StoreManager reports NOT
+    /// unlocked: isProductUnlocked for parts, and
+    /// isPracticeUnlocked for Practice Experiences):
     ///   1. The Integrated Course, when the full course is locked.
-    ///   2. Payment Situations, when Situations is locked. The
-    ///      Integrated Course includes all Payment Situations,
-    ///      so full course owners already have Situations
+    ///   2. Practice Experiences, when Practice is locked. The
+    ///      Integrated Course includes Practice Experiences,
+    ///      so full course owners already have Practice
     ///      unlocked and never receive this message. It goes
     ///      only to learners who hold neither product.
-    ///   3. The chapter bundle for the chapter the learner most
+    ///   3. The book part for the chapter the learner most
     ///      recently worked in, via unlockingProduct(for:), when
-    ///      that chapter is locked and maps to a bundle.
-    /// When every eligible bundle is unlocked, nothing schedules.
+    ///      that chapter is locked and maps to a part.
+    /// When every eligible product is unlocked, nothing schedules.
     /// Choice rotates by ISO week number over the eligible
     /// messages, so the same message does not repeat every week
-    /// while more than one bundle is locked. Cadence: an offer is
+    /// while more than one product is locked. Cadence: an offer is
     /// scheduled only when none was scheduled in the last 7 days;
     /// the pending request is then left untouched until the week
     /// passes, because removing and re-adding it on every
@@ -336,8 +336,8 @@ enum NotificationSchedulers {
     /// date is 7 days out at 11:00. Fully covered by the offers
     /// toggle: off removes the pending request. No prices, no
     /// gating changes, no purchase code: the route opens a locked
-    /// lesson in the bundle, whose lock screen is the existing
-    /// purchase path, or the weekly case for Situations, because
+    /// lesson in the part, whose lock screen is the existing
+    /// purchase path, or the weekly case for Practice, because
     /// no purchases route exists in this build.
     private static func refreshOffers(isEnabled: Bool, center: UNUserNotificationCenter) {
         let storeManager = StoreManager.shared
@@ -384,10 +384,10 @@ enum NotificationSchedulers {
         let route: String
     }
 
-    /// The offer messages whose bundle is currently locked, in
-    /// catalogue order: full course, Situations, recent chapter
-    /// bundle. Situations uses isSituationsUnlocked, so full
-    /// course owners never see a Situations offer. Read-only
+    /// The offer messages whose product is currently locked, in
+    /// catalogue order: full course, Practice Experiences, recent
+    /// chapter part. Practice uses isPracticeUnlocked, so full
+    /// course owners never see a Practice offer. Read-only
     /// store checks only.
     private static func eligibleOffers(storeManager: StoreManager) -> [OfferMessage] {
         var offers: [OfferMessage] = []
@@ -401,22 +401,22 @@ enum NotificationSchedulers {
                     ?? PaymentForgeDeepLink.weeklyCaseURL().absoluteString
             ))
         }
-        let situationsID = ProductCatalogue.situationsProductID
-        // Situations entitlement, not the standalone product
-        // alone: the Integrated Course includes Situations.
-        if !storeManager.isSituationsUnlocked {
+        let practiceID = ProductCatalogue.practiceProductID
+        // Practice entitlement, not the standalone product
+        // alone: the Integrated Course includes Practice.
+        if !storeManager.isPracticeUnlocked {
             offers.append(OfferMessage(
-                productID: situationsID,
+                productID: practiceID,
                 body: "The full set of payment cases is there when you want to work through real situations.",
                 route: PaymentForgeDeepLink.weeklyCaseURL().absoluteString
             ))
         }
-        if let bundle = bundleForRecentChapter(storeManager: storeManager),
-           !storeManager.isProductUnlocked(bundle.productID) {
+        if let part = bundleForRecentChapter(storeManager: storeManager),
+           !storeManager.isProductUnlocked(part.productID) {
             offers.append(OfferMessage(
-                productID: bundle.productID,
-                body: "\(bundle.name) is there when you want the full set of lessons on that topic.",
-                route: lockedLessonRoute(storeManager: storeManager, onlyChapterIDs: bundle.chapterIDs)
+                productID: part.productID,
+                body: "\(part.name) is there when you want the full set of lessons on that topic.",
+                route: lockedLessonRoute(storeManager: storeManager, onlyChapterIDs: part.chapterIDs)
                     ?? fallbackLessonRoute()
                     ?? PaymentForgeDeepLink.weeklyCaseURL().absoluteString
             ))
@@ -424,11 +424,11 @@ enum NotificationSchedulers {
         return offers
     }
 
-    /// The bundle that unlocks the chapter the learner most
+    /// The part that unlocks the chapter the learner most
     /// recently worked in, from the most recent incomplete lesson,
     /// the last lesson, or the active path's next lesson, in that
     /// order. Nil when every chapter tried is unlocked or maps to
-    /// no bundle.
+    /// no part.
     private static func bundleForRecentChapter(storeManager: StoreManager) -> CourseProduct? {
         let progress = ProgressStore.shared
         var chapterIDs: [String] = []
@@ -445,15 +445,15 @@ enum NotificationSchedulers {
             chapterIDs.append("ch\(number)")
         }
         for chapterID in chapterIDs {
-            if let bundle = storeManager.unlockingProduct(for: chapterID) {
-                return bundle
+            if let part = storeManager.unlockingProduct(for: chapterID) {
+                return part
             }
         }
         return nil
     }
 
     /// Clear the stored offer schedule state, for example when
-    /// every bundle is unlocked or the offered bundle was bought.
+    /// every product is unlocked or the offered product was bought.
     private static func clearOfferState() {
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: AccountScopedStorage.currentKey(lastOfferScheduledBaseKey))

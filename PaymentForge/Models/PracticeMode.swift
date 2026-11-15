@@ -75,9 +75,9 @@ enum PracticeModeBuilder {
     // MARK: - Gating (v70)
 
     /// The situations a learner may practise, given entitlement.
-    /// Entitled learners (the situations product owned, the
-    /// Integrated Course owned, or a server entitlement, all
-    /// folded into StoreManager.isSituationsUnlocked by the
+    /// Entitled learners (the Practice Experiences product owned,
+    /// the Integrated Course owned, or a server entitlement, all
+    /// folded into StoreManager.isPracticeUnlocked by the
     /// caller) keep the full list, unchanged and in order.
     /// Everyone else keeps only the free samples plus this
     /// week's free case. A situation counts as a free sample
@@ -92,11 +92,11 @@ enum PracticeModeBuilder {
     /// contributes no situation.
     static func eligiblePool(
         from allSituations: [Situation],
-        isSituationsUnlocked: Bool,
+        isPracticeUnlocked: Bool,
         weeklyCaseID: String?,
         freeSampleIDs: Set<String> = Set(ContentService.freeSampleIDs)
     ) -> [Situation] {
-        guard !isSituationsUnlocked else { return allSituations }
+        guard !isPracticeUnlocked else { return allSituations }
         return allSituations.filter { situation in
             if situation.isFreeSample || freeSampleIDs.contains(situation.id) { return true }
             guard let weeklyCaseID else { return false }
@@ -110,14 +110,14 @@ enum PracticeModeBuilder {
     /// weekly path flag, because Practice Mode is reached from
     /// several entries and none of them passes that flag.
     /// Locked means not a free sample, not this week's free
-    /// case, and Payment Situations not unlocked.
+    /// case, and Practice Experiences not unlocked.
     static func isLocked(
         _ situation: Situation,
-        isSituationsUnlocked: Bool,
+        isPracticeUnlocked: Bool,
         weeklyCaseID: String?,
         freeSampleIDs: Set<String> = Set(ContentService.freeSampleIDs)
     ) -> Bool {
-        guard !isSituationsUnlocked else { return false }
+        guard !isPracticeUnlocked else { return false }
         if situation.isFreeSample || freeSampleIDs.contains(situation.id) { return false }
         if let weeklyCaseID, situation.id == weeklyCaseID { return false }
         return true
@@ -138,14 +138,14 @@ enum PracticeModeBuilder {
     static func isEligible(
         _ situation: Situation,
         in allSituations: [Situation],
-        isSituationsUnlocked: Bool,
+        isPracticeUnlocked: Bool,
         weeklyCaseID: String?,
         freeSampleIDs: Set<String> = Set(ContentService.freeSampleIDs)
     ) -> Bool {
         decision(
             for: situation,
             in: allSituations,
-            isSituationsUnlocked: isSituationsUnlocked,
+            isPracticeUnlocked: isPracticeUnlocked,
             weeklyCaseID: weeklyCaseID,
             freeSampleIDs: freeSampleIDs
         ) != nil
@@ -165,14 +165,14 @@ enum PracticeModeBuilder {
     static func decision(
         for situation: Situation,
         in allSituations: [Situation],
-        isSituationsUnlocked: Bool,
+        isPracticeUnlocked: Bool,
         weeklyCaseID: String?,
         freeSampleIDs: Set<String> = Set(ContentService.freeSampleIDs),
         seedSalt: UInt64 = 0
     ) -> PracticeDecision? {
         let pool = eligiblePool(
             from: allSituations,
-            isSituationsUnlocked: isSituationsUnlocked,
+            isPracticeUnlocked: isPracticeUnlocked,
             weeklyCaseID: weeklyCaseID,
             freeSampleIDs: freeSampleIDs
         )

@@ -18,9 +18,9 @@
 // Foundation cases have 3 steps with 3 options each; core cases have
 // 3 steps with 4 options; advanced cases have 4 steps with 4 options.
 //
-// Gating (settled, follows the existing situations entitlement only):
+// Gating (settled, follows the existing Investigation Lab entitlement only):
 // a case grounded in a non-free situation requires
-// StoreManager.isSituationsUnlocked; a case grounded in a free-sample
+// StoreManager.isInvestigationLabUnlocked; a case grounded in a free-sample
 // situation (ContentService.freeSampleIDs) is open to all; a purely
 // authored practice exercise is open to all. This file defines the
 // rule through requiresSituationsUnlock; it changes no gating code.

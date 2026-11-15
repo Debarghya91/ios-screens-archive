@@ -9,8 +9,8 @@
 // explanation is the situation's own takeaway. Completion is tracked
 // locally, one per day.
 //
-// v70 gate: a learner without Payment Situations unlocked sees only
-// the 6 free samples plus this week's free case here. The pick, the
+// v70 gate: a learner without Practice Experiences unlocked sees
+// only the 2 free samples plus this week's free case here. The pick, the
 // options, the scenario text and the post-answer takeaway all draw
 // from the gated pool, so no locked explain or takeaway text can
 // reach a non-entitled learner through this surface. Entitled
@@ -73,10 +73,10 @@ struct DailyChallengeView: View {
     /// back to locked content. Pure, so it is covered by unit tests.
     static func eligiblePool(
         from situations: [Situation],
-        isSituationsUnlocked: Bool,
+        isPracticeUnlocked: Bool,
         weeklyCaseID: String?
     ) -> [Situation] {
-        guard !isSituationsUnlocked else { return situations }
+        guard !isPracticeUnlocked else { return situations }
         return situations.filter { situation in
             if situation.isFreeSample { return true }
             guard let weeklyCaseID else { return false }
@@ -123,14 +123,14 @@ struct DailyChallengeView: View {
     /// shared file, so the gate is applied here, before pick and
     /// display, and every display path below reads from this pool.
     private var eligibleSituations: [Situation] {
-        let unlocked = storeManager.isSituationsUnlocked
+        let unlocked = storeManager.isPracticeUnlocked
         var source = situations
         if !unlocked,
            let weekly = weeklyListSituation,
            !source.contains(where: { $0.id == weekly.id }) {
             source.append(weekly)
         }
-        return Self.eligiblePool(from: source, isSituationsUnlocked: unlocked, weeklyCaseID: weeklyCaseID)
+        return Self.eligiblePool(from: source, isPracticeUnlocked: unlocked, weeklyCaseID: weeklyCaseID)
     }
 
     /// Today's situation, deterministic by day. For non-entitled
@@ -283,7 +283,7 @@ struct DailyChallengeView: View {
                 .font(.pfScreenTitle)
                 .foregroundColor(.pfNavy)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(storeManager.isSituationsUnlocked
+            Text(storeManager.isPracticeUnlocked
                 ? "A new situation every day, the same one for every learner. Read the case, pick the key lesson, then check yourself against the situation's own takeaway."
                 : "A new free case every day, drawn from the free samples and this week's free case. Read the case, pick the key lesson, then check yourself against the situation's own takeaway.")
                 .font(.pfBody)

@@ -5,13 +5,48 @@
 // mode with free navigation and injected errors. Simplified
 // educational model. Real architectures vary by bank, scheme and
 // rail. All sample data is fictional and labelled SAMPLE. Runs are
-// session only: nothing is saved, stored or synced. Stepping is
+// session only: nothing from a run is saved, stored or synced.
+// Only the count of free runs used is stored (per account), so the
+// 2 free runs can be counted. Stepping is
 // manual; there is no auto-playing animation, so Reduce Motion
 // needs no special handling here. Pass and fail states always use
 // text plus an icon, never colour alone.
 // No em dashes in any user-facing text or comments.
 
 import SwiftUI
+
+// MARK: - Free runs
+
+/// The free-run count for the Payment Simulator gate. The first 2
+/// runs are free; further runs need the Simulator product (or the
+/// Integrated Course). The count is stored per account in
+/// UserDefaults: it is the only simulator state ever stored, and
+/// it is what the gate reads. The helpers take the store and key
+/// explicitly so the counting rule is testable without the view.
+enum SimulatorFreeRuns {
+    static let baseKey = "pf.simulator.freeRunsUsed.v1"
+
+    /// The account-scoped key for the current account (or guest).
+    static var currentKey: String {
+        AccountScopedStorage.currentKey(baseKey)
+    }
+
+    /// Runs used so far, 0 when nothing was recorded.
+    static func runsUsed(in defaults: UserDefaults = .standard, key: String) -> Int {
+        max(0, defaults.integer(forKey: key))
+    }
+
+    /// Record one used run.
+    static func recordRun(in defaults: UserDefaults = .standard, key: String) {
+        defaults.set(runsUsed(in: defaults, key: key) + 1, forKey: key)
+    }
+
+    /// True when the simulator must stay locked: no Simulator
+    /// entitlement and the free runs are used up.
+    static func isLocked(runsUsed: Int, isSimulatorUnlocked: Bool) -> Bool {
+        !isSimulatorUnlocked && runsUsed >= FreeSampleRules.simulatorFreeRuns
+    }
+}
 
 /// The two ways to run the simulator.
 private enum SimulatorMode: String, CaseIterable, Identifiable {
@@ -40,11 +75,33 @@ private enum SimulatorMode: String, CaseIterable, Identifiable {
 struct PaymentLifecycleSimulatorView: View {
     init() {}
 
+    @EnvironmentObject private var storeManager: StoreManager
     @State private var mode: SimulatorMode = .guided
     @State private var selectedSample: SamplePayment = SamplePaymentCatalogue.defaultSample
     @State private var currentStage: PaymentLifecycleStage = .initiation
     @State private var journey = LifecycleJourney()
     @State private var showingSummary: Bool = false
+    @State private var showCheckout = false
+    /// Free runs used, read fresh on every entry to this screen.
+    @State private var freeRunsUsed: Int = SimulatorFreeRuns.runsUsed(key: SimulatorFreeRuns.currentKey)
+    /// True once the current journey has consumed a free run, so
+    /// one journey counts once however far it is stepped.
+    @State private var runCounted = false
+
+    /// True when no more runs may start: no Simulator
+    /// entitlement and the free runs are used up.
+    private var runsExhausted: Bool {
+        SimulatorFreeRuns.isLocked(runsUsed: freeRunsUsed, isSimulatorUnlocked: storeManager.isSimulatorUnlocked)
+    }
+
+    /// True when the lock card replaces the simulator: the runs
+    /// are exhausted and no journey is under way. A journey
+    /// already under way keeps running until it ends, even when
+    /// it consumed the last free run; the lock takes effect when
+    /// the next run is started.
+    private var isLocked: Bool {
+        runsExhausted && !runCounted
+    }
 
     private var stageCount: Int { PaymentLifecycleStage.orderedStages.count }
 
@@ -66,18 +123,22 @@ struct PaymentLifecycleSimulatorView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PFSpacing.xl) {
                 headerCard
-                modePicker
-                samplePaymentCard
-                if mode == .guided {
-                    guidedSection
+                if isLocked {
+                    simulatorLockCard
                 } else {
-                    investigationSection
-                }
-                if journey.injection != nil {
-                    faultPanel
-                }
-                if showingSummary {
-                    summaryCard
+                    modePicker
+                    samplePaymentCard
+                    if mode == .guided {
+                        guidedSection
+                    } else {
+                        investigationSection
+                    }
+                    if journey.injection != nil {
+                        faultPanel
+                    }
+                    if showingSummary {
+                        summaryCard
+                    }
                 }
                 footerSection
             }
@@ -88,8 +149,31 @@ struct PaymentLifecycleSimulatorView: View {
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle("Payment Lifecycle")
+        .sheet(isPresented: $showCheckout) {
+            CheckoutView()
+        }
         .onAppear {
             journey.visit(currentStage)
+        }
+    }
+
+    /// The lock card shown in place of the simulator once the free
+    /// runs are used up. The header stays visible (discovery); the
+    /// buy prompt opens the Purchases screen.
+    private var simulatorLockCard: some View {
+        PFCard {
+            VStack(alignment: .leading, spacing: PFSpacing.md) {
+                Label("Simulator locked", systemImage: "lock.fill")
+                    .font(.pfCaptionBold)
+                    .foregroundColor(.pfNavy)
+                Text("Your \(FreeSampleRules.simulatorFreeRuns) free runs are used up. The Payment Simulator gives unlimited runs across all \(ContentManifest.simulatorCount) simulators\(storeManager.isPriceAvailable(for: ProductCatalogue.simulatorProductID) ? " for \(storeManager.priceText(for: ProductCatalogue.simulatorProductID))" : ""), with 1 year of access. The Integrated Course includes the Simulator too.")
+                    .font(.pfBody)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                PFPrimaryButton(title: "View Payment Simulator") {
+                    showCheckout = true
+                }
+            }
         }
     }
 
@@ -115,10 +199,16 @@ struct PaymentLifecycleSimulatorView: View {
                     .fontWeight(.semibold)
                     .foregroundColor(.pfNavy)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Every name, account reference and payment reference on this screen is fictional sample data, labelled SAMPLE. Amounts are sample units, not real money. This run is session only. Nothing is saved.")
+                Text("Every name, account reference and payment reference on this screen is fictional sample data, labelled SAMPLE. Amounts are sample units, not real money. This run is session only: nothing from a run is saved. Only the number of free runs used is stored.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
+                if !storeManager.isSimulatorUnlocked {
+                    Text("The first \(FreeSampleRules.simulatorFreeRuns) runs are free.")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Text("The Payments Training Hub catalogue lists \(ContentManifest.simulatorCount) simulators in total.")
                     .font(.pfCaption)
                     .foregroundColor(.pfSecondaryText)
@@ -624,8 +714,20 @@ struct PaymentLifecycleSimulatorView: View {
         // arrives there, so navigation into a blocked stage is
         // refused (the fault stage itself stays open for inspection).
         guard !journey.blockedStages.contains(stage) else { return }
+        countRunIfNeeded()
         currentStage = stage
         journey.visit(stage)
+    }
+
+    /// Consume one free run for the current journey, once. The
+    /// first real navigation, finishing, or ending a journey early
+    /// consumes the run; only browsing the first stage does not.
+    /// Entitled learners never consume runs.
+    private func countRunIfNeeded() {
+        guard !runCounted, !storeManager.isSimulatorUnlocked else { return }
+        runCounted = true
+        SimulatorFreeRuns.recordRun(key: SimulatorFreeRuns.currentKey)
+        freeRunsUsed = SimulatorFreeRuns.runsUsed(key: SimulatorFreeRuns.currentKey)
     }
 
     private func goNext() {
@@ -639,12 +741,14 @@ struct PaymentLifecycleSimulatorView: View {
     }
 
     private func finishRun() {
+        countRunIfNeeded()
         journey.visit(currentStage)
         journey.markReachedEnd()
         showingSummary = true
     }
 
     private func endRunEarly() {
+        countRunIfNeeded()
         journey.visit(currentStage)
         journey.markEndedEarly()
         showingSummary = true
@@ -655,14 +759,17 @@ struct PaymentLifecycleSimulatorView: View {
     }
 
     private func selectSample(_ sample: SamplePayment) {
+        guard !runsExhausted else { showCheckout = true; return }
         selectedSample = sample
         startNewRun()
     }
 
     private func startNewRun() {
+        guard !runsExhausted else { showCheckout = true; return }
         journey.reset()
         currentStage = .initiation
         showingSummary = false
+        runCounted = false
         journey.visit(.initiation)
     }
 }

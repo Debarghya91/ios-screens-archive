@@ -665,6 +665,7 @@ struct AppearanceSettingsView: View {
 /// the clipboard.
 struct HelpSupportView: View {
     @EnvironmentObject private var contentService: ContentService
+    @EnvironmentObject private var storeManager: StoreManager
     @Environment(\.dismiss) private var dismiss
 
     /// Called when the learner taps Replay tour. The parent
@@ -677,9 +678,11 @@ struct HelpSupportView: View {
     @State private var showAllFAQs = false
     /// True after the support address has been copied.
     @State private var emailCopied = false
+    /// True while the Purchases sheet is open from a locked FAQ.
+    @State private var showCheckout = false
 
     private var faqs: [SearchEntry] {
-        contentService.searchIndex?.entries.filter { $0.type == .faq } ?? []
+        contentService.allFAQs
     }
 
     private var displayedFAQs: [SearchEntry] {
@@ -773,36 +776,66 @@ struct HelpSupportView: View {
                     } else {
                         ForEach(displayedFAQs) { faq in
                             let isExpanded = expandedFAQID == faq.id
-                            Button {
-                                expandedFAQID = isExpanded ? nil : faq.id
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
+                            // FAQ answers belong to Interview Ready:
+                            // the first 5 in catalogue order are free
+                            // samples. A locked FAQ shows its title
+                            // only: no preview text leaks the answer.
+                            let isLocked = EntryAccessRules.isLocked(
+                                faq,
+                                indexInType: faqs.firstIndex(of: faq),
+                                isPracticeUnlocked: storeManager.isPracticeUnlocked,
+                                isInterviewUnlocked: storeManager.isInterviewUnlocked,
+                                isChapterUnlocked: true
+                            )
+                            VStack(alignment: .leading, spacing: 4) {
+                                Button {
+                                    expandedFAQID = isExpanded ? nil : faq.id
+                                } label: {
                                     HStack(alignment: .top, spacing: PFSpacing.sm) {
                                         Text(faq.title)
                                             .font(.pfCardTitle)
                                             .foregroundColor(.pfNavy)
                                             .fixedSize(horizontal: false, vertical: true)
                                         Spacer()
+                                        if isLocked {
+                                            Image(systemName: "lock.fill")
+                                                .font(.pfCallout.weight(.semibold))
+                                                .foregroundColor(.pfSecondaryText)
+                                                .accessibilityLabel("Answer locked")
+                                        }
                                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                                             .font(.pfCallout.weight(.semibold))
                                             .foregroundColor(.pfSecondaryText)
                                             .accessibilityHidden(true)
                                     }
-                                    if isExpanded {
-                                        PFBodyText(text: faq.text, font: .pfCallout, textColor: .pfSecondaryText)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(faq.title)
+                                .accessibilityHint(isLocked
+                                    ? "Shows how to unlock this answer."
+                                    : (isExpanded ? "Tap to collapse this answer." : "Tap to read the full answer."))
+                                if isExpanded {
+                                    if isLocked {
+                                        VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                                            Text("This FAQ answer is part of Interview Ready: \(ContentManifest.faqCount) FAQ answers and \(ContentManifest.interviewQuestionCount) interview questions\(storeManager.isPriceAvailable(for: ProductCatalogue.interviewProductID) ? " for \(storeManager.priceText(for: ProductCatalogue.interviewProductID))" : ""), with 1 year of access. The Integrated Course includes Interview Ready too.")
+                                                .font(.pfCallout)
+                                                .foregroundColor(.pfSecondaryText)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                            PFPrimaryButton(title: "View Interview Ready") {
+                                                showCheckout = true
+                                            }
+                                        }
                                     } else {
-                                        Text(faq.preview)
-                                            .font(.pfCallout)
-                                            .foregroundColor(.pfSecondaryText)
-                                            .lineLimit(3)
-                                            .fixedSize(horizontal: false, vertical: true)
+                                        PFBodyText(text: faq.text, font: .pfCallout, textColor: .pfSecondaryText)
                                     }
+                                } else if !isLocked {
+                                    Text(faq.preview)
+                                        .font(.pfCallout)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .lineLimit(3)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityElement(children: .combine)
-                            .accessibilityLabel("\(faq.title). \(isExpanded ? faq.text : faq.preview)")
-                            .accessibilityHint(isExpanded ? "Tap to collapse this answer." : "Tap to read the full answer.")
                             .padding(.vertical, 4)
                             .listRowBackground(Color.pfCard)
                         }
@@ -833,6 +866,9 @@ struct HelpSupportView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", action: { dismiss() })
                 }
+            }
+            .sheet(isPresented: $showCheckout) {
+                CheckoutView()
             }
         }
     }

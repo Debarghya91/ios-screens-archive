@@ -29,9 +29,11 @@ final class PracticeModeGateTests: XCTestCase {
         )
     }
 
-    /// Ten situations in catalogue order: the 6 real free sample
-    /// ids, 3 locked situations, and one locked situation that
-    /// acts as this week's free case. Locked takeaways carry a
+    /// Ten situations in catalogue order: 6 flagged as free
+    /// samples, 3 locked situations, and one locked situation that
+    /// acts as this week's free case. The flags simulate sample
+    /// status for builder mechanics; the real free-sample list is
+    /// 2 IDs (see EntitlementTests). Locked takeaways carry a
     /// "Locked case" marker so a leak is visible in any option.
     private var catalogue: [Situation] {
         [
@@ -60,7 +62,7 @@ final class PracticeModeGateTests: XCTestCase {
     private var allowedOptionTexts: Set<String> {
         Set(PracticeModeBuilder.eligiblePool(
             from: catalogue,
-            isSituationsUnlocked: false,
+            isPracticeUnlocked: false,
             weeklyCaseID: weeklyCaseID
         ).map { PracticeModeBuilder.firstSentence(of: $0.takeaway) })
     }
@@ -70,7 +72,7 @@ final class PracticeModeGateTests: XCTestCase {
     func testNonEntitledPoolContainsOnlyFreeSamplesAndWeeklyCase() {
         let pool = PracticeModeBuilder.eligiblePool(
             from: catalogue,
-            isSituationsUnlocked: false,
+            isPracticeUnlocked: false,
             weeklyCaseID: weeklyCaseID
         )
         XCTAssertEqual(pool.map(\.id), ["ABH-01", "JEB-C01", "INS-001", "ABH-03", "SCN-21", "RUN4-008", "INS-099"])
@@ -80,7 +82,7 @@ final class PracticeModeGateTests: XCTestCase {
     func testNonEntitledPoolPreservesCatalogueOrder() {
         let pool = PracticeModeBuilder.eligiblePool(
             from: catalogue,
-            isSituationsUnlocked: false,
+            isPracticeUnlocked: false,
             weeklyCaseID: weeklyCaseID
         )
         let catalogueOrder = catalogue.map(\.id)
@@ -91,7 +93,7 @@ final class PracticeModeGateTests: XCTestCase {
     func testNonEntitledPoolHasNoDuplicatesWhenWeeklyCaseIsAFreeSample() {
         let pool = PracticeModeBuilder.eligiblePool(
             from: catalogue,
-            isSituationsUnlocked: false,
+            isPracticeUnlocked: false,
             weeklyCaseID: "ABH-01"
         )
         XCTAssertEqual(pool.map(\.id), freeSampleIDsInOrder)
@@ -101,7 +103,7 @@ final class PracticeModeGateTests: XCTestCase {
     func testNonEntitledPoolWithoutWeeklyCaseContainsOnlyFreeSamples() {
         let pool = PracticeModeBuilder.eligiblePool(
             from: catalogue,
-            isSituationsUnlocked: false,
+            isPracticeUnlocked: false,
             weeklyCaseID: nil
         )
         XCTAssertEqual(pool.map(\.id), freeSampleIDsInOrder)
@@ -110,7 +112,7 @@ final class PracticeModeGateTests: XCTestCase {
     func testNonEntitledPoolIgnoresWeeklyCaseIDNotInList() {
         let pool = PracticeModeBuilder.eligiblePool(
             from: catalogue,
-            isSituationsUnlocked: false,
+            isPracticeUnlocked: false,
             weeklyCaseID: "NOPE-999"
         )
         XCTAssertEqual(pool.map(\.id), freeSampleIDsInOrder, "An unknown weekly id invents no situation.")
@@ -119,22 +121,22 @@ final class PracticeModeGateTests: XCTestCase {
     func testEntitledPoolIsUnfiltered() {
         let pool = PracticeModeBuilder.eligiblePool(
             from: catalogue,
-            isSituationsUnlocked: true,
+            isPracticeUnlocked: true,
             weeklyCaseID: weeklyCaseID
         )
         XCTAssertEqual(pool.map(\.id), catalogue.map(\.id), "Entitled learners keep the full list, in order.")
     }
 
     func testEmptyListStaysEmpty() {
-        XCTAssertTrue(PracticeModeBuilder.eligiblePool(from: [], isSituationsUnlocked: false, weeklyCaseID: weeklyCaseID).isEmpty)
-        XCTAssertTrue(PracticeModeBuilder.eligiblePool(from: [], isSituationsUnlocked: true, weeklyCaseID: weeklyCaseID).isEmpty)
+        XCTAssertTrue(PracticeModeBuilder.eligiblePool(from: [], isPracticeUnlocked: false, weeklyCaseID: weeklyCaseID).isEmpty)
+        XCTAssertTrue(PracticeModeBuilder.eligiblePool(from: [], isPracticeUnlocked: true, weeklyCaseID: weeklyCaseID).isEmpty)
     }
 
     func testFreeSampleFlagAdmitsWithoutIDMatch() {
         let flagged = situation(id: "ZZZ-1", takeaway: "Flagged free case takeaway for practice.", isFreeSample: true)
         let pool = PracticeModeBuilder.eligiblePool(
             from: [flagged],
-            isSituationsUnlocked: false,
+            isPracticeUnlocked: false,
             weeklyCaseID: nil,
             freeSampleIDs: []
         )
@@ -146,7 +148,7 @@ final class PracticeModeGateTests: XCTestCase {
         let control = situation(id: "ZZZ-3", takeaway: "Locked case takeaway that must stay out.", isFreeSample: false)
         let pool = PracticeModeBuilder.eligiblePool(
             from: [unflagged, control],
-            isSituationsUnlocked: false,
+            isPracticeUnlocked: false,
             weeklyCaseID: nil,
             freeSampleIDs: ["ZZZ-2"]
         )
@@ -159,12 +161,12 @@ final class PracticeModeGateTests: XCTestCase {
         let free = catalogue[0]
         let weekly = catalogue[3]
         let locked = catalogue[1]
-        XCTAssertFalse(PracticeModeBuilder.isLocked(free, isSituationsUnlocked: false, weeklyCaseID: weeklyCaseID), "A free sample is never locked.")
-        XCTAssertFalse(PracticeModeBuilder.isLocked(weekly, isSituationsUnlocked: false, weeklyCaseID: weeklyCaseID), "This week's free case is never locked.")
-        XCTAssertTrue(PracticeModeBuilder.isLocked(locked, isSituationsUnlocked: false, weeklyCaseID: weeklyCaseID), "A locked situation is locked for a non-entitled learner.")
-        XCTAssertTrue(PracticeModeBuilder.isLocked(locked, isSituationsUnlocked: false, weeklyCaseID: nil), "No weekly case known means the locked situation stays locked.")
-        XCTAssertFalse(PracticeModeBuilder.isLocked(locked, isSituationsUnlocked: true, weeklyCaseID: weeklyCaseID), "Entitlement unlocks every situation.")
-        XCTAssertFalse(PracticeModeBuilder.isLocked(free, isSituationsUnlocked: true, weeklyCaseID: weeklyCaseID))
+        XCTAssertFalse(PracticeModeBuilder.isLocked(free, isPracticeUnlocked: false, weeklyCaseID: weeklyCaseID), "A free sample is never locked.")
+        XCTAssertFalse(PracticeModeBuilder.isLocked(weekly, isPracticeUnlocked: false, weeklyCaseID: weeklyCaseID), "This week's free case is never locked.")
+        XCTAssertTrue(PracticeModeBuilder.isLocked(locked, isPracticeUnlocked: false, weeklyCaseID: weeklyCaseID), "A locked situation is locked for a non-entitled learner.")
+        XCTAssertTrue(PracticeModeBuilder.isLocked(locked, isPracticeUnlocked: false, weeklyCaseID: nil), "No weekly case known means the locked situation stays locked.")
+        XCTAssertFalse(PracticeModeBuilder.isLocked(locked, isPracticeUnlocked: true, weeklyCaseID: weeklyCaseID), "Entitlement unlocks every situation.")
+        XCTAssertFalse(PracticeModeBuilder.isLocked(free, isPracticeUnlocked: true, weeklyCaseID: weeklyCaseID))
     }
 
     // MARK: - Gated decisions
@@ -174,7 +176,7 @@ final class PracticeModeGateTests: XCTestCase {
         let decision = PracticeModeBuilder.decision(
             for: locked,
             in: catalogue,
-            isSituationsUnlocked: false,
+            isPracticeUnlocked: false,
             weeklyCaseID: weeklyCaseID
         )
         XCTAssertNil(decision, "No decision, and therefore no content, is built for a locked situation.")
@@ -185,7 +187,7 @@ final class PracticeModeGateTests: XCTestCase {
         guard let decision = PracticeModeBuilder.decision(
             for: focal,
             in: catalogue,
-            isSituationsUnlocked: false,
+            isPracticeUnlocked: false,
             weeklyCaseID: weeklyCaseID
         ) else {
             XCTFail("A decision must be built for a free sample from the free pool.")
@@ -203,7 +205,7 @@ final class PracticeModeGateTests: XCTestCase {
         guard let decision = PracticeModeBuilder.decision(
             for: weekly,
             in: catalogue,
-            isSituationsUnlocked: false,
+            isPracticeUnlocked: false,
             weeklyCaseID: weeklyCaseID
         ) else {
             XCTFail("A decision must be built for this week's free case.")
@@ -220,12 +222,12 @@ final class PracticeModeGateTests: XCTestCase {
         guard let decision = PracticeModeBuilder.decision(
             for: focal,
             in: catalogue,
-            isSituationsUnlocked: false,
+            isPracticeUnlocked: false,
             weeklyCaseID: weeklyCaseID
         ), let recall = PracticeModeBuilder.decision(
             for: focal,
             in: catalogue,
-            isSituationsUnlocked: false,
+            isPracticeUnlocked: false,
             weeklyCaseID: weeklyCaseID,
             seedSalt: 1000
         ) else {
@@ -238,7 +240,7 @@ final class PracticeModeGateTests: XCTestCase {
     }
 
     func testSixSituationPoolStillBuildsDecision() {
-        // Only the 6 free samples, no weekly case. The offset
+        // Only the 6 flagged fixtures, no weekly case. The offset
         // picks alone visit only two distinct neighbours in a
         // pool of six, so without the small-pool fallback this
         // decision would be nil and free practice would be
@@ -248,7 +250,7 @@ final class PracticeModeGateTests: XCTestCase {
         guard let decision = PracticeModeBuilder.decision(
             for: samples[0],
             in: samples,
-            isSituationsUnlocked: false,
+            isPracticeUnlocked: false,
             weeklyCaseID: nil
         ) else {
             XCTFail("A decision must be built from six free samples alone.")
@@ -264,7 +266,7 @@ final class PracticeModeGateTests: XCTestCase {
         guard let decision = PracticeModeBuilder.decision(
             for: locked,
             in: catalogue,
-            isSituationsUnlocked: true,
+            isPracticeUnlocked: true,
             weeklyCaseID: weeklyCaseID
         ) else {
             XCTFail("Entitled learners keep decisions for every situation.")
@@ -278,8 +280,8 @@ final class PracticeModeGateTests: XCTestCase {
     func testGatedIsEligibleMatchesDecision() {
         let free = catalogue[0]
         let locked = catalogue[1]
-        XCTAssertTrue(PracticeModeBuilder.isEligible(free, in: catalogue, isSituationsUnlocked: false, weeklyCaseID: weeklyCaseID))
-        XCTAssertFalse(PracticeModeBuilder.isEligible(locked, in: catalogue, isSituationsUnlocked: false, weeklyCaseID: weeklyCaseID))
-        XCTAssertTrue(PracticeModeBuilder.isEligible(locked, in: catalogue, isSituationsUnlocked: true, weeklyCaseID: weeklyCaseID))
+        XCTAssertTrue(PracticeModeBuilder.isEligible(free, in: catalogue, isPracticeUnlocked: false, weeklyCaseID: weeklyCaseID))
+        XCTAssertFalse(PracticeModeBuilder.isEligible(locked, in: catalogue, isPracticeUnlocked: false, weeklyCaseID: weeklyCaseID))
+        XCTAssertTrue(PracticeModeBuilder.isEligible(locked, in: catalogue, isPracticeUnlocked: true, weeklyCaseID: weeklyCaseID))
     }
 }

@@ -12,8 +12,9 @@
 // Release behavior.
 //
 // How the Release test works: it pollutes every UserDefaults key a
-// bypass could read (the purchased cache, the bypass set, and the
-// legacy Situations flag), then constructs a fresh StoreManager.
+// bypass could read (the purchased cache, the entitlement expiry
+// map, the bypass set, and the legacy Situations flag), then
+// constructs a fresh StoreManager.
 // A Release build must still report no ownership and no unlocks,
 // because Release init starts locked, purges the bypass key, and
 // never reads a stored flag to unlock anything. A fresh StoreManager
@@ -30,11 +31,12 @@ import XCTest
 final class StoreManagerReleaseBypassTests: XCTestCase {
 
     private let purchasedCacheKey = "pf.iap.purchasedProductIDs.v1"
+    private let entitlementExpiriesKey = "pf.iap.entitlementExpiries.v1"
     private let bypassKey = "pf.iap.buildPhaseUnlocked.v1"
     private let legacySituationsKey = "pf.iap.situationsPurchased.v1"
 
     private var cacheKeys: [String] {
-        [purchasedCacheKey, bypassKey, legacySituationsKey]
+        [purchasedCacheKey, entitlementExpiriesKey, bypassKey, legacySituationsKey]
     }
 
     override func setUp() {
@@ -53,12 +55,18 @@ final class StoreManagerReleaseBypassTests: XCTestCase {
         }
     }
 
-    /// Write the most permissive stored state possible: every
-    /// product in the purchased cache, every product in the bypass
-    /// set, and the legacy Situations flag set.
+    /// Write the most permissive stored state possible: every store
+    /// ID in the purchased cache, a future expiry for every store
+    /// ID, every store ID in the bypass set, and the legacy
+    /// Situations flag set.
     private func polluteStoredPurchaseState() {
-        UserDefaults.standard.set(ProductCatalogue.allProductIDs, forKey: purchasedCacheKey)
-        UserDefaults.standard.set(ProductCatalogue.allProductIDs, forKey: bypassKey)
+        UserDefaults.standard.set(ProductCatalogue.allStoreProductIDs, forKey: purchasedCacheKey)
+        let future = Date().addingTimeInterval(365 * 24 * 60 * 60).timeIntervalSince1970
+        let expiries = Dictionary(uniqueKeysWithValues: ProductCatalogue.allStoreProductIDs.map { ($0, future) })
+        if let data = try? JSONEncoder().encode(expiries) {
+            UserDefaults.standard.set(data, forKey: entitlementExpiriesKey)
+        }
+        UserDefaults.standard.set(ProductCatalogue.allStoreProductIDs, forKey: bypassKey)
         UserDefaults.standard.set(true, forKey: legacySituationsKey)
     }
 
@@ -85,15 +93,22 @@ final class StoreManagerReleaseBypassTests: XCTestCase {
     func testReleaseFreshStoreIgnoresPollutedStoredState() {
         polluteStoredPurchaseState()
         let store = StoreManager()
-        for productID in ProductCatalogue.allProductIDs {
-            XCTAssertFalse(store.isProductOwned(productID), "Release must not own \(productID) from stored state alone.")
-            XCTAssertFalse(store.isProductUnlocked(productID), "Release must not unlock \(productID) from stored state alone.")
+        for storeID in ProductCatalogue.allStoreProductIDs {
+            XCTAssertFalse(store.isProductOwned(storeID), "Release must not own \(storeID) from stored state alone.")
         }
-        XCTAssertFalse(store.isPurchased)
-        XCTAssertFalse(store.isServerEntitlementVerified)
-        XCTAssertFalse(store.isSituationsUnlocked)
+        for productID in ProductCatalogue.allProductIDs {
+            XCTAssertFalse(store.isProductUnlocked(productID), "Release must not unlock \(productID) from stored state alone.")
+            XCTAssertNil(store.expiryDate(for: productID), "Release must not report an expiry for \(productID) from stored state alone.")
+        }
+        XCTAssertFalse(store.isPracticeUnlocked)
+        XCTAssertFalse(store.isStudioUnlocked)
+        XCTAssertFalse(store.isSimulatorUnlocked)
+        XCTAssertFalse(store.isInvestigationLabUnlocked)
+        XCTAssertFalse(store.isInterviewUnlocked)
         XCTAssertEqual(store.unlockedProductCount, 0)
         XCTAssertTrue(store.purchasedProductIDs.isEmpty)
+        XCTAssertTrue(store.deviceEntitlementExpiries.isEmpty)
+        XCTAssertTrue(store.serverEntitlementExpiries.isEmpty)
         XCTAssertTrue(store.buildPhaseUnlockedProductIDs.isEmpty)
     }
 
@@ -105,7 +120,10 @@ final class StoreManagerReleaseBypassTests: XCTestCase {
         XCTAssertFalse(store.isChapterUnlocked("ch28"))
         XCTAssertFalse(store.isChapterUnlocked("ch95"))
         XCTAssertFalse(store.isChapterUnlocked("ch100"))
-        // A chapter no bundle contains stays locked (fail closed), even
+        // The held-out ch37 stays reachable: it is never sold, so
+        // its reachability is not an unlock granted by stored state.
+        XCTAssertTrue(store.isChapterUnlocked("ch37"))
+        // A chapter no part contains stays locked (fail closed), even
         // in Release; it is not an unlock granted by stored state.
         XCTAssertFalse(store.isChapterUnlocked("ch999"))
     }
@@ -116,6 +134,10 @@ final class StoreManagerReleaseBypassTests: XCTestCase {
         XCTAssertNil(
             UserDefaults.standard.object(forKey: bypassKey),
             "Release init must purge the build-phase bypass key so it can never unlock anything again."
+        )
+        XCTAssertNil(
+            UserDefaults.standard.object(forKey: legacySituationsKey),
+            "Release init must purge the legacy Situations flag so it can never unlock anything again."
         )
     }
 #endif

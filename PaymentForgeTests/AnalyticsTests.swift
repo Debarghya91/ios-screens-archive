@@ -75,7 +75,7 @@ final class AnalyticsTests: XCTestCase {
     }
 
     func testNoEventsRecordedBeforeConsent() {
-        service.track(.purchaseCompleted(productID: "com.paymentforge.app.full"))
+        service.track(.purchaseCompleted(productID: "com.paymentforge.app.integrated"))
         service.track(.lessonCompleted(lessonID: "ch1s1", chapterID: "ch1"))
         service.track(.syncFailed(failureCategory: "network"))
         XCTAssertTrue(service.recordedEvents.isEmpty)
@@ -276,9 +276,9 @@ final class AnalyticsTests: XCTestCase {
 
     func testFinalAssessmentStartCompletionAndCertificate() {
         service.grantConsent()
-        service.recordFinalAssessmentStarted(productID: "com.paymentforge.app.foundations", attemptNumber: 2, isResume: true)
-        service.recordFinalAssessmentCompleted(productID: "com.paymentforge.app.foundations", attemptNumber: 2, correct: 16, total: 20, passed: true, elapsedSeconds: 900, unansweredCount: 0)
-        service.recordCertificateEarned(productID: "com.paymentforge.app.foundations")
+        service.recordFinalAssessmentStarted(productID: "com.paymentforge.app.part-1", attemptNumber: 2, isResume: true)
+        service.recordFinalAssessmentCompleted(productID: "com.paymentforge.app.part-1", attemptNumber: 2, correct: 16, total: 20, passed: true, elapsedSeconds: 900, unansweredCount: 0)
+        service.recordCertificateEarned(productID: "com.paymentforge.app.part-1")
         XCTAssertEqual(recordedNames(), ["final_assessment_started", "final_assessment_completed", "certificate_earned"])
         let started = service.recordedEvents.first { $0.name == "final_assessment_started" }
         XCTAssertEqual(started?.properties["attempt_number"], AnalyticsPropertyValue.integer(2))
@@ -293,16 +293,16 @@ final class AnalyticsTests: XCTestCase {
     func testMonetisationFunnelEvents() {
         service.grantConsent()
         service.recordPaywallViewed(source: "lesson", productID: nil)
-        service.recordPaywallViewed(source: "situations", productID: "com.paymentforge.app.situations")
-        service.recordProductSelected(productID: "com.paymentforge.app.full", source: "purchases")
-        service.recordPurchaseStarted(productID: "com.paymentforge.app.full")
-        service.recordPurchaseCompleted(productID: "com.paymentforge.app.full")
-        service.recordPurchaseFailed(productID: "com.paymentforge.app.full", failureCategory: "verificationFailed")
-        service.recordPurchaseCancelled(productID: "com.paymentforge.app.full")
+        service.recordPaywallViewed(source: "situations", productID: "com.paymentforge.app.practice")
+        service.recordProductSelected(productID: "com.paymentforge.app.integrated", source: "purchases")
+        service.recordPurchaseStarted(productID: "com.paymentforge.app.integrated")
+        service.recordPurchaseCompleted(productID: "com.paymentforge.app.integrated")
+        service.recordPurchaseFailed(productID: "com.paymentforge.app.integrated", failureCategory: "verificationFailed")
+        service.recordPurchaseCancelled(productID: "com.paymentforge.app.integrated")
         service.recordRestoreStarted()
         service.recordRestoreCompleted(restoredCount: 0)
         service.recordRestoreFailed(failureCategory: "network")
-        service.recordEntitlementRevoked(productID: "com.paymentforge.app.full", reason: "revoked")
+        service.recordEntitlementRevoked(productID: "com.paymentforge.app.integrated", reason: "revoked")
         XCTAssertEqual(recordedNames(), [
             "paywall_viewed", "paywall_viewed", "product_selected",
             "purchase_started", "purchase_completed", "purchase_failed",
@@ -357,20 +357,20 @@ final class AnalyticsTests: XCTestCase {
             (.firstChallengeCompleted(correct: true), "first_challenge_completed", "retention"),
             (.assessmentStarted(dimension: "Lifecycle", questionCount: 5, timed: false, randomised: true), "assessment_started", "learning_effectiveness"),
             (.assessmentCompleted(dimension: "Lifecycle", correct: 4, total: 5, scorePercent: 80, elapsedSeconds: 60, unansweredCount: 0), "assessment_completed", "learning_effectiveness"),
-            (.finalAssessmentStarted(productID: "com.paymentforge.app.full", attemptNumber: 1, isResume: false), "final_assessment_started", "learning_effectiveness"),
-            (.finalAssessmentCompleted(productID: "com.paymentforge.app.full", attemptNumber: 1, correct: 15, total: 20, passed: true, scorePercent: 75, elapsedSeconds: 900, unansweredCount: 0), "final_assessment_completed", "learning_effectiveness"),
+            (.finalAssessmentStarted(productID: "com.paymentforge.app.integrated", attemptNumber: 1, isResume: false), "final_assessment_started", "learning_effectiveness"),
+            (.finalAssessmentCompleted(productID: "com.paymentforge.app.integrated", attemptNumber: 1, correct: 15, total: 20, passed: true, scorePercent: 75, elapsedSeconds: 900, unansweredCount: 0), "final_assessment_completed", "learning_effectiveness"),
             (.scoreImproved(kind: "quiz", scopeID: "ch1s1", previousScorePercent: 50, currentScorePercent: 100), "score_improved", "learning_effectiveness"),
-            (.certificateEarned(productID: "com.paymentforge.app.full"), "certificate_earned", "learning_effectiveness"),
+            (.certificateEarned(productID: "com.paymentforge.app.integrated"), "certificate_earned", "learning_effectiveness"),
             (.paywallViewed(source: "lesson", productID: nil), "paywall_viewed", "monetisation"),
-            (.productSelected(productID: "com.paymentforge.app.full", source: "purchases"), "product_selected", "monetisation"),
-            (.purchaseStarted(productID: "com.paymentforge.app.full"), "purchase_started", "monetisation"),
-            (.purchaseCompleted(productID: "com.paymentforge.app.full"), "purchase_completed", "monetisation"),
-            (.purchaseFailed(productID: "com.paymentforge.app.full", failureCategory: "network"), "purchase_failed", "monetisation"),
-            (.purchaseCancelled(productID: "com.paymentforge.app.full"), "purchase_cancelled", "monetisation"),
+            (.productSelected(productID: "com.paymentforge.app.integrated", source: "purchases"), "product_selected", "monetisation"),
+            (.purchaseStarted(productID: "com.paymentforge.app.integrated"), "purchase_started", "monetisation"),
+            (.purchaseCompleted(productID: "com.paymentforge.app.integrated"), "purchase_completed", "monetisation"),
+            (.purchaseFailed(productID: "com.paymentforge.app.integrated", failureCategory: "network"), "purchase_failed", "monetisation"),
+            (.purchaseCancelled(productID: "com.paymentforge.app.integrated"), "purchase_cancelled", "monetisation"),
             (.restoreStarted, "restore_started", "monetisation"),
             (.restoreCompleted(restoredCount: 2), "restore_completed", "monetisation"),
             (.restoreFailed(failureCategory: "network"), "restore_failed", "monetisation"),
-            (.entitlementRevoked(productID: "com.paymentforge.app.full", reason: "revoked"), "entitlement_revoked", "monetisation"),
+            (.entitlementRevoked(productID: "com.paymentforge.app.integrated", reason: "revoked"), "entitlement_revoked", "monetisation"),
             (.contentLoadFailed(kind: "catalogue", failureCategory: "network"), "content_load_failed", "technical_quality"),
             (.lessonLoadFailed(lessonID: "ch1s1", failureCategory: "network"), "lesson_load_failed", "technical_quality"),
             (.audioPlaybackFailed(lessonID: "ch1s1", failureCategory: "playbackFailed"), "audio_playback_failed", "technical_quality"),
