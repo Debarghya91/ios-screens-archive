@@ -1,5 +1,5 @@
 // ProductCatalogue.swift
-// PaymentForge iOS - the one authoritative product catalogue.
+// Payments Training Hub iOS - the one authoritative product catalogue.
 //
 // This catalogue supersedes PaymentConfig for StoreManager and
 // CheckoutView. PaymentConfig (in SupabaseConfig.swift) is frozen and

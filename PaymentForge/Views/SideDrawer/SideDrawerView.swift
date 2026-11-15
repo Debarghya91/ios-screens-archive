@@ -1,5 +1,5 @@
 // SideDrawerView.swift
-// PaymentForge iOS - Side drawer menu, modelled on a settings drawer
+// Payments Training Hub iOS - Side drawer menu, modelled on a settings drawer
 // design: a panel that slides in over the main content,
 // with a title, option rows (icon, bold title, grey subtitle, chevron),
 // a highlighted card at the bottom and the brand name below it.
@@ -144,7 +144,7 @@ struct SideDrawerView: View {
     /// it is always one tap away, and it routes to the Profile
     /// sheet, never to the My Progress tab.
     /// Refer and Win is deliberately not listed: there is no referral
-    /// offer for PaymentForge, and the brief says to leave the row out
+    /// offer for Payments Training Hub, and the brief says to leave the row out
     /// rather than invent one. Referral invites (ReferralInvite)
     /// are local-only text and links with no reward, shared from
     /// the weekly free case screen and the share sheets, and they
@@ -906,7 +906,7 @@ struct AboutPaymentForgeView: View {
                         Text("The operator")
                             .font(.pfSectionTitle)
                             .foregroundColor(.pfNavy)
-                        PFBodyText(text: "Payments Training Hub is built and run by Debarghya Mondal, a Senior Business Analyst who has run payments transformation at NatWest in the UK since 2021, deployed through Capco in Bangalore.")
+                        PFBodyText(text: "Payments Training Hub is built and run by a Senior Business Analyst who has run payments transformation at NatWest in the UK since 2021, deployed through Capco in Bangalore.")
                     }
 
                     VStack(alignment: .leading, spacing: PFSpacing.sm) {

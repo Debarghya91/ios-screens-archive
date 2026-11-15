@@ -1,5 +1,5 @@
 // AssessmentView.swift
-// PaymentForge iOS - Short assessments drawn from real lesson quizzes.
+// Payments Training Hub iOS - Short assessments drawn from real lesson quizzes.
 // Each assessment is 5 questions taken from the real quiz questions of
 // lessons in the dimension's chapters (or the path's chapters). The
 // explanation shown is the real quiz explanation when the lesson page
@@ -92,7 +92,9 @@ struct AssessmentView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("assessmentTop")
         }
+        .pfScrollToTopOnAppear("assessmentTop", resetWhen: (session.currentIndex, session.isFinished))
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle("Assessment")

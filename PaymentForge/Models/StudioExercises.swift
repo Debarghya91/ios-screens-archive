@@ -1,5 +1,5 @@
 // StudioExercises.swift
-// PaymentForge iOS - BA and Product Owner Studio exercises.
+// Payments Training Hub iOS - BA and Product Owner Studio exercises.
 //
 // Every exercise is grounded in one real lesson or one real
 // Payment Situation, cited by its real id and title. Briefs are
@@ -728,7 +728,7 @@ enum StudioRubricReview {
 //
 // COPYRIGHT: this content works from BABOK task, technique,
 // competency and perspective NAMES and structure only. No BABOK Guide
-// text was used. All prose is original PaymentForge authorship,
+// text was used. All prose is original Payments Training Hub authorship,
 // including the staged BA section material, which was written
 // originally for Payments Training Hub. The Studio shows the
 // no-IIBA-endorsement disclaimer in StudioDisclaimer.
@@ -737,7 +737,7 @@ enum StudioRubricReview {
 /// The no-IIBA-endorsement disclaimer, shown on the Studio home and
 /// in every lesson detail view.
 enum StudioDisclaimer {
-    static let text = "This Studio teaches business analysis using the structure and names of the BABOK Guide v3 knowledge areas, tasks, techniques, competencies, and perspectives. All explanations, examples, and practice material are original PaymentForge authorship. This material is not affiliated with, sponsored, or endorsed by IIBA. BABOK is a registered trademark of the International Institute of Business Analysis."
+    static let text = "This Studio teaches business analysis using the structure and names of the BABOK Guide v3 knowledge areas, tasks, techniques, competencies, and perspectives. All explanations, examples, and practice material are original Payments Training Hub authorship. This material is not affiliated with, sponsored, or endorsed by IIBA. BABOK is a registered trademark of the International Institute of Business Analysis."
 }
 
 /// The three Studio levels, in learning order. Every lesson carries
@@ -959,7 +959,7 @@ extension StudioLesson {
     /// its eleven roles (2.4), and requirements and designs (2.5).
     /// All are Level 1: the foundations every later lesson builds
     /// on. Names and structure only; all prose is original
-    /// PaymentForge authorship.
+    /// Payments Training Hub authorship.
     static let keyConcepts: [StudioLesson] = [
     StudioLesson(
         id: "lesson-concept-baccm",
@@ -7617,7 +7617,7 @@ extension StudioLesson {
     /// carries the same level as its parent group unit, so the
     /// group overview and its individual units sit together in
     /// the same level, group first. Names and structure only;
-    /// all prose is original PaymentForge authorship.
+    /// all prose is original Payments Training Hub authorship.
     static let individualCompetencies: [StudioLesson] = [
     StudioLesson(
         id: "lesson-competency-creative-thinking",

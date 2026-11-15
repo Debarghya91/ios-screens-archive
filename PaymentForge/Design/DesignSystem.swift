@@ -1,5 +1,5 @@
 // DesignSystem.swift
-// PaymentForge iOS - Shared design language.
+// Payments Training Hub iOS - Shared design language.
 // Royal blue is the single primary, premium gold sparingly for the main call
 // to action and highlights, deep executive navy for headings and authority.
 // No em dashes in any user-facing text.
@@ -742,6 +742,55 @@ extension View {
             Color.clear
                 .frame(height: PFSpacing.tabBarClearance)
                 .allowsHitTesting(false)
+        }
+    }
+
+    /// Scroll-to-top on every entry (the owner scroll rule):
+    /// every scrollable screen opens at the very top on every
+    /// entry, Back lands at the top too, and no scroll position
+    /// is ever restored. SwiftUI keeps a pushed view's
+    /// ScrollView offset alive across a push/pop and across tab
+    /// switches, so without this the learner returns mid-page.
+    /// Wraps the ScrollView in a ScrollViewReader and scrolls
+    /// to the caller's top anchor (an .id on the first content
+    /// element, or on the content container) on appear, without
+    /// animation, dispatched async so the scroll lands after
+    /// layout. Apply to the ScrollView itself: the reader must
+    /// be an ancestor of the ScrollView it scrolls.
+    func pfScrollToTopOnAppear(_ anchor: String) -> some View {
+        modifier(PFScrollToTopModifier(anchor: anchor, resetToken: 0))
+    }
+
+    /// Scroll-to-top on every entry, plus whenever in-place
+    /// content changes: the reset token re-runs the same scroll
+    /// when a filter, step, question, segment or stage swaps
+    /// the content inside one ScrollView, so swapped content
+    /// also starts at the top. The token must change exactly
+    /// when the content changes: a filter value, a question
+    /// index, a step raw value, or a tuple of such values.
+    func pfScrollToTopOnAppear<Value: Equatable>(_ anchor: String, resetWhen value: Value) -> some View {
+        modifier(PFScrollToTopModifier(anchor: anchor, resetToken: value))
+    }
+}
+
+/// The scroll-rule mechanism behind pfScrollToTopOnAppear: a
+/// ScrollViewReader around the ScrollView, scrolling to the top
+/// anchor on appear and whenever the reset token changes.
+struct PFScrollToTopModifier<Value: Equatable>: ViewModifier {
+    let anchor: String
+    let resetToken: Value
+
+    func body(content: Content) -> some View {
+        ScrollViewReader { proxy in
+            content
+                .onAppear { scrollToTop(proxy) }
+                .onChange(of: resetToken) { _, _ in scrollToTop(proxy) }
+        }
+    }
+
+    private func scrollToTop(_ proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            proxy.scrollTo(anchor, anchor: .top)
         }
     }
 }

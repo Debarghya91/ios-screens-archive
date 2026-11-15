@@ -1,5 +1,5 @@
 // RevisionService.swift
-// PaymentForge iOS - Spaced repetition for completed lessons.
+// Payments Training Hub iOS - Spaced repetition for completed lessons.
 // Stored locally with UserDefaults, namespaced per account through
 // AccountScopedStorage.
 // Intervals, in days: same day (0), next day (1), day 3, day 7, day 30.

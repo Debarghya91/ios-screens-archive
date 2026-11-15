@@ -1,5 +1,5 @@
 // SupabaseClient.swift
-// PaymentForge iOS - URLSession-based Supabase client, no third-party
+// Payments Training Hub iOS - URLSession-based Supabase client, no third-party
 // package. Talks to the Supabase Auth, REST (PostgREST) and Storage
 // HTTP endpoints with the headers Supabase expects: apikey plus an
 // Authorization Bearer token (anon key for public calls, the user's

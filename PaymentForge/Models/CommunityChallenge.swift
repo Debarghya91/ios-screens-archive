@@ -1,5 +1,5 @@
 // CommunityChallenge.swift
-// PaymentForge iOS - Weekly community challenge.
+// Payments Training Hub iOS - Weekly community challenge.
 //
 // One real case per week, picked deterministically from the existing
 // exception investigation catalogue (ExceptionCaseCatalogue), so

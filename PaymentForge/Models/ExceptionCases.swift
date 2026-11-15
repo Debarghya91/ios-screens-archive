@@ -1,5 +1,5 @@
 // ExceptionCases.swift
-// PaymentForge iOS - Payment Exception Investigation Lab cases.
+// Payments Training Hub iOS - Payment Exception Investigation Lab cases.
 //
 // Each case is an investigation exercise built from one real Payment
 // Situation: the narrative and evidence paraphrase that situation's

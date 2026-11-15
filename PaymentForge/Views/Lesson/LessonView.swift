@@ -624,7 +624,9 @@ struct LessonView: View {
             // reference pattern the shared value was taken from.
             .padding(.bottom, PFSpacing.tabBarClearance)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .id("lessonTop")
         }
+        .pfScrollToTopOnAppear("lessonTop")
         // Copy protection: lesson text cannot be selected, a faint
         // identity watermark sits over the content, and recording
         // blurs it out. The note composer sheet is outside this

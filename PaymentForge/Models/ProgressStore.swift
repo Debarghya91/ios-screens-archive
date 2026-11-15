@@ -1,5 +1,5 @@
 // ProgressStore.swift
-// PaymentForge iOS - On-device learner progress, event-based.
+// Payments Training Hub iOS - On-device learner progress, event-based.
 // Stored locally in UserDefaults, namespaced per account through
 // AccountScopedStorage: guest data under "guest", account data
 // under the account's user id.

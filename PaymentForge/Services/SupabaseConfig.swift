@@ -1,7 +1,7 @@
 // SupabaseConfig.swift
-// PaymentForge iOS - Supabase configuration.
+// Payments Training Hub iOS - Supabase configuration.
 // Live project: paymentforge (eofsotgclhwsdwvbbtib), ap-south-1 (Mumbai),
-// Free plan, status Healthy, organisation Deba. Wired to the live project
+// Free plan, status Healthy, organisation account. Wired to the live project
 // URL and publishable key below; a bundled Config.plist still overrides
 // them when present (add Config.plist to the Xcode target with
 // SUPABASE_URL and SUPABASE_ANON_KEY to use different values).
@@ -12,7 +12,7 @@
 
 import Foundation
 
-/// Supabase project configuration for the PaymentForge app.
+/// Supabase project configuration for the Payments Training Hub app.
 enum SupabaseConfig {
 
     /// Live project URL.

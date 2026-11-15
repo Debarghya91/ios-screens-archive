@@ -1,5 +1,5 @@
 // StudioDraftStore.swift
-// PaymentForge iOS - BA and PO Studio draft storage.
+// Payments Training Hub iOS - BA and PO Studio draft storage.
 //
 // Drafts live in UserDefaults, namespaced per account through
 // AccountScopedStorage, mirroring PracticeStore: the studio works

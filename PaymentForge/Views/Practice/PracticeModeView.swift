@@ -1,5 +1,5 @@
 // PracticeModeView.swift
-// PaymentForge iOS - Practice Mode for one Payment Situation.
+// Payments Training Hub iOS - Practice Mode for one Payment Situation.
 // The learner reads the business problem and the scenario, decides
 // what to do next, and ONLY then sees the recommended solution and
 // the rest of the case. The solution, the explanation of the
@@ -364,7 +364,9 @@ struct PracticeModeView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("practiceTop")
         }
+        .pfScrollToTopOnAppear("practiceTop")
         // Copy protection: the case text cannot be selected, a faint
         // identity watermark sits over the content, and recording
         // blurs it out.
@@ -433,7 +435,9 @@ struct PracticeModeView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("practiceLockedTop")
         }
+        .pfScrollToTopOnAppear("practiceLockedTop")
     }
 
     // MARK: - Header

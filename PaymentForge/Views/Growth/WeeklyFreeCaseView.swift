@@ -1,5 +1,5 @@
 // WeeklyFreeCaseView.swift
-// PaymentForge iOS - The free payment case of the week: one real
+// Payments Training Hub iOS - The free payment case of the week: one real
 // situation every week, free to open,
 // with no purchase and no sign-in.
 //
@@ -214,7 +214,9 @@ struct WeeklyFreeCaseView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("weeklyCaseTop")
         }
+        .pfScrollToTopOnAppear("weeklyCaseTop")
         .background(Color.pfBackground)
         .safeAreaInset(edge: .bottom) {
             Color.clear.frame(height: PFSpacing.xl)

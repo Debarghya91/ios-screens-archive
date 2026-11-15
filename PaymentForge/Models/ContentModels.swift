@@ -1,5 +1,5 @@
 // ContentModels.swift
-// PaymentForge iOS - Data models for the learning content.
+// Payments Training Hub iOS - Data models for the learning content.
 // Content is loaded from the live website so it stays current.
 // No em dashes in any user-facing text.
 

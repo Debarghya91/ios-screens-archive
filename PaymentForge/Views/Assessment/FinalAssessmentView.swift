@@ -1,5 +1,5 @@
 // FinalAssessmentView.swift
-// PaymentForge iOS - Final Assessment for one course bundle.
+// Payments Training Hub iOS - Final Assessment for one course bundle.
 // 20 questions drawn ONLY from the real lesson quiz questions of
 // the course's chapters, loaded in batches. No question, option or
 // correct answer is ever invented. The pass mark is strictly above
@@ -9,7 +9,7 @@
 // the learner must contact support. Questions and options are
 // shuffled with a fresh seed on every attempt, so each attempt is
 // different. Passing issues a Certificate of Completion for the
-// course. Questions are PaymentForge-specific because they come from
+// course. Questions are Payments Training Hub-specific because they come from
 // the real lesson quizzes, grounded in the course content, so they
 // are not answerable from generic knowledge.
 // The exam has a 30-minute countdown for all 20 questions, shown
@@ -149,7 +149,9 @@ struct FinalAssessmentView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("finalAssessmentTop")
         }
+        .pfScrollToTopOnAppear("finalAssessmentTop", resetWhen: (session.currentIndex, session.isFinished))
         .background(Color.pfBackground)
         .safeAreaInset(edge: .top) {
             if session.isStarted && !session.isFinished {

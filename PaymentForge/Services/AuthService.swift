@@ -1,5 +1,5 @@
 // AuthService.swift
-// PaymentForge iOS - Sign in with Apple, email OTP / magic link,
+// Payments Training Hub iOS - Sign in with Apple, email OTP / magic link,
 // Google sign-in, and session handling through Supabase Auth.
 // Guest is the default: nothing here is ever a launch gate. The app
 // opens straight into the guest experience, and auth is an upgrade

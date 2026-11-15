@@ -1,5 +1,5 @@
 // DashboardView.swift
-// PaymentForge iOS - My Progress: learning analytics.
+// Payments Training Hub iOS - My Progress: learning analytics.
 // Native SwiftUI only, no WebView.
 // Adaptive layout: flexible stacks and cards that reflow on every iPhone
 // width, from the small iPhone SE to a Pro Max, in portrait and landscape.
@@ -445,6 +445,11 @@ struct DashboardView: View {
                 withAnimation {
                     proxy.scrollTo("dashboardTop", anchor: .top)
                 }
+            }
+            .onAppear {
+                // The scroll rule: Back and tab switches land
+                // at the top, never at the restored offset.
+                proxy.scrollTo("dashboardTop", anchor: .top)
             }
             .navigationTitle("My Progress")
             .navigationBarTitleDisplayMode(.inline)

@@ -1,5 +1,5 @@
 // ForgotPasswordView.swift
-// PaymentForge iOS - Email password reset, the only password
+// Payments Training Hub iOS - Email password reset, the only password
 // recovery path. ForgotPasswordView requests a reset email for an
 // account email address; the link in the email opens the app on
 // the auth callback, AuthService stores the recovery session and

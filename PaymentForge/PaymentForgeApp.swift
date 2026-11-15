@@ -1,5 +1,5 @@
 // PaymentForgeApp.swift
-// PaymentForge iOS - App entry point and main tab navigation.
+// Payments Training Hub iOS - App entry point and main tab navigation.
 // No em dashes in any user-facing text.
 
 import SwiftUI

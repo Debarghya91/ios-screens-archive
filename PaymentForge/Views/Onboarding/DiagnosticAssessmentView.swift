@@ -1,5 +1,5 @@
 // DiagnosticAssessmentView.swift
-// PaymentForge iOS - The optional onboarding diagnostic: a short
+// Payments Training Hub iOS - The optional onboarding diagnostic: a short
 // check of about 3 minutes, drawn only from real lesson quiz
 // questions. No question, option or correct answer is ever
 // invented: questions are loaded with ContentService.loadLessonDetail
@@ -112,7 +112,9 @@ struct DiagnosticAssessmentView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("diagnosticTop")
         }
+        .pfScrollToTopOnAppear("diagnosticTop", resetWhen: (phase, currentIndex))
         .background(Color.pfBackground)
         .safeAreaInset(edge: .bottom) {
             Color.clear.frame(height: PFSpacing.xl)

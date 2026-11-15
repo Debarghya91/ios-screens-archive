@@ -1,5 +1,5 @@
 // WelcomeView.swift
-// PaymentForge iOS - Sign-in screen. A standalone screen, reachable
+// Payments Training Hub iOS - Sign-in screen. A standalone screen, reachable
 // from Profile or the drawer "Sign in" row. It is NEVER a launch gate:
 // the app opens straight into the guest experience, and this screen
 // only appears when the learner asks to sign in.

@@ -1,5 +1,5 @@
 // CoursesView.swift
-// PaymentForge iOS - Learn tab: the book, learning pathways and all courses.
+// Payments Training Hub iOS - Learn tab: the book, learning pathways and all courses.
 // Native SwiftUI only, no WebView. Uses the shared DesignSystem.
 // No em dashes in any user-facing text.
 //
@@ -139,6 +139,11 @@ struct CoursesView: View {
                     withAnimation {
                         proxy.scrollTo("learnTop", anchor: .top)
                     }
+                }
+                .onAppear {
+                    // The scroll rule: Back and tab switches land
+                    // at the top, never at the restored offset.
+                    proxy.scrollTo("learnTop", anchor: .top)
                 }
                 .navigationTitle("Learn")
                 .navigationBarTitleDisplayMode(.large)
@@ -1223,7 +1228,9 @@ struct ChapterDetailView: View {
                 chapterNavFooter
             }
             .padding(PFSpacing.lg)
+            .id("chapterTop")
         }
+        .pfScrollToTopOnAppear("chapterTop")
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle(PFBookModeReadingOrder.chapterLabel(forInternalNumber: chapterNumber) ?? PFChapterHelper.chapterTitle(for: lessons, number: chapterNumber))
@@ -1386,7 +1393,9 @@ struct GuideListView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("guidesTop")
         }
+        .pfScrollToTopOnAppear("guidesTop")
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .onChange(of: entries) { _, _ in
@@ -1439,7 +1448,9 @@ struct LabListView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("labsTop")
         }
+        .pfScrollToTopOnAppear("labsTop")
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .onChange(of: labs) { _, _ in
@@ -1496,7 +1507,9 @@ struct TestListView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("testsTop")
         }
+        .pfScrollToTopOnAppear("testsTop")
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .onChange(of: tests) { _, _ in
@@ -1937,7 +1950,9 @@ struct TestQuizView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("testQuizTop")
         }
+        .pfScrollToTopOnAppear("testQuizTop", resetWhen: (currentIndex, isFinished))
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle(entry.title)

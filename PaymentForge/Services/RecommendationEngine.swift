@@ -1,5 +1,5 @@
 // RecommendationEngine.swift
-// PaymentForge iOS - Adaptive lesson recommendations from recorded
+// Payments Training Hub iOS - Adaptive lesson recommendations from recorded
 // evidence only: the learner's role route, completed lessons, quiz
 // history, competency scores, revision schedule, and diagnostic
 // score. No statistics are fabricated: every reason names its real

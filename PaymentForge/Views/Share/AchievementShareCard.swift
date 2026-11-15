@@ -1,5 +1,5 @@
 // AchievementShareCard.swift
-// PaymentForge iOS - Shareable achievement cards: path completion,
+// Payments Training Hub iOS - Shareable achievement cards: path completion,
 // practical challenge completion, assessment pass and certificate.
 //
 // The card shows ONLY data the caller passes in. Nothing here

@@ -1,5 +1,5 @@
 // PaymentLifecycleSimulatorView.swift
-// PaymentForge iOS - Payment Lifecycle Simulator.
+// Payments Training Hub iOS - Payment Lifecycle Simulator.
 // A flagship teaching simulator: a fictional sample payment travels
 // through 14 stages, in Guided mode step by step, or in Investigation
 // mode with free navigation and injected errors. Simplified
@@ -82,7 +82,9 @@ struct PaymentLifecycleSimulatorView: View {
                 footerSection
             }
             .padding(PFSpacing.lg)
+            .id("simulatorTop")
         }
+        .pfScrollToTopOnAppear("simulatorTop", resetWhen: (mode.rawValue, currentStage.rawValue, selectedSample.id))
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle("Payment Lifecycle")

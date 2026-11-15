@@ -1,5 +1,5 @@
 // PracticeStore.swift
-// PaymentForge iOS - Practice Mode attempt storage.
+// Payments Training Hub iOS - Practice Mode attempt storage.
 // Attempts live in UserDefaults, namespaced per account through
 // AccountScopedStorage, so Practice Mode works fully for guests
 // and offline, and one account's attempts are never served to

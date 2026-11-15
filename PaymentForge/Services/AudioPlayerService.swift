@@ -1,5 +1,5 @@
 // AudioPlayerService.swift
-// PaymentForge iOS - Lesson audio playback with automatic failover.
+// Payments Training Hub iOS - Lesson audio playback with automatic failover.
 // Streams from the primary audio host, and if the primary fails, switches
 // to the backup audio host automatically, resuming from the same position.
 // The audio session uses the .playback category so narration plays with

@@ -1,5 +1,5 @@
 // HabitViews.swift
-// PaymentForge iOS - Learning habit cards for Home.
+// Payments Training Hub iOS - Learning habit cards for Home.
 //
 // One section, "Your learning habit", sitting between progress and
 // Explore: today's small goal, the weekly target with a neutrally

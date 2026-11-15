@@ -1,5 +1,5 @@
 // RegistrationWelcomePopup.swift
-// PaymentForge iOS - The congratulations popup shown once, on the
+// Payments Training Hub iOS - The congratulations popup shown once, on the
 // first sign-in right after registration completes (credentials
 // set, terms accepted, signed in). It dismisses itself after about
 // 3 seconds, and a tap dismisses it sooner. AuthService owns the

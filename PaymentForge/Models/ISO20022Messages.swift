@@ -1,5 +1,5 @@
 // ISO20022Messages.swift
-// PaymentForge iOS - ISO 20022 message explorer content.
+// Payments Training Hub iOS - ISO 20022 message explorer content.
 // Teaches message structure from the ISO 20022 base schema only.
 // Mandatory and optional follow the base schema. Scheme usage guides,
 // for example CBPR+ or SEPA, decide what is actually mandatory in a

@@ -1,5 +1,5 @@
 // SyncPendingQueue.swift
-// PaymentForge iOS - Durable record of local changes still waiting to
+// Payments Training Hub iOS - Durable record of local changes still waiting to
 // sync to the signed-in account.
 //
 // The local stores (ProgressStore, PracticeStore, PFBookmarkStore and

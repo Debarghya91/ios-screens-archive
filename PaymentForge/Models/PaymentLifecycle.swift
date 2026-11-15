@@ -1,5 +1,5 @@
 // PaymentLifecycle.swift
-// PaymentForge iOS - Payment Lifecycle Simulator data model.
+// Payments Training Hub iOS - Payment Lifecycle Simulator data model.
 // A simplified educational model of a payment journey. It teaches
 // the shape of a journey, not any one bank, scheme or rail. Real
 // architectures vary by bank, scheme and rail. All sample data in

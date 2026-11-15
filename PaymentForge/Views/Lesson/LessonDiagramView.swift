@@ -1,5 +1,5 @@
 // LessonDiagramView.swift
-// PaymentForge iOS - Renders a lesson diagram SVG as a real visual.
+// Payments Training Hub iOS - Renders a lesson diagram SVG as a real visual.
 // The SVG comes from the lesson page (ContentService extracts it from
 // the studio-canvas div). It is shown in a WKWebView so the vector
 // artwork renders exactly as on the website, scaled to the phone width,

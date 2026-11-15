@@ -1,5 +1,5 @@
 // OnboardingProfile.swift
-// PaymentForge iOS - Optional first-time onboarding: the learner's
+// Payments Training Hub iOS - Optional first-time onboarding: the learner's
 // role, knowledge level, objective and pace, plus the store that
 // keeps the profile on this device.
 //

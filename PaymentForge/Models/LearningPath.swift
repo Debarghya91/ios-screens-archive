@@ -1,5 +1,5 @@
 // LearningPath.swift
-// PaymentForge iOS - Guided learning paths and certificates.
+// Payments Training Hub iOS - Guided learning paths and certificates.
 // A path is defined by real chapter numbers, so its required lessons
 // are resolved from the loaded catalogue at runtime: only lesson ids
 // that exist in the search index can ever appear, and the counts shown

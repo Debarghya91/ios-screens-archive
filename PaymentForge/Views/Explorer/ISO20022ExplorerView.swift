@@ -1,5 +1,5 @@
 // ISO20022ExplorerView.swift
-// PaymentForge iOS - Native ISO 20022 message explorer.
+// Payments Training Hub iOS - Native ISO 20022 message explorer.
 // Teaches message structure from the ISO 20022 base schema only.
 // Scheme usage guides decide what is mandatory in a live payment;
 // this explorer states no scheme rules. All sample values are
@@ -75,7 +75,9 @@ struct ISO20022ExplorerView: View {
                         }
                     }
                     .padding(PFSpacing.lg)
+                    .id("explorerTop")
                 }
+                .pfScrollToTopOnAppear("explorerTop", resetWhen: selectedFamily?.rawValue ?? "")
             }
             .pfTabBarClearance()
             .navigationTitle("ISO 20022 Explorer")
@@ -338,7 +340,9 @@ struct ISO20022MessageDetailView: View {
                     ISO20022RelatedLessonsSection(message: message)
                 }
                 .padding(PFSpacing.lg)
+                .id("messageDetailTop")
             }
+            .pfScrollToTopOnAppear("messageDetailTop")
         }
         .pfTabBarClearance()
         .navigationTitle(message.id)
@@ -734,7 +738,9 @@ struct ISO20022JourneyView: View {
                     }
                 }
                 .padding(PFSpacing.lg)
+                .id("isoJourneyTop")
             }
+            .pfScrollToTopOnAppear("isoJourneyTop")
         }
         .pfTabBarClearance()
         .navigationTitle("Follow the payment")

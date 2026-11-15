@@ -1,5 +1,5 @@
 // PracticeMode.swift
-// PaymentForge iOS - Practice Mode for Payment Situations.
+// Payments Training Hub iOS - Practice Mode for Payment Situations.
 // A learner reads a real situation, decides what to do next, and only
 // then sees the recommended solution. Nothing here is invented: the
 // correct option is the situation's own takeaway, and every wrong

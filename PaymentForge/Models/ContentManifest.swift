@@ -1,5 +1,5 @@
 // ContentManifest.swift
-// PaymentForge iOS - Single source of truth for catalogue counts.
+// Payments Training Hub iOS - Single source of truth for catalogue counts.
 
 import Foundation
 

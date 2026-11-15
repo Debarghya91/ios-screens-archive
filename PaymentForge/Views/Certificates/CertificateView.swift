@@ -1,5 +1,5 @@
 // CertificateView.swift
-// PaymentForge iOS - Certificates of completion.
+// Payments Training Hub iOS - Certificates of completion.
 // A certificate is issued ONLY when every required lesson of its path
 // is complete, checked against ProgressStore. The learner name is the
 // signed-in name when available, otherwise "Guest Learner". The overall
@@ -76,7 +76,9 @@ struct CertificateView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("certificateTop")
         }
+        .pfScrollToTopOnAppear("certificateTop")
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle("Certificate")
@@ -267,7 +269,9 @@ struct CertificatesListView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("certificatesTop")
         }
+        .pfScrollToTopOnAppear("certificatesTop")
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle("Certificates")

@@ -1,5 +1,5 @@
 // FinalAssessment.swift
-// PaymentForge iOS - Final Assessment and course certificates.
+// Payments Training Hub iOS - Final Assessment and course certificates.
 // A Final Assessment is 20 questions drawn ONLY from the real lesson
 // quiz questions of one course bundle's chapters. No question, option
 // or correct answer is ever invented. The pass mark is strictly above
@@ -8,7 +8,7 @@
 // attempts are exhausted without a pass the assessment locks and the
 // learner must contact support. Passing issues a Certificate of
 // Completion for that course, stored persistently so it survives
-// restarts. Questions are PaymentForge-specific because they come
+// restarts. Questions are Payments Training Hub-specific because they come
 // from the real lesson quizzes, grounded in the course content, so
 // they are not answerable from generic knowledge.
 // This is one of two certificate systems, kept separate on purpose

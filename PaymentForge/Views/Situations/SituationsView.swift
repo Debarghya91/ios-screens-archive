@@ -1,5 +1,5 @@
 // SituationsView.swift
-// PaymentForge iOS - Payment Situations: ContentManifest.situationCount real-world situations.
+// Payments Training Hub iOS - Payment Situations: ContentManifest.situationCount real-world situations.
 // Native SwiftUI only, no WebView.
 
 import SwiftUI
@@ -416,6 +416,7 @@ struct SituationsView: View {
                                 proxy.scrollTo("freeSamples", anchor: .top)
                             }
                         })
+                        .id("situationsTop")
 
                         if contentService.isShowingCachedContent {
                             PFOfflineBanner()
@@ -446,6 +447,11 @@ struct SituationsView: View {
                 .onChange(of: levelFilter) { _, _ in stageVisibleCounts = [:] }
                 .onChange(of: stageFilter) { _, _ in stageVisibleCounts = [:] }
                 .onChange(of: showOnlyFree) { _, _ in stageVisibleCounts = [:] }
+                .onAppear {
+                    // The scroll rule: Back and tab switches land
+                    // at the top, never at the restored offset.
+                    proxy.scrollTo("situationsTop", anchor: .top)
+                }
             }
             .navigationTitle("Payment Cases")
             .navigationBarTitleDisplayMode(.large)
@@ -1157,7 +1163,9 @@ struct SituationDetailView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("situationTop")
         }
+        .pfScrollToTopOnAppear("situationTop")
         // Copy protection: situation text cannot be selected, a
         // faint identity watermark sits over the content, and
         // recording blurs it out.

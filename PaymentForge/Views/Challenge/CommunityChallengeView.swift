@@ -1,5 +1,5 @@
 // CommunityChallengeView.swift
-// PaymentForge iOS - Weekly community challenge.
+// Payments Training Hub iOS - Weekly community challenge.
 //
 // One real case per week for every learner, picked deterministically
 // by CommunityChallenge from the existing lab catalogue. Taking part
@@ -73,44 +73,59 @@ struct CommunityChallengeView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: PFSpacing.xl) {
-                headerSection
-                if let weekCase {
-                    if isOpen(weekCase) {
-                        CommunityChallengePlayView(
-                            weekKey: weekKey,
-                            exceptionCase: weekCase,
-                            store: challengeStore
-                        )
-                        .id("\(weekKey)-\(weekCase.id)")
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: PFSpacing.xl) {
+                    headerSection
+                    if let weekCase {
+                        if isOpen(weekCase) {
+                            CommunityChallengePlayView(
+                                weekKey: weekKey,
+                                exceptionCase: weekCase,
+                                store: challengeStore,
+                                onStepChange: {
+                                    // A new step starts at the top,
+                                    // like every other screen.
+                                    DispatchQueue.main.async {
+                                        proxy.scrollTo("communityTop", anchor: .top)
+                                    }
+                                }
+                            )
+                            .id("\(weekKey)-\(weekCase.id)")
+                        } else {
+                            lockedWeekCard(weekCase)
+                        }
                     } else {
-                        lockedWeekCard(weekCase)
+                        Text("This week's challenge is not available yet. Check back soon.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                } else {
-                    Text("This week's challenge is not available yet. Check back soon.")
-                        .font(.pfBody)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+                    leaderboardSection
+                    historySection
+                    privacyNote
                 }
-                leaderboardSection
-                historySection
-                privacyNote
+                .padding(PFSpacing.lg)
+                .id("communityTop")
             }
-            .padding(PFSpacing.lg)
-        }
-        // Copy protection: the challenge case cannot be selected, a
-        // faint identity watermark sits over it, and recording blurs
-        // it out. The same protection the daily challenge uses.
-        .pfProtectedContent()
-        .background(Color.pfBackground)
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: PFSpacing.xl)
-        }
-        .navigationTitle("Community Challenge")
-        .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showCheckout) {
-            CheckoutView()
+            .onAppear {
+                // The scroll rule: Back lands at the top, never
+                // at the restored offset.
+                proxy.scrollTo("communityTop", anchor: .top)
+            }
+            // Copy protection: the challenge case cannot be selected, a
+            // faint identity watermark sits over it, and recording blurs
+            // it out. The same protection the daily challenge uses.
+            .pfProtectedContent()
+            .background(Color.pfBackground)
+            .safeAreaInset(edge: .bottom) {
+                Color.clear.frame(height: PFSpacing.xl)
+            }
+            .navigationTitle("Community Challenge")
+            .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showCheckout) {
+                CheckoutView()
+            }
         }
     }
 
@@ -338,6 +353,10 @@ private struct CommunityChallengePlayView: View {
     let weekKey: String
     let exceptionCase: ExceptionCase
     @ObservedObject var store: CommunityChallengeStore
+    /// Called when the shown step changes (or the completion
+    /// summary replaces the steps), so the enclosing screen can
+    /// scroll the new step to the top: the scroll rule.
+    let onStepChange: () -> Void = {}
 
     @State private var stepIndex = 0
     @State private var triedOptionIndices: Set<Int> = []
@@ -375,6 +394,8 @@ private struct CommunityChallengePlayView: View {
                 stepSection
             }
         }
+        .onChange(of: stepIndex) { _, _ in onStepChange() }
+        .onChange(of: completion != nil) { _, _ in onStepChange() }
     }
 
     // MARK: - Case

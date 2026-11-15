@@ -1,5 +1,5 @@
 // DailyChallengeView.swift
-// PaymentForge iOS - Daily Challenge: one real situation per day.
+// Payments Training Hub iOS - Daily Challenge: one real situation per day.
 // The situation is picked deterministically from the situations by the
 // calendar day, so every learner gets the same challenge each day and
 // it changes daily. The question is "What is the key lesson here?":
@@ -242,7 +242,9 @@ struct DailyChallengeView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("dailyChallengeTop")
         }
+        .pfScrollToTopOnAppear("dailyChallengeTop")
         // Copy protection: the challenge case cannot be selected, a
         // faint identity watermark sits over it, and recording blurs
         // it out.

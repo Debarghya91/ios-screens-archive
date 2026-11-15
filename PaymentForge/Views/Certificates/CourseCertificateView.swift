@@ -1,5 +1,5 @@
 // CourseCertificateView.swift
-// PaymentForge iOS - Course Certificate of Completion.
+// Payments Training Hub iOS - Course Certificate of Completion.
 // Shown when a learner passes a course Final Assessment (more than
 // 70 percent, at least 15 out of 20). The card is premium: royal
 // blue and gold on white, Payments Training Hub branding, a gold certificate

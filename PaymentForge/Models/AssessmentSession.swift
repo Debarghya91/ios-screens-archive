@@ -1,5 +1,5 @@
 // AssessmentSession.swift
-// PaymentForge iOS - Timed and randomised assessment sessions.
+// Payments Training Hub iOS - Timed and randomised assessment sessions.
 //
 // An assessment session runs over real lesson quiz questions only:
 // questions are collected by AssessmentView from the lesson pages and

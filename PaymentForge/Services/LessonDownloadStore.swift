@@ -1,5 +1,5 @@
 // LessonDownloadStore.swift
-// PaymentForge iOS - Explicit per-lesson audio downloads for offline listening.
+// Payments Training Hub iOS - Explicit per-lesson audio downloads for offline listening.
 //
 // A lesson is downloaded only when the learner taps Download in the
 // unlocked lesson view. Nothing downloads automatically, and locked

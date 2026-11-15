@@ -1,5 +1,5 @@
 // ContentProtection.swift
-// PaymentForge iOS - Copy protection for lesson content.
+// Payments Training Hub iOS - Copy protection for lesson content.
 //
 // Three layers, all local, no network calls and no keys:
 //   1. Text selection off: lesson text cannot be selected, so the

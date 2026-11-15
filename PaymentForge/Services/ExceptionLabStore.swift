@@ -1,5 +1,5 @@
 // ExceptionLabStore.swift
-// PaymentForge iOS - Investigation Lab score storage.
+// Payments Training Hub iOS - Investigation Lab score storage.
 //
 // Lab results live in UserDefaults, namespaced per account through
 // AccountScopedStorage, mirroring PracticeStore: the same key

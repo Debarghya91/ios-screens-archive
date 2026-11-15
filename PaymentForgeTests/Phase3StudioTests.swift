@@ -993,7 +993,7 @@ final class StudioTeachingTests: XCTestCase {
 
     func testDisclaimerStatesNoIIBAEndorsementAndOriginalAuthorship() {
         XCTAssertTrue(StudioDisclaimer.text.contains("not affiliated with, sponsored, or endorsed by IIBA"))
-        XCTAssertTrue(StudioDisclaimer.text.contains("original PaymentForge authorship"))
+        XCTAssertTrue(StudioDisclaimer.text.contains("original Payments Training Hub authorship"))
         XCTAssertTrue(StudioDisclaimer.text.contains("BABOK"))
     }
 

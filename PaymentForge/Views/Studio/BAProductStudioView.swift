@@ -1,5 +1,5 @@
 // BAProductStudioView.swift
-// PaymentForge iOS - BA and Product Owner Studio.
+// Payments Training Hub iOS - BA and Product Owner Studio.
 //
 // Teaching first. The Studio introduces and explains every BABOK
 // item and teaches how to write each artifact and output, in
@@ -14,7 +14,7 @@
 // Content is authored as logical paragraphs in the data model
 // (StudioExercises.swift) and rendered with breathing room by
 // StudioParagraphsView. The Studio shows the no-IIBA-endorsement
-// disclaimer. All prose is original PaymentForge authorship,
+// disclaimer. All prose is original Payments Training Hub authorship,
 // working from BABOK names and structure only; no BABOK Guide
 // text is used.
 //
@@ -85,7 +85,7 @@ enum StudioGating {
 /// the teaching, inside each lesson and in the Practice Studio
 /// section below. Gating is unchanged: it applies only to the
 /// existing exercises, through StudioGating, exactly as before.
-/// Teaching lessons and career guides are original PaymentForge
+/// Teaching lessons and career guides are original Payments Training Hub
 /// content and carry no lock.
 struct BAProductStudioView: View {
     @EnvironmentObject private var contentService: ContentService
@@ -133,7 +133,9 @@ struct BAProductStudioView: View {
                 practiceStudioSection
             }
             .padding(PFSpacing.lg)
+            .id("studioTop")
         }
+        .pfScrollToTopOnAppear("studioTop", resetWhen: (selectedKind?.rawValue ?? "", selectedType?.rawValue ?? ""))
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle("BA and PO Studio")
@@ -548,7 +550,9 @@ private struct StudioExerciseDetailView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("studioExerciseTop")
         }
+        .pfScrollToTopOnAppear("studioExerciseTop")
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle(exercise.taskType.displayName)
@@ -1103,7 +1107,9 @@ struct StudioKnowledgeAreaView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(PFSpacing.lg)
+            .id("studioAreaTop")
         }
+        .pfScrollToTopOnAppear("studioAreaTop")
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle("Knowledge area")

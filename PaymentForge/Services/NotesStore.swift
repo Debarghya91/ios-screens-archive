@@ -1,5 +1,5 @@
 // NotesStore.swift
-// PaymentForge iOS - Learner notes, stored locally as one flat list.
+// Payments Training Hub iOS - Learner notes, stored locally as one flat list.
 // Stored locally with UserDefaults, namespaced per account through
 // AccountScopedStorage. Notes are never synced to any server: they
 // stay on this device, under the namespace that owns them.

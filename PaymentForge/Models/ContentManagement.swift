@@ -1,5 +1,5 @@
 // ContentManagement.swift
-// PaymentForge iOS - Content management architecture (incremental).
+// Payments Training Hub iOS - Content management architecture (incremental).
 //
 // INCREMENTAL ARCHITECTURE, NOT A MIGRATION. The live website remains
 // the source of truth for all content: ContentService keeps loading the

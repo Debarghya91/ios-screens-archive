@@ -67,6 +67,13 @@ struct SearchView: View {
     @State private var showClearRecentsConfirmation = false
     @State private var sheetEntry: SearchEntry? = nil
     @State private var selectedBrowseType: SearchEntryType? = nil
+    /// Results List identity: the scroll rule for Lists. A List
+    /// restores its offset on Back like a ScrollView does, and a
+    /// new query must start at the first result, so each return
+    /// and each new query bumps this generation and recreates
+    /// the List at the top. Load more never bumps it: paging
+    /// down keeps the learner where they are.
+    @State private var resultsListGeneration = 0
 
     // MARK: - Filter state (difficulty only)
 
@@ -724,7 +731,9 @@ struct SearchView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("searchBrowseTop")
         }
+        .pfScrollToTopOnAppear("searchBrowseTop")
         .background(Color.pfBackground)
         .scrollDismissesKeyboard(.interactively)
         // Extra scrollable space at the bottom so the last row clears
@@ -937,7 +946,15 @@ struct SearchView: View {
                     .padding(.top, PFSpacing.md)
                     .accessibilityLabel("Searching")
                 }
+                // The scroll rule for the results List: each
+                // return and each new query bumps the List
+                // generation (state above) and restarts it at
+                // the top. The handlers sit on the header, whose
+                // identity is stable: on the List itself the
+                // recreation would refire onAppear in a loop.
                 resultsHeader
+                    .onAppear { resultsListGeneration += 1 }
+                    .onChange(of: debouncedQuery) { _, _ in resultsListGeneration += 1 }
                 List {
                     if !matchedChapters.isEmpty {
                         Section(header: Text("Courses (\(matchedChapters.count))")) {
@@ -969,6 +986,7 @@ struct SearchView: View {
                         }
                     }
                 }
+                .id(resultsListGeneration)
                 .listStyle(.insetGrouped)
                 // Keep rows on the card colour in both light and dark mode:
                 // a default dark-mode row would make the navy row text
@@ -1390,6 +1408,10 @@ private struct SearchTypeListView: View {
     /// so the count starts at page 1 on every navigation.
     private static let typeListPageSize = 20
     @State private var visibleCount = 20
+    /// List identity: the scroll rule for Lists. Back from a
+    /// pushed lesson recreates the List at the top instead of
+    /// restoring the old offset. Load more never bumps it.
+    @State private var typeListGeneration = 0
 
     private var entries: [SearchEntry] {
         guard let index = contentService.searchIndex else { return [] }
@@ -1496,6 +1518,7 @@ private struct SearchTypeListView: View {
                         }
                     }
                 }
+                .id(typeListGeneration)
                 .listStyle(.insetGrouped)
                 // Same dark-mode row treatment as the results list above:
                 // rows stay on the card colour so navy text stays visible.
@@ -1504,6 +1527,7 @@ private struct SearchTypeListView: View {
                 .pfTabBarClearance()
             }
         }
+        .onAppear { typeListGeneration += 1 }
         .navigationTitle(type.displayName + "s")
         .sheet(item: $sheetEntry) { entry in
             SearchEntrySheet(entry: entry)

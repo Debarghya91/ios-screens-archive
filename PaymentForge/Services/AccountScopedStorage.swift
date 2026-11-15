@@ -1,5 +1,5 @@
 // AccountScopedStorage.swift
-// PaymentForge iOS - Account-scoped UserDefaults keys.
+// Payments Training Hub iOS - Account-scoped UserDefaults keys.
 //
 // Every account or personal value the app keeps in UserDefaults lives
 // under a key namespaced to the identity that owns it:

@@ -1,5 +1,5 @@
 // LocalNotificationService.swift
-// PaymentForge iOS - General local notification system (v66).
+// Payments Training Hub iOS - General local notification system (v66).
 //
 // Local only. Nothing in this file uses APNs, device tokens, or
 // entitlements, and nothing talks to a server. All requests are

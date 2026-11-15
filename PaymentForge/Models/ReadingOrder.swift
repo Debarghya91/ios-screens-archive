@@ -1,5 +1,5 @@
 // ReadingOrder.swift
-// PaymentForge iOS - THE reading order for book mode: the single map
+// Payments Training Hub iOS - THE reading order for book mode: the single map
 // from internal chapter IDs to the learner-facing book numbers and
 // parts. Every display number in the app (chapter rows, chapter
 // headers, citations, search results, prev/next, progress) comes

@@ -1,5 +1,5 @@
 // ReferralStore.swift
-// PaymentForge iOS - The signed-in user's OWN referral code and
+// Payments Training Hub iOS - The signed-in user's OWN referral code and
 // credit balance, for display and sharing only. APP RULE (decided):
 // the app shows the code with a share affordance and shows the
 // credit balance, and states plainly that referral discount

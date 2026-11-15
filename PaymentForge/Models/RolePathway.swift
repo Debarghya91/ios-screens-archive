@@ -1,5 +1,5 @@
 // RolePathway.swift
-// PaymentForge iOS - Role-based pathway engine: one route per learner
+// Payments Training Hub iOS - Role-based pathway engine: one route per learner
 // role, resolved live from the guided paths and guided sessions, plus
 // the learner's active path selection.
 //

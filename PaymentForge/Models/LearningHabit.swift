@@ -1,5 +1,5 @@
 // LearningHabit.swift
-// PaymentForge iOS - Non-manipulative learning habit loop.
+// Payments Training Hub iOS - Non-manipulative learning habit loop.
 //
 // One small achievable goal per day, a weekly target reused from
 // ProgressStore, one real question per day, a weekly investigation

@@ -1,5 +1,5 @@
 // AnalyticsService.swift
-// PaymentForge iOS - Local, privacy-respecting analytics.
+// Payments Training Hub iOS - Local, privacy-respecting analytics.
 //
 // UNCOMPILED: written on a Linux VM with no Xcode. Statically checked
 // only. Do not present this file as compiled or tested until it has

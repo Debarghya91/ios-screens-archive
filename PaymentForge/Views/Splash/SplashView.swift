@@ -1,7 +1,7 @@
 // SplashView.swift
-// PaymentForge iOS - Launch splash screen.
+// Payments Training Hub iOS - Launch splash screen.
 // Matches the first board's dark navy Home/splash: deep navy
-// gradient, the gold PF monogram, the PaymentForge wordmark and the
+// gradient, the gold PF monogram, the Payments Training Hub wordmark and the
 // "Master Banking and Payments" tagline, with a subtle bank
 // illustration drawn from SF Symbols and shapes only. No raster
 // image, no AI-generated image. Shown briefly on launch, then the

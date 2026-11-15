@@ -1,5 +1,5 @@
 // CertifierService.swift
-// PaymentForge iOS - Certifier digital credentials.
+// Payments Training Hub iOS - Certifier digital credentials.
 // After a learner passes a course Final Assessment, the certificate
 // view asks the issue-certifier-credential edge function to issue a
 // Certifier credential for that certificate. The edge function

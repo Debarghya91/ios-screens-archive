@@ -1,5 +1,5 @@
 // HabitReminderSettingsView.swift
-// PaymentForge iOS - Learning reminder settings for Profile.
+// Payments Training Hub iOS - Learning reminder settings for Profile.
 //
 // Reminders are off by default and need explicit opt-in: turning
 // them on asks the system for notification authorisation, and the

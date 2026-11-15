@@ -1,5 +1,5 @@
 // ProfileView.swift
-// PaymentForge iOS - Profile screen, separate from the Dashboard.
+// Payments Training Hub iOS - Profile screen, separate from the Dashboard.
 // Guests see "Guest" with a Sign in button, and the account-only rows
 // stay behind a sign-in prompt. Signed-in users see their name, email,
 // verification badge, designation, organisation and years of
@@ -56,7 +56,9 @@ struct ProfileView: View {
                     }
                 }
                 .padding(PFSpacing.lg)
+                .id("profileTop")
             }
+            .pfScrollToTopOnAppear("profileTop")
             .background(Color.pfBackground)
             // Extra scrollable space at the bottom so the last row clears
             // the tab bar on every iPhone size, matching My Progress.

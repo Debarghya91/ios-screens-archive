@@ -1,5 +1,5 @@
 // SyncService.swift
-// PaymentForge iOS - Signed-in progress sync with Supabase.
+// Payments Training Hub iOS - Signed-in progress sync with Supabase.
 //
 // WHAT SYNCS (signed-in users only; nothing syncs while signed out,
 // and every entry point is a no-op when Supabase is not configured):

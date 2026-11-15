@@ -1,5 +1,5 @@
 // SharedChapterViews.swift
-// PaymentForge iOS - shared chapter helpers and entry views.
+// Payments Training Hub iOS - shared chapter helpers and entry views.
 // Moved verbatim from HomeView (PFChapterHelper) and CoursesView
 // (EntryRow, EntryDetailView) so every tab uses one definition.
 // Native SwiftUI only, no WebView. Uses the shared DesignSystem.

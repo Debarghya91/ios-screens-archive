@@ -1,5 +1,5 @@
 // RevisionCentreView.swift
-// PaymentForge iOS - Spaced repetition revision centre.
+// Payments Training Hub iOS - Spaced repetition revision centre.
 // White cards on the soft blue-grey background, royal blue primary,
 // gold sparingly, matching the mockup's general language. All concepts
 // are real completed lessons the learner scheduled; due dates and
@@ -58,7 +58,9 @@ struct RevisionCentreView: View {
                 addSection
             }
             .padding(PFSpacing.lg)
+            .id("revisionTop")
         }
+        .pfScrollToTopOnAppear("revisionTop", resetWhen: selectedTab)
         // Copy protection: revision content cannot be selected, a
         // faint identity watermark sits over it, and recording blurs
         // it out. The review and add-lesson sheets sit outside this
@@ -299,7 +301,9 @@ private struct ReviewSheet: View {
                     }
                 }
                 .padding(PFSpacing.lg)
+                .id("reviewSheetTop")
             }
+            .pfScrollToTopOnAppear("reviewSheetTop")
             .background(Color.pfBackground)
             .navigationTitle("Review")
             .navigationBarTitleDisplayMode(.inline)

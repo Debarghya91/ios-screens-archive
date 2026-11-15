@@ -1,5 +1,5 @@
 // AuthErrorCatalog.swift
-// PaymentForge iOS - Shared error catalog for the email signup
+// Payments Training Hub iOS - Shared error catalog for the email signup
 // flow, the website parity contract, case IDs, and password reset.
 // Signup is email plus password plus terms acceptance, with
 // Supabase email confirmation as the only verification: no mobile

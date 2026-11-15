@@ -1,5 +1,5 @@
 // ExceptionInvestigationLabView.swift
-// PaymentForge iOS - Payment Exception Investigation Lab.
+// Payments Training Hub iOS - Payment Exception Investigation Lab.
 //
 // The learner investigates payment incidents step by step: reading
 // the narrative, opening evidence as it is revealed, and choosing
@@ -76,7 +76,9 @@ struct ExceptionInvestigationLabView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("exceptionLabTop")
         }
+        .pfScrollToTopOnAppear("exceptionLabTop")
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle("Investigation Lab")

@@ -1,5 +1,5 @@
 // UserProfile.swift
-// PaymentForge iOS - Account and preference models for Supabase.
+// Payments Training Hub iOS - Account and preference models for Supabase.
 // These mirror the tables in supabase/migrations/0001_init.sql exactly.
 // No em dashes in any user-facing text.
 

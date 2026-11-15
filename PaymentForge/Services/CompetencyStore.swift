@@ -1,5 +1,5 @@
 // CompetencyStore.swift
-// PaymentForge iOS - Competency tracking from real assessments only.
+// Payments Training Hub iOS - Competency tracking from real assessments only.
 // Stored locally with UserDefaults, namespaced per account through
 // AccountScopedStorage.
 // A dimension has no score until an assessment is taken for it: scores

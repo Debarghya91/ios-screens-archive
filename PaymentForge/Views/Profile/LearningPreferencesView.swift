@@ -1,5 +1,5 @@
 // LearningPreferencesView.swift
-// PaymentForge iOS - Learning preferences: experience level, areas of
+// Payments Training Hub iOS - Learning preferences: experience level, areas of
 // interest, weekly target and audio preference.
 // Guests keep these on the device in UserDefaults. Signed-in users
 // also sync them to user_preferences in Supabase through SyncService.

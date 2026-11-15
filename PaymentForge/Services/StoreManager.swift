@@ -1,5 +1,5 @@
 // StoreManager.swift
-// PaymentForge iOS - Apple In-App Purchase (StoreKit 2) for the
+// Payments Training Hub iOS - Apple In-App Purchase (StoreKit 2) for the
 // catalogue products: the chapter bundles plus Payment Situations.
 // Every product is a non-consumable, one-time purchase. Product IDs
 // and catalogue data live in ProductCatalogue (Models); StoreKit is

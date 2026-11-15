@@ -1,5 +1,5 @@
 // EmailSignupView.swift
-// PaymentForge iOS - Email signup, the same flow as the website:
+// Payments Training Hub iOS - Email signup, the same flow as the website:
 // credentials (email and password), terms acceptance, then email
 // confirmation. Supabase email confirmation is the only
 // verification: no mobile number is collected and no SMS code is

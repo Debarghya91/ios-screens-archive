@@ -1,5 +1,5 @@
 // AdminContentView.swift
-// PaymentForge iOS - Content management admin tool.
+// Payments Training Hub iOS - Content management admin tool.
 //
 // An internal diagnostic tool, not a learner feature and not a
 // central content management system: its only entry point is the
@@ -97,7 +97,9 @@ struct AdminContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(PFSpacing.lg)
+            .id("adminTop")
         }
+        .pfScrollToTopOnAppear("adminTop")
         .background(Color.pfBackground)
         .safeAreaInset(edge: .bottom) {
             Color.clear.frame(height: PFSpacing.xl)
@@ -221,7 +223,9 @@ struct AdminContentTypeView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("adminTypeTop")
         }
+        .pfScrollToTopOnAppear("adminTypeTop")
         .background(Color.pfBackground)
         .safeAreaInset(edge: .bottom) {
             Color.clear.frame(height: PFSpacing.xl)

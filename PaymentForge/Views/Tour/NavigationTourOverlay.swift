@@ -1,5 +1,5 @@
 // NavigationTourOverlay.swift
-// PaymentForge iOS - Interactive navigation tour overlay.
+// Payments Training Hub iOS - Interactive navigation tour overlay.
 // A guided tour of the five tabs and the key drawer rows: a dimmed
 // interface with a spotlight cutout and a gold ring around the
 // highlighted control, plus a navy tooltip card. The tour never

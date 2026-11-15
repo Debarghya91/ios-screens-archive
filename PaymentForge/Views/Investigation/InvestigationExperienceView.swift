@@ -382,6 +382,11 @@ struct InvestigationExperienceView: View {
                     proxy.scrollTo(journeyTopID, anchor: .top)
                 }
             }
+            .onAppear {
+                // The scroll rule: Back from a pushed view lands
+                // at the top, never at the restored offset.
+                proxy.scrollTo(journeyTopID, anchor: .top)
+            }
             .pfProtectedContent()
             .background(Color.pfBackground)
             .pfTabBarClearance()

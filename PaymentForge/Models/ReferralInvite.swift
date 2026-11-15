@@ -1,10 +1,10 @@
 // ReferralInvite.swift
-// PaymentForge iOS - Referral invitations, deep links and the weekly
+// Payments Training Hub iOS - Referral invitations, deep links and the weekly
 // free case selector.
 //
 // Local only. Nothing in this file talks to a server, stores a
 // referral on a backend, or tracks who opened a link. There is no
-// referral reward, bonus, discount or credit in PaymentForge, and
+// referral reward, bonus, discount or credit in Payments Training Hub, and
 // no invite text here promises one. An invite is plain text plus a
 // link to the free experience: the website, or the app deep link
 // for a device that already has the app.

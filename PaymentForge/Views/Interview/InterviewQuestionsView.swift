@@ -41,6 +41,7 @@ struct InterviewQuestionsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: PFSpacing.lg) {
                     searchField
+                        .id("interviewTop")
 
                     if bank == nil {
                         unavailableSection
@@ -56,6 +57,17 @@ struct InterviewQuestionsView: View {
             // Extra scrollable space at the bottom so the last card clears
             // the tab bar on every iPhone size.
             .pfTabBarClearance()
+            .onAppear {
+                // The scroll rule: Back lands at the top, never
+                // at the restored offset.
+                proxy.scrollTo("interviewTop", anchor: .top)
+            }
+            .onChange(of: isSearching) { _, _ in
+                // Entering or leaving search swaps the list
+                // content in place: the new content starts at
+                // the top.
+                proxy.scrollTo("interviewTop", anchor: .top)
+            }
         }
         .navigationTitle("Interview Questions")
         .navigationBarTitleDisplayMode(.large)

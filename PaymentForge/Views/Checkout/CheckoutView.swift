@@ -1,5 +1,5 @@
 // CheckoutView.swift
-// PaymentForge iOS - Purchases and Entitlements.
+// Payments Training Hub iOS - Purchases and Entitlements.
 // My Purchases: the catalogue products, transaction history,
 // restore and upgrade. In-App Purchase only.
 // No account or sign-in is needed to buy or restore: StoreKit
@@ -72,7 +72,9 @@ struct CheckoutView: View {
                         footerNote
                     }
                     .padding(PFSpacing.lg)
+                    .id("checkoutTop")
                 }
+                .pfScrollToTopOnAppear("checkoutTop")
                 .background(Color.pfBackground)
             }
             .background(Color.pfBackground)
@@ -797,7 +799,7 @@ struct CheckoutView: View {
     // MARK: - Footer
 
     private var footerNote: some View {
-        Text("No account is needed. Purchases are tied to your Apple ID. When you are signed in, your progress syncs across your devices. If you have questions, email debarghya.092008@gmail.com.")
+        Text("No account is needed. Purchases are tied to your Apple ID. When you are signed in, your progress syncs across your devices. If you have questions, email support@paymentstraininghub.com.")
             .font(.pfBody)
             .foregroundColor(.pfSecondaryText)
             .frame(maxWidth: .infinity, alignment: .leading)

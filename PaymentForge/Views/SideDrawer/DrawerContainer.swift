@@ -1,5 +1,5 @@
 // DrawerContainer.swift
-// PaymentForge iOS - The side drawer container.
+// Payments Training Hub iOS - The side drawer container.
 // Slides the drawer in from the left over the main content and slides it
 // back out to close, with a dimmed background behind it. Tap the dimmed
 // background or swipe left on the drawer to close it. Swipe right from

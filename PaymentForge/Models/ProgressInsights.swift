@@ -1,5 +1,5 @@
 // ProgressInsights.swift
-// PaymentForge iOS - Pure progress computations for My Progress.
+// Payments Training Hub iOS - Pure progress computations for My Progress.
 //
 // Every function here is pure: it takes recorded values in and
 // returns a summary, with no store access, no persistence, no

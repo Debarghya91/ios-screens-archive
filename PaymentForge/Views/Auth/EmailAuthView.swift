@@ -1,5 +1,5 @@
 // EmailAuthView.swift
-// PaymentForge iOS - Email sign-in, two ways: a 6-digit code sent
+// Payments Training Hub iOS - Email sign-in, two ways: a 6-digit code sent
 // by Supabase Auth, or email and password. The code path has two
 // steps: enter the email, then enter the code. A magic link is also
 // available from AuthService, but the code is the default because

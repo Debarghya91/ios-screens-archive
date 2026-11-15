@@ -1,5 +1,5 @@
 // NotesView.swift
-// PaymentForge iOS - Learner notes, one flat list.
+// Payments Training Hub iOS - Learner notes, one flat list.
 // White cards on the soft blue-grey background, royal blue primary,
 // matching the mockup's general language. Notes are the learner's own
 // text about real lessons, stored locally. Search covers note text
@@ -36,7 +36,9 @@ struct NotesView: View {
                 notesList
             }
             .padding(PFSpacing.lg)
+            .id("notesTop")
         }
+        .pfScrollToTopOnAppear("notesTop")
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle("My Notes")

@@ -1,5 +1,5 @@
 // OnboardingFlowView.swift
-// PaymentForge iOS - Optional first-time onboarding, in seven short
+// Payments Training Hub iOS - Optional first-time onboarding, in seven short
 // steps: welcome, role, knowledge level, objective, intensity,
 // an optional diagnostic check, and a summary with a recommended
 // route. The flow saves the profile itself (or marks onboarding
@@ -137,7 +137,9 @@ struct OnboardingFlowView: View {
                     }
                 }
                 .padding(PFSpacing.lg)
+                .id("onboardingTop")
             }
+            .pfScrollToTopOnAppear("onboardingTop", resetWhen: step.rawValue)
             .safeAreaInset(edge: .bottom) {
                 Color.clear.frame(height: PFSpacing.xl)
             }

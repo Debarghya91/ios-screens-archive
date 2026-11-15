@@ -1,5 +1,5 @@
 // HomeView.swift
-// PaymentForge iOS - Home tab, personalised to the mockup.
+// Payments Training Hub iOS - Home tab, personalised to the mockup.
 // Native SwiftUI only, no WebView. Uses the shared DesignSystem.
 // No em dashes in any user-facing text.
 //
@@ -114,7 +114,9 @@ struct HomeView: View {
                     }
                 }
                 .padding(20)
+                .id("homeTop")
             }
+            .pfScrollToTopOnAppear("homeTop")
             .background(Color.pfBackground)
             // Extra scrollable space at the bottom so the last card clears
             // the tab bar on every iPhone size.
@@ -2170,7 +2172,9 @@ struct GuidedPathDetailView: View {
                 }
             }
             .padding(PFSpacing.lg)
+            .id("guidedPathTop")
         }
+        .pfScrollToTopOnAppear("guidedPathTop")
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .onChange(of: lessons) { _, _ in

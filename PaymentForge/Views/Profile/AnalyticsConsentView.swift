@@ -1,5 +1,5 @@
 // AnalyticsConsentView.swift
-// PaymentForge iOS - Analytics opt-in consent.
+// Payments Training Hub iOS - Analytics opt-in consent.
 //
 // UNCOMPILED: written on a Linux VM with no Xcode. Statically checked
 // only. Do not present this view as compiled or tested until it has

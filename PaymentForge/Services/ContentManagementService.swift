@@ -1,5 +1,5 @@
 // ContentManagementService.swift
-// PaymentForge iOS - Local content-version registry.
+// Payments Training Hub iOS - Local content-version registry.
 //
 // The website remains the operational source of truth: ContentService
 // keeps loading the live search index and situations data, and this

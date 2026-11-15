@@ -1,5 +1,5 @@
 // PathDetailView.swift
-// PaymentForge iOS - Guided learning path detail.
+// Payments Training Hub iOS - Guided learning path detail.
 // Layout follows the mockup Courses screen: icon tile left, title,
 // two-line description, "Level • N lessons", progress bar with % at
 // the right, bookmark top right. All numbers are real: lesson counts
@@ -136,7 +136,9 @@ struct PathDetailView: View {
                 certificateSection
             }
             .padding(PFSpacing.lg)
+            .id("pathTop")
         }
+        .pfScrollToTopOnAppear("pathTop")
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle(path.title)
