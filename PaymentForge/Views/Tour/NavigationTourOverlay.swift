@@ -1405,14 +1405,12 @@ struct NavigationTourOverlay: View {
     private var startCard: some View {
         VStack(spacing: PFSpacing.lg) {
             VStack(spacing: PFSpacing.sm) {
-                Text("PF")
+                Text("Payments Training Hub")
                     .font(.system(.title2, design: .default).weight(.bold))
-                    .foregroundColor(.pfNavy)
-                    .frame(width: 64, height: 64)
-                    .background(Color.pfGold)
-                    .clipShape(RoundedRectangle(cornerRadius: PFSpacing.smallRadius))
+                    .foregroundColor(.pfGold)
+                    .multilineTextAlignment(.center)
                     .accessibilityHidden(true)
-                Text("Welcome to Payments Training Hub!")
+                Text("Welcome!")
                     .font(.pfBody.weight(.semibold))
                     .foregroundColor(.white)
                     .multilineTextAlignment(.center)

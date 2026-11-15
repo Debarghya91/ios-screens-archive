@@ -264,26 +264,17 @@ struct SideDrawerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Deep navy gradient header with the brand mark:
-            // a gold PF monogram tile, the white brand name and the
-            // tagline. The panel ignores the safe area so it runs full
+            // Deep navy gradient header with the brand mark: the
+            // white brand name and the tagline. The panel ignores the safe area so it runs full
             // height, so the header is pushed below the status bar with
             // the real device inset instead of a fixed value.
-            HStack(spacing: PFSpacing.md) {
-                Text("PF")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Payments Training Hub")
                     .font(.pfSectionTitle.weight(.bold))
-                    .foregroundColor(.pfNavy)
-                    .frame(width: 48, height: 48)
-                    .background(Color.pfGold)
-                    .clipShape(RoundedRectangle(cornerRadius: PFSpacing.smallRadius))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Payments Training Hub")
-                        .font(.pfSectionTitle.weight(.bold))
-                        .foregroundColor(.white)
-                    Text("Master the world of payments")
-                        .font(.pfCaption.weight(.regular))
-                        .foregroundColor(.white.opacity(0.75))
-                }
+                    .foregroundColor(.white)
+                Text("Master the world of payments")
+                    .font(.pfCaption.weight(.regular))
+                    .foregroundColor(.white.opacity(0.75))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 20)

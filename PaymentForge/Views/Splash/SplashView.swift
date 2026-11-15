@@ -1,7 +1,7 @@
 // SplashView.swift
 // Payments Training Hub iOS - Launch splash screen.
 // Matches the first board's dark navy Home/splash: deep navy
-// gradient, the gold PF monogram, the Payments Training Hub wordmark and the
+// gradient, the gold Payments Training Hub wordmark and the
 // "Master Banking and Payments" tagline, with a subtle bank
 // illustration drawn from SF Symbols and shapes only. No raster
 // image, no AI-generated image. Shown briefly on launch, then the
@@ -22,24 +22,22 @@ struct SplashView: View {
             VStack(spacing: PFSpacing.xl) {
                 Spacer()
 
-                // Gold PF monogram tile, the established app identity.
-                Text("PF")
-                    .font(.system(.largeTitle, design: .default).weight(.bold))
+                // Gold wordmark, the central brand mark.
+                Text("Payments Training Hub")
+                    .font(.system(.title, design: .default).weight(.bold))
                     .foregroundColor(.pfNavy)
-                    .frame(width: 96, height: 96)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 20)
                     .background(Color.pfGold)
                     .clipShape(RoundedRectangle(cornerRadius: 24))
                     .shadow(color: Color.black.opacity(0.35), radius: 16, x: 0, y: 8)
                     .accessibilityLabel("Payments Training Hub")
 
-                VStack(spacing: PFSpacing.sm) {
-                    Text("Payments Training Hub")
-                        .font(.system(.largeTitle, design: .default).weight(.bold))
-                        .foregroundColor(.white)
-                    Text("Master Banking and Payments")
-                        .font(.pfBody)
-                        .foregroundColor(.white.opacity(0.85))
-                }
+                Text("Master Banking and Payments")
+                    .font(.pfBody)
+                    .foregroundColor(.white.opacity(0.85))
 
                 // Subtle bank illustration: SF Symbols in translucent
                 // circles, a bank, a card and a transfer arrow.

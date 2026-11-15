@@ -121,18 +121,10 @@ struct WelcomeView: View {
     // MARK: - Brand
 
     private var brandSection: some View {
-        HStack(spacing: PFSpacing.md) {
-            Text("PF")
-                .font(.pfSectionTitle.weight(.bold))
-                .foregroundColor(.pfNavy)
-                .frame(width: 48, height: 48)
-                .background(Color.pfGold)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-            Text("Payments Training Hub")
-                .font(.pfSectionTitle.weight(.bold))
-                .foregroundColor(.white)
-        }
-        .padding(.top, PFSpacing.xxl)
+        Text("Payments Training Hub")
+            .font(.pfSectionTitle.weight(.bold))
+            .foregroundColor(.white)
+            .padding(.top, PFSpacing.xxl)
     }
 
     // MARK: - Heading
