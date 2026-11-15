@@ -7,6 +7,12 @@
 // deterministically the same way DailyChallengeView does it. A
 // situation with no takeaway is not eligible for Practice Mode and is
 // excluded, never faked.
+// Gating (v70): the eligible pool and the gated decision builder
+// below are the single gate for Practice Mode. Entitled learners
+// keep the full list; everyone else practises only the free
+// samples plus this week's free case, and no distractor ever
+// comes from a locked situation. The view gates itself through
+// these functions, so every entry respects the same rule.
 // No em dashes in any user-facing text.
 
 import Foundation
@@ -66,11 +72,112 @@ struct PracticeAttempt: Identifiable, Codable, Hashable {
 /// Builds practice decisions from real situations only.
 enum PracticeModeBuilder {
 
+    // MARK: - Gating (v70)
+
+    /// The situations a learner may practise, given entitlement.
+    /// Entitled learners (the situations product owned, the
+    /// Integrated Course owned, or a server entitlement, all
+    /// folded into StoreManager.isSituationsUnlocked by the
+    /// caller) keep the full list, unchanged and in order.
+    /// Everyone else keeps only the free samples plus this
+    /// week's free case. A situation counts as a free sample
+    /// when its isFreeSample flag is set or its id is in the
+    /// free sample list, so a situation built by either
+    /// constructor is recognised either way. The weekly case
+    /// id is supplied by the caller, picked with
+    /// WeeklyFreeCaseSelector, the same selector the weekly
+    /// free case screen uses; nil means no weekly case is
+    /// known, and only the free samples remain. Nothing is
+    /// ever added back: a weekly id that is not in the list
+    /// contributes no situation.
+    static func eligiblePool(
+        from allSituations: [Situation],
+        isSituationsUnlocked: Bool,
+        weeklyCaseID: String?,
+        freeSampleIDs: Set<String> = Set(ContentService.freeSampleIDs)
+    ) -> [Situation] {
+        guard !isSituationsUnlocked else { return allSituations }
+        return allSituations.filter { situation in
+            if situation.isFreeSample || freeSampleIDs.contains(situation.id) { return true }
+            guard let weeklyCaseID else { return false }
+            return situation.id == weeklyCaseID
+        }
+    }
+
+    /// True when Practice Mode must not show this situation's
+    /// content to this learner: the v69 hard gate predicate,
+    /// with the weekly case identified by id instead of by the
+    /// weekly path flag, because Practice Mode is reached from
+    /// several entries and none of them passes that flag.
+    /// Locked means not a free sample, not this week's free
+    /// case, and Payment Situations not unlocked.
+    static func isLocked(
+        _ situation: Situation,
+        isSituationsUnlocked: Bool,
+        weeklyCaseID: String?,
+        freeSampleIDs: Set<String> = Set(ContentService.freeSampleIDs)
+    ) -> Bool {
+        guard !isSituationsUnlocked else { return false }
+        if situation.isFreeSample || freeSampleIDs.contains(situation.id) { return false }
+        if let weeklyCaseID, situation.id == weeklyCaseID { return false }
+        return true
+    }
+
     /// True when a situation can be practised: it has a non-empty
     /// takeaway and at least three other real situations have a
     /// distinct takeaway to use as distractors.
     static func isEligible(_ situation: Situation, in allSituations: [Situation]) -> Bool {
         decision(for: situation, in: allSituations) != nil
+    }
+
+    /// True when a situation can be practised by this learner:
+    /// it is in the eligible pool and a decision can be built
+    /// from that pool alone. Entitled learners get the same
+    /// answer as the ungated check above, because their pool
+    /// is the full list.
+    static func isEligible(
+        _ situation: Situation,
+        in allSituations: [Situation],
+        isSituationsUnlocked: Bool,
+        weeklyCaseID: String?,
+        freeSampleIDs: Set<String> = Set(ContentService.freeSampleIDs)
+    ) -> Bool {
+        decision(
+            for: situation,
+            in: allSituations,
+            isSituationsUnlocked: isSituationsUnlocked,
+            weeklyCaseID: weeklyCaseID,
+            freeSampleIDs: freeSampleIDs
+        ) != nil
+    }
+
+    /// Build the decision for one situation from the eligible
+    /// pool only, or nil when the situation is locked for this
+    /// learner or no decision can be built from the pool.
+    /// Entitled learners get the same decision the ungated
+    /// builder returns, because the pool is the full list.
+    /// Non-entitled learners get a decision whose correct
+    /// option and every distractor come only from free sample
+    /// and weekly case takeaways. Never falls back to locked
+    /// content: a pool too small to build four distinct
+    /// options yields nil, and the view shows its locked or
+    /// not eligible state instead.
+    static func decision(
+        for situation: Situation,
+        in allSituations: [Situation],
+        isSituationsUnlocked: Bool,
+        weeklyCaseID: String?,
+        freeSampleIDs: Set<String> = Set(ContentService.freeSampleIDs),
+        seedSalt: UInt64 = 0
+    ) -> PracticeDecision? {
+        let pool = eligiblePool(
+            from: allSituations,
+            isSituationsUnlocked: isSituationsUnlocked,
+            weeklyCaseID: weeklyCaseID,
+            freeSampleIDs: freeSampleIDs
+        )
+        guard let focal = pool.first(where: { $0.id == situation.id }) else { return nil }
+        return decision(for: focal, in: pool, seedSalt: seedSalt)
     }
 
     /// Build the decision for one situation, or nil when it is not
@@ -100,6 +207,24 @@ enum PracticeModeBuilder {
             guard text.count >= 10 else { continue }
             guard !pool.contains(where: { $0.text == text }) else { continue }
             pool.append((text, false))
+        }
+        // Small-pool fallback: with only six or seven situations
+        // (the free pool for a non-entitled learner), the offsets
+        // above visit only a few distinct neighbours. With six,
+        // every offset lands on one of two neighbours, so the
+        // decision would always fail. Scan the list in order for
+        // the remaining distinct distractors. This runs only
+        // when the offsets left the pool short, so the full
+        // list keeps exactly the distractors it had before.
+        if pool.count < 4 {
+            for other in allSituations {
+                guard pool.count < 4 else { break }
+                guard other.id != situation.id else { continue }
+                let text = firstSentence(of: other.takeaway)
+                guard text.count >= 10 else { continue }
+                guard !pool.contains(where: { $0.text == text }) else { continue }
+                pool.append((text, false))
+            }
         }
         guard pool.count == 4 else { return nil }
 

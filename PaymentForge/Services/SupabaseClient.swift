@@ -122,8 +122,7 @@ final class SupabaseClient {
     /// attempts, exponential backoff (0.5s, then 1s). Only transient
     /// failures are retried: transport errors and HTTP 429 / 5xx.
     /// A 4xx response is returned immediately for the caller to
-    /// report, never retried. A failure after the last attempt is
-    /// recorded in DiagnosticsService (local only, no personal data).
+    /// report, never retried.
     private func dataWithRetry(for urlRequest: URLRequest) async throws -> (Data, URLResponse) {
         var lastError: Error?
         for attempt in 0..<3 {
@@ -142,11 +141,9 @@ final class SupabaseClient {
                     try? await Task.sleep(nanoseconds: UInt64(500_000_000 * (1 << attempt)))
                     continue
                 }
-                DiagnosticsService.shared.recordNetworkFailure(operation: "supabase.request", detail: "failed after 3 attempts")
                 throw SupabaseError.network(underlying: error)
             }
         }
-        DiagnosticsService.shared.recordNetworkFailure(operation: "supabase.request", detail: "failed after 3 attempts")
         throw SupabaseError.network(underlying: lastError ?? URLError(.unknown))
     }
 

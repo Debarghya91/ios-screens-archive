@@ -84,6 +84,7 @@ struct PathDetailView: View {
     @EnvironmentObject private var contentService: ContentService
     @EnvironmentObject private var progressStore: ProgressStore
     @ObservedObject private var competencyStore = CompetencyStore.shared
+    @ObservedObject private var activePathStore = ActivePathStore.shared
     let path: LearningPath
 
     private var lessons: [SearchEntry] {
@@ -103,23 +104,41 @@ struct PathDetailView: View {
         path.isComplete(in: progressStore, service: contentService)
     }
 
+    private var isActivePath: Bool {
+        activePathStore.activePathID == path.id
+    }
+
+    private var chapterBlocks: [(number: Int, title: String)] {
+        path.chapterTitles(in: contentService)
+    }
+
+    private var labs: [SearchEntry] {
+        path.labs(in: contentService)
+    }
+
+    private var estimatedWeeks: Int? {
+        LearningPath.estimatedWeeks(totalLessons: lessons.count, weeklyTarget: progressStore.weeklyGoal)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PFSpacing.xl) {
                 headerSection
+                activePathSection
+                entryExpectationsSection
                 objectivesSection
                 lessonsSection
+                labsSection
                 checkpointsSection
                 situationsSection
                 capstoneSection
+                completionCriteriaSection
                 certificateSection
             }
             .padding(PFSpacing.lg)
         }
         .background(Color.pfBackground)
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: PFSpacing.xl)
-        }
+        .pfTabBarClearance()
         .navigationTitle(path.title)
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -137,10 +156,7 @@ struct PathDetailView: View {
                         PFPill(text: "Complete", background: Color.pfSuccess.opacity(0.12), foreground: .pfSuccess)
                     }
                 }
-                Text(path.description)
-                    .font(.pfBody)
-                    .foregroundColor(.pfSecondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                PFBodyText(text: path.description, textColor: .pfSecondaryText)
                 HStack(spacing: PFSpacing.sm) {
                     PFProgressBar(progress: progress)
                     Text("\(Int((progress * 100).rounded()))%")
@@ -151,6 +167,60 @@ struct PathDetailView: View {
                 Text("\(completedCount) of \(lessons.count) lessons complete")
                     .font(.pfCaptionBold)
                     .foregroundColor(.pfRoyal)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    // MARK: - Active path
+
+    private var activePathSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "Your active path")
+            PFCard {
+                VStack(alignment: .leading, spacing: PFSpacing.md) {
+                    if isActivePath {
+                        Label("This is your active path.", systemImage: "checkmark.circle.fill")
+                            .font(.pfBody.weight(.semibold))
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityLabel("This is your active path.")
+                        Text("Switching paths never loses completed-lesson progress. Progress is kept per lesson, so everything you have completed stays complete.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        PFSecondaryButton(title: "Remove as my active path") {
+                            activePathStore.select(nil)
+                        }
+                        .accessibilityLabel("Remove \(path.title) as my active path")
+                    } else {
+                        Text("Set this path as your active path to pick up where you left off.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Switching paths never loses completed-lesson progress. Progress is kept per lesson, so everything you have completed stays complete.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        PFPrimaryButton(title: "Set as my active path") {
+                            activePathStore.select(path.id)
+                        }
+                        .accessibilityLabel("Set \(path.title) as my active path")
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Entry expectations
+
+    private var entryExpectationsSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "Before you start")
+            PFCard {
+                Text(path.entryExpectations)
+                    .font(.pfBody)
+                    .foregroundColor(.pfNavy)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -191,12 +261,22 @@ struct PathDetailView: View {
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
             } else {
-                ForEach(path.chapterTitles(in: contentService), id: \.number) { chapter in
-                    Text("Chapter \(chapter.number): \(chapter.title)")
-                        .font(.pfCaptionBold)
-                        .foregroundColor(.pfRoyal)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, PFSpacing.sm)
+                ForEach(Array(chapterBlocks.enumerated()), id: \.element.number) { (index, chapter) in
+                    // Book numbers only; a held-out chapter has no
+                    // book number, so the chapter title stands in.
+                    let chapterLabel = PFBookModeReadingOrder.bookNumber(forInternalNumber: chapter.number)
+                        .map { "Chapter \($0)" } ?? chapter.title
+                    VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                        Text("Step \(index + 1) of \(chapterBlocks.count): \(chapter.title)")
+                            .font(.pfCaptionBold)
+                            .foregroundColor(.pfRoyal)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("\(chapterLabel) in the \(path.title) sequence, step \(index + 1) of \(chapterBlocks.count) in this path.")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, PFSpacing.sm)
                     let chapterLessons = lessons.filter {
                         PFChapterHelper.chapterNumber(from: $0.id) == chapter.number
                     }
@@ -206,6 +286,31 @@ struct PathDetailView: View {
                         }
                         .buttonStyle(PFCardButtonStyle())
                     }
+                }
+            }
+        }
+    }
+
+    // MARK: - Simulator exercises
+
+    private var labsSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "Simulator exercises")
+            if contentService.isLoadingIndex && labs.isEmpty {
+                ProgressView("Loading exercises...")
+            } else if labs.isEmpty {
+                PFCard {
+                    Text("No simulator exercises are listed for this path in the course catalogue.")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                ForEach(labs) { lab in
+                    NavigationLink(destination: EntryDetailView(entry: lab)) {
+                        EntryRow(entry: lab)
+                    }
+                    .buttonStyle(PFCardButtonStyle())
                 }
             }
         }
@@ -231,6 +336,10 @@ struct PathDetailView: View {
                             .font(.pfCaptionBold)
                             .foregroundColor(.pfSecondaryText)
                     }
+                    Text("Checkpoints are optional practice. Completing this path does not require them.")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                     NavigationLink(destination: AssessmentView(path: path)) {
                         Text("Take the checkpoint assessment")
                             .font(.pfBody.weight(.semibold))
@@ -307,6 +416,28 @@ struct PathDetailView: View {
         }
     }
 
+    // MARK: - Completion criteria
+
+    private var completionCriteriaSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "How to complete this path")
+            PFCard {
+                VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                    Text(path.completionCriteria)
+                        .font(.pfBody)
+                        .foregroundColor(.pfNavy)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let weeks = estimatedWeeks {
+                        Text("At your weekly goal of \(progressStore.weeklyGoal) \(progressStore.weeklyGoal == 1 ? "lesson" : "lessons") a week, the \(lessons.count) lessons in this path take \(weeks) \(weeks == 1 ? "week" : "weeks").")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Certificate
 
     private var certificateSection: some View {
@@ -372,7 +503,7 @@ struct SituationRow: View {
                         PFPill(
                             text: situation.level.displayName,
                             background: Color.pfGoldSoft,
-                            foreground: Color(red: 0.55, green: 0.44, blue: 0.08)
+                            foreground: Color.pfGoldText
                         )
                     }
                 }

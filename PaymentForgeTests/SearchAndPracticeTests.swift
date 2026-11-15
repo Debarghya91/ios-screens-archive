@@ -4,6 +4,21 @@
 // typo tolerance) and PracticeStore attempt recording (history is
 // kept, accuracy is nil before any attempt, never 0 as a fake
 // score). No network: all entries are fixtures built in this file.
+//
+// UNEXECUTED: written on a Linux VM with no Xcode. These tests were
+// never compiled or run. Statically checked only.
+//
+// Phase 1 reconciliation (12 Nov 2026): PracticeStore attempts are
+// now stored under the account-namespaced key
+// pf.account.<namespace>.pf.practiceAttempts.v1. The old tests
+// removed the raw legacy key "pf.practiceAttempts.v1", which no
+// longer clears stored attempts, so they could leak attempts across
+// runs. Both practice tests now clear through
+// AccountScopedStorage.currentKey, and also remove the legacy raw
+// key so a leftover legacy value cannot be adopted back in by the
+// store's load path. SearchService recent-search tests already go
+// through public APIs that namespace internally, so they are
+// unchanged.
 
 import XCTest
 @testable import PaymentForge
@@ -111,9 +126,17 @@ final class SearchAndPracticeTests: XCTestCase {
 
     // MARK: - PracticeStore
 
+    /// Clear stored practice attempts for the current namespace, and
+    /// any legacy un-namespaced value that load would adopt back in.
+    private func clearPracticeStorage() {
+        AccountScopedStorage.setCurrentNamespace(nil)
+        UserDefaults.standard.removeObject(forKey: AccountScopedStorage.currentKey("pf.practiceAttempts.v1"))
+        UserDefaults.standard.removeObject(forKey: "pf.practiceAttempts.v1")
+    }
+
     @MainActor
     func testPracticeAttemptRecording() {
-        UserDefaults.standard.removeObject(forKey: "pf.practiceAttempts.v1")
+        clearPracticeStorage()
         let store = PracticeStore()
         XCTAssertEqual(store.totalAttempts, 0)
         XCTAssertNil(store.accuracy, "No attempts yet: accuracy is nil, never a fake 0.")
@@ -134,13 +157,25 @@ final class SearchAndPracticeTests: XCTestCase {
 
     @MainActor
     func testPracticeAttemptsPersistAcrossInstances() {
-        UserDefaults.standard.removeObject(forKey: "pf.practiceAttempts.v1")
+        clearPracticeStorage()
         let first = PracticeStore()
         first.recordAttempt(situationID: "SCN-26", chosenOptionIndex: 1, isCorrect: true)
         let second = PracticeStore()
         XCTAssertEqual(second.totalAttempts, 1)
         XCTAssertEqual(second.lastAttempt(for: "SCN-26")?.chosenOptionIndex, 1)
-        UserDefaults.standard.removeObject(forKey: "pf.practiceAttempts.v1")
+        clearPracticeStorage()
+    }
+
+    @MainActor
+    func testPracticeAttemptsAreStoredUnderNamespacedKey() {
+        clearPracticeStorage()
+        let store = PracticeStore()
+        store.recordAttempt(situationID: "ABH-01", chosenOptionIndex: 0, isCorrect: true)
+        let namespacedKey = AccountScopedStorage.currentKey("pf.practiceAttempts.v1")
+        XCTAssertNotNil(UserDefaults.standard.data(forKey: namespacedKey), "Attempts must persist under the namespaced key.")
+        XCTAssertNil(UserDefaults.standard.object(forKey: "pf.practiceAttempts.v1"), "Attempts must never be written to the raw legacy key.")
+        XCTAssertTrue(namespacedKey.hasPrefix("pf.account.guest."), "A guest test runs in the guest namespace.")
+        clearPracticeStorage()
     }
 
     // MARK: - ContentService cache helpers

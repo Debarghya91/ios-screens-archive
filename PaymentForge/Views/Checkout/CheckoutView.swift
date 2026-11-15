@@ -1,28 +1,36 @@
 // CheckoutView.swift
 // PaymentForge iOS - Purchases and Entitlements.
-// Two tabs: My Purchases (the 12 course products, transaction
-// history, restore, upgrade) and Payment Claims (the UPI claim flow).
+// My Purchases: the catalogue products, transaction history,
+// restore and upgrade. In-App Purchase only.
 // No account or sign-in is needed to buy or restore: StoreKit
 // purchases are tied to the Apple ID, so guests can buy and restore.
-// When the user is signed in, the coordinator associates the
-// entitlement with the account for cross-device sync, but sign-in
-// never blocks a purchase or a restore.
-// Payment methods that work: Apple In-App Purchase, and UPI by claim.
-// Card, Net banking and Wallet are NOT available in this version and
-// are shown disabled, never as working options.
-// UPI claims are PENDING until verified. Submitting a UTR never
-// unlocks premium content. Only a verified payment grants access.
+// When the user is signed in, a verified purchase is also recorded
+// on the server for cross-device sync, but sign-in never blocks a
+// purchase or a restore.
+// Payment method: Apple In-App Purchase only. Card, Net banking
+// and Wallet are NOT available in this version and are shown
+// disabled, never as working options.
 // No link to any external website payment page.
 // Adaptive layout: flexible stacks, no fixed widths, safe on the small
 // iPhone SE through to a Pro Max, in portrait and landscape.
 //
-// My Purchases lists all 12 products from PaymentConfig (the 11
-// chapter bundles plus Payment Situations), each buyable on its own:
-// a bundle unlocks only its own chapters, the Integrated Course
-// unlocks everything, and Situations unlocks the 500 situations
-// (or the Integrated Course does). One-time purchases, no tiers,
-// no subscription. Prices come from the App Store product when loaded,
-// otherwise from PaymentConfig.
+// My Purchases lists all catalogue products from ProductCatalogue
+// (the chapter bundles plus Payment Situations), each buyable on its
+// own: a bundle unlocks only its own chapters, the Integrated Course
+// unlocks all chapter products and includes all Payment Situations,
+// and Payment Situations is also buyable on its own. One-time
+// purchases, no tiers,
+// no subscription. Prices come only from the App Store product when
+// loaded; when a price has not loaded, the price is shown as
+// unavailable and the Buy button stays disabled. Counts come from
+// ContentManifest, never from hardcoded literals.
+//
+// D101 decided (hard-gate, v69): SituationsView gates locked
+// situation detail, so Situations access is buyer-exclusive
+// except for the free samples and the weekly free case. The copy
+// below states what buying gives (ownership, restore,
+// cross-device sync when signed in). Do not change any gating
+// from this file.
 
 import SwiftUI
 import UIKit
@@ -32,48 +40,17 @@ struct CheckoutView: View {
     @EnvironmentObject private var storeManager: StoreManager
     @ObservedObject private var finalAssessmentStore = FinalAssessmentStore.shared
 
-    private enum PurchasesTab: String, CaseIterable, Identifiable {
-        case myPurchases = "My Purchases"
-        case paymentClaims = "Payment Claims"
-
-        var id: String { rawValue }
-    }
-
-    // Payment configuration (product ID, price, UPI ID) lives in
-    // PaymentConfig (SupabaseConfig.swift); nothing is hardcoded here.
-
-    @State private var selectedTab: PurchasesTab = .myPurchases
-    @State private var payerName = ""
-    @State private var utr = ""
-    @State private var copied = false
-    @State private var payAppOpened = false
-    @State private var payAppFailed = false
-    @State private var confirmationMessage: String? = nil
     @State private var showTransactionHistory = false
-
-    /// The product a UPI claim is for, picked in the Payment Claims
-    /// tab. Situations is the default, matching the previous
-    /// single-product behaviour.
-    @State private var selectedClaimProductID = PaymentConfig.situationsProductID
-
-    /// The product the current UPI claim is for.
-    private var selectedClaimProduct: CourseProduct {
-        PaymentConfig.product(for: selectedClaimProductID) ?? PaymentConfig.product(for: PaymentConfig.situationsProductID)!
-    }
-
-    /// The claim on screen, only when it is for the selected product.
-    /// A claim for another product is never shown under this
-    /// product's name.
-    private var claimForSelectedProduct: UPIClaim? {
-        guard let claim = storeManager.upiClaim,
-              claim.productID == selectedClaimProductID else { return nil }
-        return claim
-    }
-
-    private var canSubmit: Bool {
-        !payerName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !utr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
+    /// Arms the Purchase alert: it only ever shows a store message
+    /// that follows the learner's own Buy or Restore tap in this
+    /// view, mirroring the gated alert in LessonView. The
+    /// launch-time product load also writes to statusMessage, and
+    /// without this gate its failure would pop a Purchase alert
+    /// unprompted. The status banner at the top of this screen
+    /// already shows the same message, but it can sit above the
+    /// visible scroll area when a Buy button below is tapped, so
+    /// the alert is the confirmation the learner always sees.
+    @State private var showPurchaseAlert = false
 
     private static let displayDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -82,37 +59,16 @@ struct CheckoutView: View {
         return formatter
     }()
 
-    private static let claimDateFormatter: ISO8601DateFormatter = {
-        ISO8601DateFormatter()
-    }()
-
-    private func formattedClaimDate(_ isoString: String) -> String {
-        guard let date = Self.claimDateFormatter.date(from: isoString) else {
-            return isoString
-        }
-        return Self.displayDateFormatter.string(from: date)
-    }
+    // Payment configuration (product IDs and catalogue data) lives in
+    // ProductCatalogue (Models/ProductCatalogue.swift); nothing is
+    // hardcoded here. Prices come only from StoreKit.
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Picker("Purchases", selection: $selectedTab) {
-                    ForEach(PurchasesTab.allCases) { tab in
-                        Text(tab.rawValue).tag(tab)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, PFSpacing.lg)
-                .padding(.top, PFSpacing.md)
-                .padding(.bottom, PFSpacing.sm)
-
                 ScrollView {
                     VStack(alignment: .leading, spacing: PFSpacing.xl) {
-                        if selectedTab == .myPurchases {
-                            myPurchasesTab
-                        } else {
-                            paymentClaimsTab
-                        }
+                        myPurchasesTab
                         footerNote
                     }
                     .padding(PFSpacing.lg)
@@ -122,10 +78,36 @@ struct CheckoutView: View {
             .background(Color.pfBackground)
             .navigationTitle("Purchases")
             .navigationBarTitleDisplayMode(.inline)
+            .task {
+                // The launch product load may still be in flight or
+                // may have failed; retry once when Purchases opens
+                // so the Buy buttons enable without a relaunch.
+                // loadProducts() ignores a concurrent fetch, so this
+                // never stacks a duplicate request.
+                if !storeManager.allProductsLoaded {
+                    await storeManager.loadProducts()
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
+            }
+            .alert(
+                "Purchase",
+                isPresented: Binding(
+                    get: { showPurchaseAlert && storeManager.statusMessage != nil },
+                    set: {
+                        if !$0 {
+                            storeManager.clearStatusMessage()
+                            showPurchaseAlert = false
+                        }
+                    }
+                )
+            ) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(storeManager.statusMessage ?? "")
             }
         }
     }
@@ -145,6 +127,7 @@ struct CheckoutView: View {
                     .cornerRadius(PFSpacing.cardRadius)
             }
             catalogueIntroCard
+            freeVsPaidSection
             productListSection
             actionRowsSection
             paymentMethodsSection
@@ -154,8 +137,9 @@ struct CheckoutView: View {
     // MARK: - Catalogue intro
 
     /// What buying means: one bundle unlocks only its own chapters,
-    /// the Integrated Course unlocks everything, and Situations is
-    /// a separate product.
+    /// the Integrated Course unlocks all chapter products and
+    /// includes all Payment Situations, and Payment Situations is
+    /// also buyable on its own.
     private var catalogueIntroCard: some View {
         PFCard {
             VStack(alignment: .leading, spacing: PFSpacing.md) {
@@ -173,23 +157,152 @@ struct CheckoutView: View {
                         Text("Courses")
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
-                        Text("Buy a course to unlock its chapters. The Integrated Course unlocks everything.")
+                        Text("Buy a course to unlock its chapters. The Integrated Course unlocks all chapters and includes all Payment Situations. Payment Situations is also sold on its own.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: PFSpacing.sm)
                     PFPill(
-                        text: storeManager.unlockedProductCount == PaymentConfig.products.count ? "All owned" : "\(storeManager.unlockedProductCount) of \(PaymentConfig.products.count) owned",
+                        text: storeManager.unlockedProductCount == ProductCatalogue.products.count ? "All owned" : "\(storeManager.unlockedProductCount) of \(ProductCatalogue.products.count) owned",
                         background: Color.pfSuccess.opacity(0.12),
                         foreground: .pfSuccess
                     )
                 }
-                Text("Each course is a one-time purchase, no subscription. Payment Situations is a separate product: only its buyers, and Integrated Course buyers, can open the 564 situations.")
-                    .font(.pfBody)
-                    .foregroundColor(.pfNavy)
-                    .fixedSize(horizontal: false, vertical: true)
+                // D101 decided (hard-gate, v69): this text states
+                // what buying gives: ownership of the set, restore,
+                // and sync when signed in. See the file header.
+                PFBodyText(text: StoreManager.buildPhaseBuyOpensContent ? "For now, Buy opens the course on this device. No payment is taken." : "Each course is a one-time purchase, no subscription. The Integrated Course includes the full set of \(ContentManifest.situationCount) Payment Situations. Payment Situations is also sold on its own for learners who want only the situations set. Purchases restore with the same Apple ID, and sync to your account when you are signed in.")
+                if storeManager.productLoadFailed {
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text("Prices could not be loaded from the App Store. Check your connection, then try again. No purchase can be made until the price loads.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Retry loading prices") {
+                            Task { await storeManager.loadProducts() }
+                        }
+                        .disabled(storeManager.isBusy)
+                    }
+                }
             }
+        }
+    }
+
+    // MARK: - Free vs paid comparison (Item 28)
+
+    /// Free vs paid, driven by ProductCatalogue and ContentManifest,
+    /// so the comparison cannot drift from the catalogue: free
+    /// content from the settled D77 model (the first lesson of each
+    /// chapter, plus the free sample situations), and paid content
+    /// from each product's own chapter list. No price appears here:
+    /// prices live only on the product cards, from StoreKit.
+    ///
+    /// D101 PENDING: the Situations row below states that the set is
+    /// included in the Integrated Course and is also buyable on its
+    /// own. It deliberately makes no buyer-exclusivity claim,
+    /// because SituationsView currently shows the full detail when
+    /// locked. See the file header. Do not add a buyer-exclusivity
+    /// claim here until the D101 owner decision lands.
+    /// D77 settled: the first lesson of each chapter is free; the
+    /// old framing that denied the free samples (D118) must not be
+    /// repeated in this section.
+    private var freeVsPaidSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "Free vs paid")
+            PFCard {
+                VStack(alignment: .leading, spacing: PFSpacing.lg) {
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text("Free, no purchase needed")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                        comparisonRow(
+                            icon: "checkmark",
+                            text: "The first lesson of each of the \(ContentManifest.chapterCount) chapters. Every other lesson needs its chapter bundle or the Integrated Course."
+                        )
+                        comparisonRow(
+                            icon: "checkmark",
+                            text: "The \(ProductCatalogue.freeSampleSituationIDs.count) free sample situations."
+                        )
+                    }
+                    Divider()
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text("What buying unlocks")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                        comparisonRow(
+                            icon: "checkmark",
+                            text: "A chapter bundle unlocks only its own chapters, with all lessons in those chapters. There are \(chapterBundles.count) bundles."
+                        )
+                        comparisonRow(
+                            icon: "checkmark",
+                            text: "The Integrated Course unlocks all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and all \(ContentManifest.situationCount) Payment Situations."
+                        )
+                        comparisonRow(
+                            icon: "checkmark",
+                            text: "Payment Situations is also available as a one-time purchase on its own for the full set of \(ContentManifest.situationCount) situations, for learners who want only the situations set."
+                        )
+                    }
+                    Divider()
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text("How to choose")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                        comparisonRow(icon: "arrow.right", text: "One area only: buy that bundle.")
+                        comparisonRow(icon: "arrow.right", text: "Every chapter and all situations: buy the Integrated Course.")
+                        comparisonRow(icon: "arrow.right", text: "Only the situations set: buy Payment Situations on its own.")
+                        comparisonRow(icon: "arrow.right", text: "Each product is bought on its own at its App Store price, shown on its card below.")
+                    }
+                    if bundleChaptersDoNotOverlap {
+                        Text("Each chapter sits in exactly one bundle, so bundles never overlap. Buying two bundles never buys the same chapter twice.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("Every purchase is a one-time payment. There is no subscription and nothing renews. Purchases restore with the same Apple ID.")
+                        .font(.pfBody)
+                        .foregroundColor(.pfNavy)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// The chapter bundles: every catalogue product except the
+    /// Integrated Course and Payment Situations.
+    private var chapterBundles: [CourseProduct] {
+        ProductCatalogue.products.filter {
+            $0.productID != ProductCatalogue.fullCourseProductID
+                && $0.productID != ProductCatalogue.situationsProductID
+        }
+    }
+
+    /// True when no chapter appears in more than one bundle.
+    /// Computed from the catalogue at runtime, so the no-overlap
+    /// sentence is shown only while the catalogue really has no
+    /// overlap. Verified against the v61 catalogue: the 10 bundle
+    /// chapter lists are disjoint and cover all 100 chapters.
+    private var bundleChaptersDoNotOverlap: Bool {
+        var seen: Set<String> = []
+        for bundle in chapterBundles {
+            for chapterID in bundle.chapterIDs {
+                if seen.contains(chapterID) { return false }
+                seen.insert(chapterID)
+            }
+        }
+        return true
+    }
+
+    private func comparisonRow(icon: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: PFSpacing.sm) {
+            Image(systemName: icon)
+                .font(.pfCaptionBold)
+                .foregroundColor(.pfSuccess)
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.pfBody)
+                .foregroundColor(.pfNavy)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -198,16 +311,18 @@ struct CheckoutView: View {
     private var productListSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
             PFSectionHeader(title: "All courses")
-            ForEach(PaymentConfig.products) { course in
+            ForEach(ProductCatalogue.products) { course in
                 productCard(for: course)
             }
         }
     }
 
-    /// One buyable product: name, short description, contents, price,
-    /// and a Buy button, or an Owned pill when it is already unlocked.
-    /// The price comes from the App Store product when loaded,
-    /// otherwise from PaymentConfig.
+    /// One buyable product: name, short description, what the buyer
+    /// receives, price, and a Buy button, or an Owned pill when it is
+    /// already unlocked. The price comes only from the App Store
+    /// product when loaded; when it has not loaded, the price is
+    /// shown as unavailable and the Buy button stays disabled, so a
+    /// purchase is never offered at a hardcoded price.
     private func productCard(for course: CourseProduct) -> some View {
         PFCard {
             VStack(alignment: .leading, spacing: PFSpacing.md) {
@@ -239,12 +354,13 @@ struct CheckoutView: View {
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                     Spacer(minLength: 0)
-                    Text(storeManager.priceText(for: course.productID))
+                    Text(storeManager.isPriceAvailable(for: course.productID) ? storeManager.priceText(for: course.productID) : "Price unavailable")
                         .font(.pfCardTitle)
-                        .foregroundColor(.pfNavy)
+                        .foregroundColor(storeManager.isPriceAvailable(for: course.productID) ? .pfNavy : .pfSecondaryText)
                 }
-                if course.productID == PaymentConfig.fullCourseProductID {
-                    Text("Unlocks all 100 chapters and all 564 situations.")
+                includedDetailsView(for: course)
+                if course.productID == ProductCatalogue.fullCourseProductID {
+                    Text("Unlocks all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and all \(ContentManifest.situationCount) Payment Situations.")
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -259,16 +375,31 @@ struct CheckoutView: View {
                     }
                 } else {
                     // Buy with Apple In-App Purchase (StoreKit 2). The
-                    // price comes from the App Store product; while
-                    // there is no App Store Connect product yet it
-                    // comes from the local PaymentForge.storekit file.
-                    // One-time purchase, no subscription.
-                    PFGoldButton(title: storeManager.isBusy ? "Please wait..." : "Buy for \(storeManager.priceText(for: course.productID))") {
-                        Task { await storeManager.purchase(productID: course.productID) }
+                    // price comes only from the App Store product;
+                    // while there is no App Store Connect product yet
+                    // it comes from the local PaymentForge.storekit
+                    // file in DEBUG builds. When the price has not
+                    // loaded, the button stays disabled. One-time
+                    // purchase, no subscription.
+                    PFGoldButton(title: buyButtonTitle(for: course)) {
+                        // Clear any stale store message and arm the
+                        // alert, so only this tap's result can pop
+                        // the Purchase alert.
+                        storeManager.clearStatusMessage()
+                        showPurchaseAlert = true
+                        Task {
+                            await storeManager.purchase(productID: course.productID)
+                        }
                     }
-                    .disabled(storeManager.isBusy)
-                    .opacity(storeManager.isBusy ? 0.5 : 1)
-                    Text("Pay securely with your Apple ID, the same way you pay in any App Store app. No account needed. You can also pay by UPI from the Payment Claims tab.")
+                    .disabled(buyButtonDisabled(for: course))
+                    .opacity(buyButtonDisabled(for: course) ? 0.5 : 1)
+                    if !storeManager.isPriceAvailable(for: course.productID) {
+                        Text("The App Store price is not available yet. Check your connection, then try again.")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(StoreManager.buildPhaseBuyOpensContent ? "For now, Buy opens the course on this device. No payment is taken." : "Pay securely with your Apple ID, the same way you pay in any App Store app. No account needed.")
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -277,11 +408,75 @@ struct CheckoutView: View {
         }
     }
 
-    private func unlockedNote(for course: CourseProduct) -> String {
-        if course.productID == PaymentConfig.fullCourseProductID {
-            return "Everything is unlocked on this device."
+    /// What the buyer receives for one product, shown before purchase:
+    /// chapters, lessons or situations from the catalogue and the
+    /// shared content counts. Per-bundle lesson counts are not stored
+    /// anywhere, so bundles state "all lessons in those chapters"
+    /// without inventing a number.
+    private func includedDetails(for course: CourseProduct) -> [String] {
+        if course.productID == ProductCatalogue.fullCourseProductID {
+            return [
+                "All \(ContentManifest.chapterCount) chapters",
+                "All \(ContentManifest.lessonCount) lessons",
+                "All \(ContentManifest.situationCount) Payment Situations",
+                "One-time purchase, no subscription",
+                "Restores with the same Apple ID"
+            ]
         }
-        if course.productID == PaymentConfig.situationsProductID {
+        if course.productID == ProductCatalogue.situationsProductID {
+            return [
+                "All \(ContentManifest.situationCount) situations",
+                "The \(ProductCatalogue.freeSampleSituationIDs.count) free sample situations stay free",
+                "One-time purchase, no subscription",
+                "Restores with the same Apple ID"
+            ]
+        }
+        return [
+            "\(course.chapterIDs.count) chapters",
+            "All lessons in those chapters",
+            "One-time purchase, no subscription",
+            "Restores with the same Apple ID"
+        ]
+    }
+
+    private func includedDetailsView(for course: CourseProduct) -> some View {
+        VStack(alignment: .leading, spacing: PFSpacing.xs) {
+            ForEach(includedDetails(for: course), id: \.self) { detail in
+                HStack(alignment: .top, spacing: PFSpacing.sm) {
+                    Image(systemName: "checkmark")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfSuccess)
+                    Text(detail)
+                        .font(.pfBody)
+                        .foregroundColor(.pfNavy)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// The Buy button title: the real StoreKit price when loaded, a
+    /// wait message while busy, and "Price unavailable" when the
+    /// product has not loaded. A hardcoded price is never shown.
+    private func buyButtonTitle(for course: CourseProduct) -> String {
+        if storeManager.isBusy { return "Please wait..." }
+        if storeManager.isPriceAvailable(for: course.productID) {
+            return "Buy for \(storeManager.priceText(for: course.productID))"
+        }
+        return "Price unavailable"
+    }
+
+    /// The Buy button stays disabled while busy, and whenever the
+    /// StoreKit price has not loaded.
+    private func buyButtonDisabled(for course: CourseProduct) -> Bool {
+        storeManager.isBusy || !storeManager.isPriceAvailable(for: course.productID)
+    }
+
+    private func unlockedNote(for course: CourseProduct) -> String {
+        if course.productID == ProductCatalogue.fullCourseProductID {
+            return "All chapters and all Payment Situations are unlocked on this device."
+        }
+        if course.productID == ProductCatalogue.situationsProductID {
             return "Payment Situations is unlocked on this device."
         }
         return "\(course.name) is unlocked on this device."
@@ -289,7 +484,7 @@ struct CheckoutView: View {
 
     /// Final Assessment entry for an owned course: the certificate
     /// when earned, attempts left when open, or a locked note when
-    /// all 3 attempts were used without a pass. Situations has no
+    /// all attempts were used without a pass. Situations has no
     /// chapters and no assessment, so it never reaches here.
     private func finalAssessmentRow(for course: CourseProduct) -> some View {
         let certificate = finalAssessmentStore.certificate(for: course.productID)
@@ -367,8 +562,7 @@ struct CheckoutView: View {
     /// Restore Purchases, Transaction History and Upgrade / Renew as
     /// icon, label and chevron rows in one card. Transaction History
     /// expands inline to show the real App Store transaction, or an
-    /// honest empty state when there is none. UPI claims are not App
-    /// Store transactions; they are listed under Payment Claims.
+    /// honest empty state when there is none.
     private var actionRowsSection: some View {
         PFCard {
             VStack(spacing: 0) {
@@ -377,6 +571,8 @@ struct CheckoutView: View {
                     title: "Restore Purchases",
                     subtitle: "Already bought it on another iPhone or after reinstalling? Restore it with the same Apple ID. No account needed."
                 ) {
+                    storeManager.clearStatusMessage()
+                    showPurchaseAlert = true
                     Task { await storeManager.restorePurchases() }
                 }
                 .disabled(storeManager.isBusy)
@@ -401,14 +597,14 @@ struct CheckoutView: View {
                 }
                 Divider()
                     .padding(.leading, 56)
-                if storeManager.isProductUnlocked(PaymentConfig.fullCourseProductID) {
+                if storeManager.isProductUnlocked(ProductCatalogue.fullCourseProductID) {
                     HStack(spacing: PFSpacing.md) {
                         PFIconTile(systemImage: "crown.fill")
                         VStack(alignment: .leading, spacing: PFSpacing.xs) {
                             Text("The Integrated Course")
                                 .font(.pfCardTitle)
                                 .foregroundColor(.pfNavy)
-                            Text("You own everything: all 100 chapters and all 564 situations.")
+                            Text("You own the Integrated Course: all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and all \(ContentManifest.situationCount) Payment Situations.")
                                 .font(.pfBody)
                                 .foregroundColor(.pfSecondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -425,14 +621,31 @@ struct CheckoutView: View {
                     actionRowButton(
                         icon: "crown.fill",
                         title: "The Integrated Course",
-                        subtitle: "Unlock everything, all 100 chapters and all 564 situations, for \(storeManager.priceText(for: PaymentConfig.fullCourseProductID)), one-time payment."
+                        subtitle: integratedCourseSubtitle()
                     ) {
-                        Task { await storeManager.purchase(productID: PaymentConfig.fullCourseProductID) }
+                        storeManager.clearStatusMessage()
+                        showPurchaseAlert = true
+                        Task { await storeManager.purchase(productID: ProductCatalogue.fullCourseProductID) }
                     }
-                    .disabled(storeManager.isBusy)
+                    .disabled(integratedCourseDisabled())
                 }
             }
         }
+    }
+
+    /// The Integrated Course action-row subtitle: what the buyer
+    /// receives, the real StoreKit price when loaded, and the clear
+    /// statement that Situations is included. No hardcoded price
+    /// is ever shown.
+    private func integratedCourseSubtitle() -> String {
+        if storeManager.isPriceAvailable(for: ProductCatalogue.fullCourseProductID) {
+            return "Unlock all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and all \(ContentManifest.situationCount) Payment Situations for \(storeManager.priceText(for: ProductCatalogue.fullCourseProductID)), one-time payment."
+        }
+        return "Unlock all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and all \(ContentManifest.situationCount) Payment Situations, one-time payment. The App Store price is not available yet."
+    }
+
+    private func integratedCourseDisabled() -> Bool {
+        storeManager.isBusy || !storeManager.isPriceAvailable(for: ProductCatalogue.fullCourseProductID)
     }
 
     /// One action row: icon tile, title and subtitle, chevron on the
@@ -461,7 +674,10 @@ struct CheckoutView: View {
     }
 
     /// The App Store entitlement transactions, latest first. When
-    /// there are none, an honest empty state, never a fake list.
+    /// there are none, an honest empty state, never a fake list. No
+    /// price is shown per transaction: the transaction record holds
+    /// no price, and the current display price may differ from the
+    /// price paid.
     private var transactionHistoryDetail: some View {
         Group {
             if storeManager.ownedTransactions.isEmpty {
@@ -472,7 +688,7 @@ struct CheckoutView: View {
                             Text("No transactions yet")
                                 .font(.pfCardTitle)
                                 .foregroundColor(.pfNavy)
-                            Text("No App Store purchase has been made on this Apple ID yet. UPI claims are listed under Payment Claims.")
+                            Text("No App Store purchase has been made on this Apple ID yet.")
                                 .font(.pfBody)
                                 .foregroundColor(.pfSecondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -486,10 +702,10 @@ struct CheckoutView: View {
                             HStack(spacing: PFSpacing.md) {
                                 PFIconTile(systemImage: "receipt.fill")
                                 VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                                    Text(PaymentConfig.product(for: transaction.productID)?.name ?? transaction.productID)
+                                    Text(ProductCatalogue.product(for: transaction.productID)?.name ?? transaction.productID)
                                         .font(.pfCardTitle)
                                         .foregroundColor(.pfNavy)
-                                    Text("App Store, \(storeManager.priceText(for: transaction.productID))")
+                                    Text("App Store purchase")
                                         .font(.pfBody)
                                         .foregroundColor(.pfSecondaryText)
                                 }
@@ -511,8 +727,8 @@ struct CheckoutView: View {
         }
     }
 
-    /// Payment methods audit: only Apple In-App Purchase and UPI
-    /// (by claim) work. Card, Net banking and Wallet are not switched
+    /// Payment methods audit: only Apple In-App Purchase works.
+    /// Card, Net banking and Wallet are not switched
     /// on and are shown disabled with Not available, never presented
     /// as a working option and never selectable.
     private var paymentMethodsSection: some View {
@@ -523,16 +739,8 @@ struct CheckoutView: View {
                     paymentMethodRow(
                         icon: "apple.logo",
                         name: "In-App Purchase",
-                        note: "Pay with your Apple ID. Courses from Rs. 999 to Rs. 9,999.",
+                        note: "Pay with your Apple ID. Each course shows its App Store price.",
                         state: "Available",
-                        available: true
-                    )
-                    Divider()
-                    paymentMethodRow(
-                        icon: "indianrupeesign.circle.fill",
-                        name: "UPI",
-                        note: "Pay by UPI, then submit your UTR. Claims need manual verification.",
-                        state: "Claim",
                         available: true
                     )
                     Divider()
@@ -586,272 +794,10 @@ struct CheckoutView: View {
         .opacity(available ? 1 : 0.7)
     }
 
-    // MARK: - Payment Claims tab (UPI)
-
-    private var paymentClaimsTab: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.xl) {
-            claimProductPicker
-            claimStatusCard
-            payByUPICard
-            submitUTRCard
-        }
-        .task(id: selectedClaimProductID) {
-            await storeManager.refreshUPIClaimStatus(for: selectedClaimProductID)
-        }
-    }
-
-    /// Pick which product the UPI payment is for. The claim, the
-    /// amount and the UPI deep link below all follow this choice.
-    private var claimProductPicker: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: "Product")
-            PFCard {
-                VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                    Picker("Product", selection: $selectedClaimProductID) {
-                        ForEach(PaymentConfig.products) { course in
-                            Text("\(course.name), \(course.priceText)").tag(course.productID)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(selectedClaimProduct.tagline)
-                        .font(.pfBody)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if storeManager.isProductUnlocked(selectedClaimProductID) {
-                        Text("\(selectedClaimProduct.name) is already unlocked on this device.")
-                            .font(.pfBody)
-                            .foregroundColor(.pfSuccess)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-        }
-    }
-
-    private var claimStatus: UPIClaimStatus? {
-        claimForSelectedProduct?.status
-    }
-
-    private var claimStatusCard: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: "Claim status")
-            PFCard {
-                VStack(alignment: .leading, spacing: PFSpacing.md) {
-                    if let claim = claimForSelectedProduct, let status = claimStatus {
-                        HStack(spacing: PFSpacing.md) {
-                            PFIconTile(systemImage: statusIcon(for: status))
-                            VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                                Text("UPI claim \(status.rawValue.lowercased())")
-                                    .font(.pfCardTitle)
-                                    .foregroundColor(.pfNavy)
-                                Text(statusExplanation(for: status))
-                                    .font(.pfBody)
-                                    .foregroundColor(.pfSecondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            Spacer(minLength: PFSpacing.sm)
-                            claimStatusPill(status)
-                        }
-                        Divider()
-                        detailRow(label: "Product", value: selectedClaimProduct.name)
-                        detailRow(label: "Name", value: claim.payerName)
-                        detailRow(label: "UTR", value: claim.utr)
-                        detailRow(label: "Amount", value: storeManager.priceText(for: selectedClaimProductID))
-                        detailRow(label: "Submitted", value: formattedClaimDate(claim.submittedAt))
-                    } else {
-                        HStack(spacing: PFSpacing.md) {
-                            PFIconTile(systemImage: "doc.text.fill")
-                            VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                                Text("No claim submitted yet")
-                                    .font(.pfCardTitle)
-                                    .foregroundColor(.pfNavy)
-                                Text("Pay \(storeManager.priceText(for: selectedClaimProductID)) by UPI below, then submit your UTR. Your claim will show as Pending until the payment is verified.")
-                                    .font(.pfBody)
-                                    .foregroundColor(.pfSecondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                    }
-                    Text("UPI claims are pending manual verification and do not unlock \(selectedClaimProduct.name) until verified. Submitting a UTR never unlocks access on its own.")
-                        .font(.pfBody)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(PFSpacing.md)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.pfGoldSoft)
-                        .cornerRadius(PFSpacing.cardRadius)
-                    PFSecondaryButton(title: "Refresh claim status") {
-                        Task { await storeManager.refreshUPIClaimStatus(for: selectedClaimProductID) }
-                    }
-                    Text("Refresh checks the server for the latest verification status. Only a verified payment unlocks \(selectedClaimProduct.name).")
-                        .font(.pfCaption)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    private func statusIcon(for status: UPIClaimStatus) -> String {
-        switch status {
-        case .pending: return "clock.fill"
-        case .verified: return "checkmark.seal.fill"
-        case .rejected: return "xmark.seal.fill"
-        }
-    }
-
-    private func statusExplanation(for status: UPIClaimStatus) -> String {
-        switch status {
-        case .pending:
-            return "Your payment is waiting for manual verification. Access is granted after the payment is confirmed, usually within one working day."
-        case .verified:
-            return "Your UPI payment has been verified. \(selectedClaimProduct.name) is unlocked."
-        case .rejected:
-            return "This claim could not be verified. Check the UTR and submit it again, or buy with Apple In-App Purchase instead."
-        }
-    }
-
-    private func claimStatusPill(_ status: UPIClaimStatus) -> some View {
-        switch status {
-        case .pending:
-            return PFPill(text: "Pending", background: Color.pfGoldSoft, foreground: .pfGold)
-        case .verified:
-            return PFPill(text: "Verified", background: Color.pfSuccess.opacity(0.12), foreground: .pfSuccess)
-        case .rejected:
-            return PFPill(text: "Rejected", background: Color.pfError.opacity(0.12), foreground: .pfError)
-        }
-    }
-
-    private var payByUPICard: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: "Pay by UPI")
-            PFCard {
-                VStack(alignment: .leading, spacing: PFSpacing.md) {
-                    Text("Pay to this UPI ID")
-                        .font(.pfCaptionBold)
-                        .foregroundColor(.pfSecondaryText)
-                    HStack(alignment: .center, spacing: PFSpacing.md) {
-                        Text(PaymentConfig.upiID)
-                            .font(.pfSectionTitle.weight(.bold))
-                            .foregroundColor(.pfNavy)
-                            .minimumScaleFactor(0.6)
-                            .lineLimit(1)
-                        Spacer()
-                        Button {
-                            UIPasteboard.general.string = PaymentConfig.upiID
-                            copied = true
-                        } label: {
-                            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                                .font(.pfBody.weight(.semibold))
-                                .foregroundColor(.pfRoyal)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    HStack(spacing: PFSpacing.md) {
-                        Text("Amount")
-                            .font(.pfCaptionBold)
-                            .foregroundColor(.pfSecondaryText)
-                        Text(storeManager.priceText(for: selectedClaimProductID))
-                            .font(.pfCardTitle)
-                            .foregroundColor(.pfNavy)
-                        Spacer(minLength: 0)
-                        Text("One-time payment")
-                            .font(.pfBody)
-                            .foregroundColor(.pfSecondaryText)
-                    }
-                    PFPrimaryButton(title: "Pay \(storeManager.priceText(for: selectedClaimProductID)) with a UPI app") {
-                        openUPIApp()
-                    }
-                    if payAppFailed {
-                        Text("No UPI app opened automatically. Open your UPI app and pay \(storeManager.priceText(for: selectedClaimProductID)) to \(PaymentConfig.upiID), then submit your UTR below.")
-                            .font(.pfBody)
-                            .foregroundColor(.pfError)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else if payAppOpened {
-                        Text("Your UPI app should now be open. After paying, come back here and submit your UTR below.")
-                            .font(.pfBody)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Text("Pay \(storeManager.priceText(for: selectedClaimProductID)) to this UPI ID from any UPI app, then submit your UTR below for manual verification.")
-                        .font(.pfBody)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    private func openUPIApp() {
-        guard let url = PaymentConfig.upiPaymentURL(for: selectedClaimProductID) else {
-            payAppFailed = true
-            return
-        }
-        UIApplication.shared.open(url) { success in
-            payAppOpened = success
-            payAppFailed = !success
-        }
-    }
-
-    private var submitUTRCard: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: "Submit your UTR")
-            PFCard {
-                VStack(alignment: .leading, spacing: PFSpacing.md) {
-                    Text("Your name")
-                        .font(.pfCaptionBold)
-                        .foregroundColor(.pfSecondaryText)
-                    TextField("Name used for the payment", text: $payerName)
-                        .textFieldStyle(.roundedBorder)
-                        .textContentType(.name)
-                        .autocorrectionDisabled()
-                    Text("UTR (transaction reference)")
-                        .font(.pfCaptionBold)
-                        .foregroundColor(.pfSecondaryText)
-                    TextField("For example, 123456789012", text: $utr)
-                        .textFieldStyle(.roundedBorder)
-                        .textContentType(.none)
-                        .autocapitalization(.none)
-                        .autocorrectionDisabled()
-                    PFPrimaryButton(title: "Submit UTR for verification") {
-                        submitClaim()
-                    }
-                    .disabled(!canSubmit)
-                    .opacity(canSubmit ? 1 : 0.5)
-                    if let confirmationMessage {
-                        Text(confirmationMessage)
-                            .font(.pfBody)
-                            .foregroundColor(.pfSuccess)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Text("Submitting a UTR records a claim for manual verification. It does not unlock \(selectedClaimProduct.name). Access is granted only after the payment is verified.")
-                        .font(.pfBody)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    private func submitClaim() {
-        let name = payerName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let reference = utr.trimmingCharacters(in: .whitespacesAndNewlines)
-        Task {
-            await storeManager.submitUPIClaim(productID: selectedClaimProductID, payerName: name, utr: reference)
-            let pendingUpload = storeManager.hasPendingClaimUpload
-            if pendingUpload {
-                confirmationMessage = "Thank you. Your UTR is recorded as Pending, but it has not been sent yet. Sign in so it can be sent for verification. Access is granted only after the payment is confirmed."
-            } else {
-                confirmationMessage = "Thank you. Your UTR has been recorded as Pending verification. Access is granted only after the payment is confirmed, usually within one working day."
-            }
-        }
-    }
-
     // MARK: - Footer
 
     private var footerNote: some View {
-        Text("No account is needed. Purchases are tied to your Apple ID, and progress stays on this device. If you have questions, email debarghya.092008@gmail.com.")
+        Text("No account is needed. Purchases are tied to your Apple ID. When you are signed in, your progress syncs across your devices. If you have questions, email debarghya.092008@gmail.com.")
             .font(.pfBody)
             .foregroundColor(.pfSecondaryText)
             .frame(maxWidth: .infinity, alignment: .leading)

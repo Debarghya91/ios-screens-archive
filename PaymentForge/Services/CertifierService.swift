@@ -80,7 +80,11 @@ enum CertifierService {
     }
 
     /// Issue the Certifier credential for this certificate, or
-    /// return the stored one when it was already issued. Returns
+    /// return the stored one when it was already issued. The
+    /// certificate id is generated on the device when the
+    /// certificate is issued, and this call sends that id to the
+    /// server; the server returns the stored credential record for
+    /// it, it does not generate the id. Returns
     /// nil when the learner is not signed in, the course has no
     /// Certifier template, the certificate is not on the server yet,
     /// or the server call fails. A nil result never blocks the

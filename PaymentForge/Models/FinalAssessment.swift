@@ -11,6 +11,17 @@
 // restarts. Questions are PaymentForge-specific because they come
 // from the real lesson quizzes, grounded in the course content, so
 // they are not answerable from generic knowledge.
+// This is one of two certificate systems, kept separate on purpose
+// (v35 merge assessment, Nov 2026). CourseCertificate here is earned
+// by passing a Final Assessment, stored as JSON, written to the
+// course_certificates table, and issued in Certifier for the four
+// certificate courses. PFCertificate in LearningPath.swift is earned
+// by completing every lesson of a learning path, derived on read
+// from ProgressStore, never written to Supabase, and carries an
+// optional competency average instead of an exam score. The two
+// cannot share one type without inventing exam scores for path
+// certificates or changing stored IDs and verification behaviour,
+// so do not merge them without a server-side decision first.
 // No em dashes in any user-facing text.
 
 import Foundation
@@ -104,8 +115,11 @@ struct CourseCertificateRow: Encodable {
 }
 
 /// Tracks Final Assessment attempts and issued course certificates,
-/// persisted in UserDefaults so they survive app restarts. This store
-/// is the single source of truth for attempts and certificates.
+/// persisted in UserDefaults so they survive app restarts. Storage
+/// is namespaced per account through AccountScopedStorage: one
+/// learner's attempts and certificates are never served to another.
+/// This store is the single source of truth for attempts and
+/// certificates.
 final class FinalAssessmentStore: ObservableObject {
     static let shared = FinalAssessmentStore()
 
@@ -119,7 +133,7 @@ final class FinalAssessmentStore: ObservableObject {
     /// Courses a Final Assessment can be taken for: every product
     /// with chapters. Situations has no chapters and no assessment.
     static var assessableCourses: [CourseProduct] {
-        PaymentConfig.products.filter { !$0.chapterIDs.isEmpty }
+        ProductCatalogue.products.filter { !$0.chapterIDs.isEmpty }
     }
 
     @Published private(set) var certificates: [String: CourseCertificate] = [:]
@@ -131,12 +145,26 @@ final class FinalAssessmentStore: ObservableObject {
     }
 
     init() {
+        load()
+    }
+
+    /// Reload for the current account namespace, clearing the
+    /// previous account's certificates and attempt counts first.
+    func reloadForCurrentAccount() {
+        certificates = [:]
+        attemptsUsed = [:]
+        load()
+    }
+
+    private func load() {
+        AccountScopedStorage.adoptLegacyKey(Keys.certificates)
+        AccountScopedStorage.adoptLegacyKey(Keys.attempts)
         let defaults = UserDefaults.standard
-        if let data = defaults.data(forKey: Keys.certificates),
+        if let data = defaults.data(forKey: AccountScopedStorage.currentKey(Keys.certificates)),
            let decoded = try? JSONDecoder().decode([String: CourseCertificate].self, from: data) {
             certificates = decoded
         }
-        if let data = defaults.data(forKey: Keys.attempts),
+        if let data = defaults.data(forKey: AccountScopedStorage.currentKey(Keys.attempts)),
            let decoded = try? JSONDecoder().decode([String: Int].self, from: data) {
             attemptsUsed = decoded
         }
@@ -145,10 +173,10 @@ final class FinalAssessmentStore: ObservableObject {
     private func persist() {
         let defaults = UserDefaults.standard
         if let data = try? JSONEncoder().encode(certificates) {
-            defaults.set(data, forKey: Keys.certificates)
+            defaults.set(data, forKey: AccountScopedStorage.currentKey(Keys.certificates))
         }
         if let data = try? JSONEncoder().encode(attemptsUsed) {
-            defaults.set(data, forKey: Keys.attempts)
+            defaults.set(data, forKey: AccountScopedStorage.currentKey(Keys.attempts))
         }
     }
 

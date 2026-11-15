@@ -1,125 +1,68 @@
 // StoreManager.swift
-// PaymentForge iOS - Apple In-App Purchase (StoreKit 2) for the 12
-// course products: the 11 chapter bundles plus Payment Situations.
-// Every product is a non-consumable, one-time purchase:
-//   com.paymentforge.app.full            ("The Integrated Course", Rs. 9,999)
-//   com.paymentforge.app.foundations     ("Payment Foundations", Rs. 1,499)
-//   com.paymentforge.app.messaging       ("ISO 20022 and SWIFT Messaging", Rs. 2,999)
-//   com.paymentforge.app.rails          ("Global Payment Rails", Rs. 2,499)
-//   com.paymentforge.app.crossborder     ("Cross-Border and Correspondent Banking", Rs. 1,999)
-//   com.paymentforge.app.clearing        ("Clearing, Settlement and Liquidity", Rs. 999)
-//   com.paymentforge.app.cards           ("Cards and Domestic Payments", Rs. 1,499)
-//   com.paymentforge.app.compliance-ops  ("Compliance, Risk, Operations and Reconciliation", Rs. 1,999)
-//   com.paymentforge.app.architecture-apis ("Payment Architecture and APIs", Rs. 2,499)
-//   com.paymentforge.app.ba-practice     ("AI Product Owner and Product Manager for Payments", Rs. 1,999)
-//   com.paymentforge.app.emerging        ("Emerging Technologies and the Future", Rs. 999)
-//   com.paymentforge.app.situations      ("Payment Situations", Rs. 4,999)
-// There are no App Store Connect products yet: the owner has no paid
-// Developer Program account. Until then the products are served by the
-// local StoreKit Configuration file PaymentForge.storekit (same product
-// IDs, same prices). Once he enrols, create the real products in App
-// Store Connect with these EXACT product IDs and the same prices, and
-// the app will fetch them from the App Store instead of the local file.
+// PaymentForge iOS - Apple In-App Purchase (StoreKit 2) for the
+// catalogue products: the chapter bundles plus Payment Situations.
+// Every product is a non-consumable, one-time purchase. Product IDs
+// and catalogue data live in ProductCatalogue (Models); StoreKit is
+// the only source of a purchase price.
+// There are no App Store Connect products yet. Until they exist,
+// the products are served by the local StoreKit Configuration file
+// PaymentForge.storekit (same product IDs, same prices) when it is
+// selected in the Xcode scheme. Once the real products exist in App
+// Store Connect with these EXACT product IDs and the same prices,
+// the app will fetch them from the App Store instead of the local
+// file. DEBUG simulated
+// purchases use ONLY that .storekit configuration: there is no local
+// test-purchase path that unlocks without a StoreKit transaction.
 //
-// Access rules (PaymentConfig, from bundles.json): a buyer of a bundle
-// gets ONLY that bundle's chapters. The Integrated Course unlocks
-// everything: all 100 chapters and the 564 situations. Situations is
-// separate: only buyers of the situations product OR the full course
-// can open them.
+// Access rules (ProductCatalogue): a buyer of a bundle gets ONLY that
+// bundle's chapters. The Integrated Course unlocks all chapter
+// products AND all Payment Situations. Situations is also sold
+// standalone: buyers of the situations product, or the signed-in
+// user with an active server entitlement for it, can open the paid
+// situations without the full course. The free sample situations
+// stay free without purchase; that mechanism lives in SituationsView,
+// not here.
 //
-// SECURITY (Phase 1): there is NO device-local UPI unlock in this file.
-// A submitted UTR is only ever a PENDING claim row in Supabase
-// payment_claims. It never grants access on this device, and no claim
-// status is ever stored in UserDefaults. A product unlocks only when
-// (a) a verified StoreKit transaction is active on this device, or
-// (b) the signed-in user has an active row in Supabase user_purchases
-// for this product. Path (b) is how an admin-verified UPI payment
-// unlocks: the verify-upi-claim edge function writes the
-// user_purchases row, and this file only READS it back.
-// Product IDs, prices and UPI ID live in PaymentConfig (SupabaseConfig.swift).
-// No service-role key is ever in the app.
+// SECURITY: purchases are App Store In-App Purchase only. There is
+// no manual payment path in this file. In Release builds a product
+// unlocks ONLY when (a) a verified StoreKit transaction is active on
+// this device, or (b) the signed-in user has an active row in
+// Supabase user_purchases for this product, or (c) a failed server
+// read falls back to the server-verified entitlement cache for that
+// same account, which replays only rows the server itself confirmed,
+// only for 7 days, and never for guests or for another account (see
+// the cache helpers below). No other UserDefaults flag alone ever
+// unlocks anything in Release: the store starts locked and only
+// verified entitlements open it. A failed, cancelled,
+// pending or unverified purchase NEVER unlocks content. Only verified
+// transactions are finished. This file only READS the server row
+// back through SupabaseClient; server writes go through the
+// record-purchase Edge Function, which holds the service-role key
+// server-side. No service-role key is ever in the app.
+//
+// Refunds and revocations (C3): a revoked transaction is NOT finished
+// until its server revoke is confirmed, or a definitive server read
+// shows no active row left for its product. The pending revoke is
+// persisted before the revoke is attempted and retried on every
+// launch and every sign-in until the server confirms, so a failed
+// revoke can never silently leave cross-device access active. The
+// on-device entitlement is removed immediately in every case, so
+// holding the finish delays only a repurchase of that one product,
+// never access control on this device. See handleRevokedTransaction
+// for the full design choice.
+//
+// The build-phase bypass (buildPhaseBuyOpensContent) is retired:
+// it is false in every build, and every build buys through real
+// StoreKit transactions. In test builds those transactions come
+// from the local PaymentForge.storekit configuration selected in
+// the Xcode scheme; no test path unlocks without a verified
+// StoreKit transaction. See STOREKIT-TEST-PROCEDURE.md.
 
 import Foundation
 import Combine
 import StoreKit
 
-/// Status of a UPI payment claim, as stored on the server. A claim
-/// starts Pending and only an admin moves it to Verified or Rejected
-/// through the verify-upi-claim edge function. Pending and Rejected
-/// never grant access.
-enum UPIClaimStatus: String, Codable, CaseIterable {
-    case pending = "Pending"
-    case verified = "Verified"
-    case rejected = "Rejected"
-}
-
-/// A UPI claim: a UTR submitted by the user for manual verification.
-/// This is an in-memory view of a Supabase payment_claims row only.
-/// It is never written to UserDefaults and never unlocks anything.
-/// Legacy claims written to UserDefaults by older builds are migrated
-/// once to Supabase (see migrateLegacyLocalClaim) and the local copy
-/// is deleted; the migrated claim still grants nothing until verified.
-/// `productID` is the App Store product the payment was for; claims
-/// written before products carried it decode as Situations, which was
-/// the only product then.
-struct UPIClaim: Codable, Equatable {
-    let id: String?
-    let productID: String
-    let product: String
-    let amount: Int
-    let payerName: String
-    let utr: String
-    let submittedAt: String
-    var status: UPIClaimStatus
-
-    init(id: String? = nil, productID: String = PaymentConfig.situationsProductID, product: String, amount: Int, payerName: String, utr: String, submittedAt: String, status: UPIClaimStatus = .pending) {
-        self.id = id
-        self.productID = productID
-        self.product = product
-        self.amount = amount
-        self.payerName = payerName
-        self.utr = utr
-        self.submittedAt = submittedAt
-        self.status = status
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decodeIfPresent(String.self, forKey: .id)
-        productID = try container.decodeIfPresent(String.self, forKey: .productID) ?? PaymentConfig.situationsProductID
-        product = try container.decode(String.self, forKey: .product)
-        amount = try container.decode(Int.self, forKey: .amount)
-        payerName = try container.decode(String.self, forKey: .payerName)
-        utr = try container.decode(String.self, forKey: .utr)
-        submittedAt = try container.decode(String.self, forKey: .submittedAt)
-        status = try container.decodeIfPresent(UPIClaimStatus.self, forKey: .status) ?? .pending
-    }
-}
-
-// MARK: - Supabase rows (payment_claims, user_purchases)
-
-/// One row of the payment_claims table.
-private struct PaymentClaimRow: Codable {
-    var id: String?
-    var userID: String?
-    var productID: String
-    var amount: Double
-    var payerName: String?
-    var utr: String
-    var status: String
-    var submittedAt: String?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case userID = "user_id"
-        case productID = "product_id"
-        case amount
-        case payerName = "payer_name"
-        case utr
-        case status
-        case submittedAt = "submitted_at"
-    }
-}
+// MARK: - Supabase rows (user_purchases)
 
 /// One row of the user_purchases table.
 private struct UserPurchaseRow: Codable {
@@ -140,46 +83,102 @@ private struct UserPurchaseRow: Codable {
     }
 }
 
+/// One persisted pending server revoke (C3): a revoked StoreKit
+/// transaction whose server row has not yet been confirmed revoked.
+/// Written before the revoke is attempted, removed only when the
+/// server confirms the revoke or a definitive server read shows no
+/// active row for the product. userID is the account the row belongs
+/// to, or nil when the refund arrived while nobody was signed in
+/// (an orphan, filed under the guest namespace and attempted again
+/// on sign-in; the server enforces row ownership, so an attempt
+/// under the wrong account fails harmlessly).
+private struct PendingRevoke: Codable {
+    var transactionID: String
+    var productID: String
+    var userID: String?
+}
+
+/// One server-verified entitlement cache record (H2): the exact set
+/// of product IDs a definitive server read returned for one account,
+/// with the time the server confirmed it. Written only from decoded
+/// server rows, never from any local purchase or bypass state. An
+/// empty set is a real record: it means the server definitively
+/// reported no active row, and it overwrites any older record so a
+/// revoked entitlement cannot be resurrected offline.
+private struct ServerEntitlementCache: Codable {
+    var userID: String
+    var productIDs: [String]
+    var verifiedAt: TimeInterval
+}
+
 @MainActor
 final class StoreManager: ObservableObject {
 
+    /// Shared instance. PaymentForgeApp uses this same instance
+    /// as its @StateObject and passes it through the environment,
+    /// so AuthService calls to StoreManager.shared reach the very
+    /// instance the UI observes. There is exactly one StoreManager.
+    static let shared = StoreManager()
+
     /// The App Store Connect product ID for Payment Situations.
-    /// Single source of truth is PaymentConfig; kept here so existing
-    /// call sites reading StoreManager.situationsProductID keep working.
-    static let situationsProductID = PaymentConfig.situationsProductID
+    /// Single source of truth is ProductCatalogue; kept here so
+    /// existing call sites reading StoreManager.situationsProductID
+    /// keep working.
+    static let situationsProductID = ProductCatalogue.situationsProductID
 
-    /// All 12 product IDs, from PaymentConfig.
-    static let allProductIDs = PaymentConfig.allProductIDs
+    /// All catalogue product IDs, from ProductCatalogue.
+    static let allProductIDs = ProductCatalogue.allProductIDs
 
-    /// The Integrated Course product ID: it unlocks everything.
-    static let fullCourseProductID = PaymentConfig.fullCourseProductID
+    /// The Integrated Course product ID: it unlocks all chapter
+    /// products and all Payment Situations.
+    static let fullCourseProductID = ProductCatalogue.fullCourseProductID
 
-    /// Local record of the IAP purchases, so the unlocked state survives
-    /// app restarts. The source of truth is the App Store entitlement,
-    /// re-checked on launch and on restore; this flag is only a cache.
-    /// Kept for the Situations purchase, so older builds' cached state
-    /// is not lost; the per-product set below is the cache for all 12.
+    /// Retired 13 Nov 2026: always false. It used to let a DEBUG
+    /// build open content on a Buy tap without a StoreKit purchase,
+    /// which meant test builds never exercised StoreKit and never
+    /// produced a verified transaction. Test builds now buy through
+    /// real StoreKit transactions against PaymentForge.storekit.
+    /// Other files read this symbol for purchase copy; keep it.
+    static let buildPhaseBuyOpensContent = false
+
+    /// Local record of the IAP purchases, so the unlocked state
+    /// survives app restarts in DEBUG builds. The source of truth is
+    /// the App Store entitlement, re-checked on launch and on
+    /// restore; this flag is only a cache, and Release builds never
+    /// read it to unlock anything. Kept for the Situations purchase,
+    /// so older builds' cached state is not lost; the per-product set
+    /// below is the cache for all products.
     private static let purchasedKey = "pf.iap.situationsPurchased.v1"
 
     /// Local record of all purchased product IDs, as an array in
     /// UserDefaults. Cache only; the App Store entitlement is the
-    /// source of truth, re-checked on launch and on restore.
+    /// source of truth, re-checked on launch and on restore. Release
+    /// builds write this cache but never read it to unlock anything.
     private static let purchasedProductIDsKey = "pf.iap.purchasedProductIDs.v1"
 
-#if DEBUG
-    /// UserDefaults key for debug-only test purchases. Debug builds
-    /// only: when StoreKit products cannot be loaded (no .storekit
-    /// config, no App Store Connect products yet), Buy records a
-    /// local test purchase here so the owner can test the app.
-    /// Release builds never read or write this key, so real
-    /// purchases are unaffected.
-    private static let testPurchasedProductIDsKey = "pf.iap.testPurchasedProductIDs.v1"
-#endif
+    /// Key for product IDs the retired build-phase Buy bypass once
+    /// unlocked. Kept only so init() can purge it; nothing reads it
+    /// to unlock anything any more.
+    private static let buildPhaseUnlockedProductIDsKey = "pf.iap.buildPhaseUnlocked.v1"
 
-    /// Legacy UserDefaults key an older build used for a local UPI
-    /// claim. Read ONCE for migration and deleted immediately; never
-    /// written again, never used as an unlock source.
-    private static let legacyUPIClaimKey = "pf.upiClaim.v1"
+    /// Base key for persisted pending server revokes (C3), stored as
+    /// JSON under an account-scoped key (see AccountScopedStorage):
+    /// the owning account's namespace when the owner is known, the
+    /// guest namespace for orphans. Never read to unlock anything.
+    private static let pendingRevokeBaseKey = "iap.pendingRevokes.v1"
+
+    /// Base key for the server-verified entitlement cache (H2),
+    /// stored as JSON under an account-scoped key for the account
+    /// the server rows belong to. The namespace is always resolved
+    /// from the explicit user ID, never from the cached current
+    /// namespace, so the timing of AuthService namespace updates
+    /// cannot misfile one account's cache under another identity.
+    private static let serverEntitlementCacheBaseKey = "iap.serverEntitlements.v1"
+
+    /// How long a server-verified cache record stays usable after a
+    /// failed server read: 7 days. Past that, a failed read locks
+    /// the server entitlements until a read succeeds.
+    private static let serverEntitlementCacheValidity: TimeInterval = 7 * 24 * 60 * 60
 
     /// The fetched products, empty until the store loads them.
     @Published private(set) var products: [Product] = []
@@ -196,22 +195,32 @@ final class StoreManager: ObservableObject {
         products.first { $0.id == productID }
     }
 
-    /// Product IDs with an active verified StoreKit transaction on
-    /// this device. Set only from Transaction.currentEntitlements.
-    @Published private(set) var purchasedProductIDs: Set<String> = []
+    /// True when every catalogue product has loaded from StoreKit.
+    var allProductsLoaded: Bool {
+        !products.isEmpty && Self.allProductIDs.allSatisfy { storeProduct(for: $0) != nil }
+    }
 
-#if DEBUG
-    /// Product IDs unlocked by a debug test purchase on this device.
-    /// Debug builds only; never synced to the server.
-    @Published private(set) var testPurchasedProductIDs: Set<String> = []
-#endif
+    /// Product IDs with an active verified StoreKit transaction on
+    /// this device. Set only from Transaction.currentEntitlements,
+    /// through setPurchasedProductIDs. In Release this set starts
+    /// empty and is populated only by verified transactions, never
+    /// from a stored cache.
+    @Published private(set) var purchasedProductIDs: Set<String> = []
 
     /// Product IDs with an active user_purchases row for the signed-in
     /// user on the server. This is the ONLY server path that unlocks
-    /// a product, and it is set only by reading Supabase, never by
-    /// anything stored on this device. Guests (no account) never have
+    /// a product. It is set by a definitive server read, or, when a
+    /// server read fails, by replaying the server-verified cache for
+    /// the same account (see the H2 helpers); it is never set from
+    /// any other stored state. Guests (no account) never have
     /// one; their StoreKit purchase is what unlocks them.
     @Published private(set) var serverEntitledProductIDs: Set<String> = []
+
+    /// Product IDs the retired build-phase Buy bypass unlocked.
+    /// Always empty now: the bypass is retired, init() purges its
+    /// stored key, and isProductOwned() never consults this set.
+    /// Kept so existing call sites and tests keep compiling.
+    @Published private(set) var buildPhaseUnlockedProductIDs: Set<String> = []
 
     /// True when the App Store entitlement for Situations is active
     /// on this device (bought, and verified from the transaction).
@@ -220,9 +229,9 @@ final class StoreManager: ObservableObject {
     }
 
     /// True when the signed-in user has an active user_purchases row
-    /// for Situations on the server. This is the ONLY server path
-    /// that unlocks Situations, and it is set only by reading
-    /// Supabase, never by anything stored on this device. Guests
+    /// for Situations on the server, or a fresh server-verified
+    /// cache record for the same account after a failed server read.
+    /// This is the ONLY server path that unlocks Situations. Guests
     /// (no account) never have one; their StoreKit purchase is what
     /// unlocks them.
     var isServerEntitlementVerified: Bool {
@@ -242,24 +251,11 @@ final class StoreManager: ObservableObject {
         ownedTransactions.first
     }
 
-    /// The latest UPI claim for the signed-in user, as read from the
-    /// server. In-memory only, never persisted locally. Nil when no
-    /// UTR has ever been submitted. A claim that exists is Pending
-    /// until an admin verifies it; it does not unlock on its own.
-    /// Only one claim is held at a time: the latest claim for the
-    /// product the Purchases screen is currently showing.
-    @Published private(set) var upiClaim: UPIClaim?
-
-    /// True when a claim exists that has not been sent to the server
-    /// yet (submitted while signed out, or the insert failed). It is
-    /// retried on the next refresh; it never unlocks anything.
-    @Published private(set) var hasPendingClaimUpload = false
-
     /// True when a StoreKit purchase could not be recorded on the
-    /// server (the user_purchases table is read-only for the app
-    /// under current RLS; see syncPurchaseEntitlementToServer). The
-    /// on-device StoreKit entitlement still works; this only means
-    /// the purchase is not yet visible on other devices.
+    /// server (for example the record-purchase Edge Function call
+    /// failed). The on-device StoreKit entitlement still works; this
+    /// only means the purchase is not yet visible on other devices.
+    /// Call retryPendingServerSync() to try again.
     @Published private(set) var serverEntitlementSyncPending = false
 
     /// True while products are being fetched or a purchase is running.
@@ -276,81 +272,89 @@ final class StoreManager: ObservableObject {
     func clearStatusMessage() { statusMessage = nil }
 
     /// The display price for Payment Situations from StoreKit when the
-    /// product is loaded, otherwise the fixed Rs. 4,999. Never changes
-    /// the price itself.
+    /// product is loaded, otherwise "Price unavailable". A hardcoded
+    /// catalogue price is NEVER shown as a purchase price.
     var priceText: String {
         priceText(for: Self.situationsProductID)
     }
 
     /// The display price for one product from StoreKit when it is
-    /// loaded, otherwise the fixed price from PaymentConfig. Never
-    /// changes the price itself.
+    /// loaded, otherwise "Price unavailable". The StoreKit localised
+    /// displayPrice is the only price ever presented as a purchase
+    /// price; the catalogue priceINR is reference data only and is
+    /// never shown here. Callers must check isPriceAvailable(for:)
+    /// before offering a purchase.
     func priceText(for productID: String) -> String {
         if let product = storeProduct(for: productID) {
             return product.displayPrice
         }
-        return PaymentConfig.product(for: productID)?.priceText ?? PaymentConfig.priceText
+        return "Price unavailable"
+    }
+
+    /// True when the StoreKit product has loaded and a real price is
+    /// available for a purchase. False means the Buy button must stay
+    /// disabled: a purchase must never be offered at a hardcoded
+    /// price, or at no price.
+    func isPriceAvailable(for productID: String) -> Bool {
+        storeProduct(for: productID) != nil
     }
 
     /// How the current Situations entitlement was obtained, for the
     /// Purchases screen. App Store wins when both exist.
     var purchaseMethod: String? {
         if isPurchased { return "App Store" }
-        if isUPIClaimVerified { return "UPI" }
         if isServerEntitlementVerified { return "Verified purchase" }
         return nil
     }
 
     /// The date the latest entitlement was purchased, from the
-    /// verified App Store transaction when there is one. UPI claims
-    /// have no transaction date; they show their submitted date
-    /// in the claims tab instead.
+    /// verified App Store transaction when there is one.
     var purchasedOnDate: Date? {
         latestTransaction?.purchaseDate
     }
 
     /// True when this product is owned outright: a verified StoreKit
     /// transaction on this device, or an active server entitlement
-    /// for the signed-in user. The full course is not counted here:
-    /// see isProductUnlocked.
+    /// for the signed-in user (a definitive server read, or a fresh
+    /// server-verified cache record after a failed read). The full
+    /// course is not counted here: see isProductUnlocked. ONLY those
+    /// two sources count, in every build; no stored flag other than
+    /// the server-verified cache is ever consulted.
     func isProductOwned(_ productID: String) -> Bool {
-        if purchasedProductIDs.contains(productID) || serverEntitledProductIDs.contains(productID) { return true }
-#if DEBUG
-        return testPurchasedProductIDs.contains(productID)
-#else
-        return false
-#endif
+        purchasedProductIDs.contains(productID) || serverEntitledProductIDs.contains(productID)
     }
 
     /// True when this product is unlocked: owned outright, or the
-    /// Integrated Course is owned (it unlocks everything, including
-    /// Situations). A submitted UTR never unlocks: it only creates a
-    /// pending server claim, and only an admin-verified claim (which
-    /// writes the user_purchases row) unlocks through the server path.
+    /// Integrated Course is owned. The Integrated Course unlocks
+    /// all chapter products and all Payment Situations. Situations
+    /// is also sold standalone: owning the situations product
+    /// unlocks it without the full course.
     func isProductUnlocked(_ productID: String) -> Bool {
         if isProductOwned(productID) { return true }
         if productID == Self.fullCourseProductID { return false }
         return isProductOwned(Self.fullCourseProductID)
     }
 
-    /// Situations are unlocked when EITHER the In-App Purchase is
-    /// active on this device OR the signed-in user has an active
-    /// server entitlement in Supabase user_purchases, OR the
-    /// Integrated Course is owned. A submitted UTR never unlocks: it
-    /// only creates a pending server claim, and only an admin-verified
-    /// claim (which writes the user_purchases row) unlocks through
-    /// the server path.
+    /// Situations are unlocked for paid access when the situations
+    /// product is owned outright (an In-App Purchase active on
+    /// this device, or an active server entitlement in Supabase
+    /// user_purchases for the signed-in user), or when the
+    /// Integrated Course is owned. The free sample situations are
+    /// handled in SituationsView and stay free regardless of this
+    /// value.
     var isSituationsUnlocked: Bool {
         isProductUnlocked(Self.situationsProductID)
     }
 
     /// True when a chapter is unlocked: the Integrated Course is
     /// owned, or the bundle containing this chapter is owned. A
-    /// chapter no bundle contains is never locked: it stays open
-    /// rather than locking content the catalogue cannot map.
+    /// chapter no bundle contains is LOCKED (fail closed): an
+    /// unmapped chapter is a catalogue error, and it must never be
+    /// given away silently. All 100 manifest chapters are mapped
+    /// (see the M1 test), so no real chapter is affected.
     func isChapterUnlocked(_ chapterID: String) -> Bool {
         if isProductOwned(Self.fullCourseProductID) { return true }
-        guard let bundle = PaymentConfig.productContaining(chapterID) else { return true }
+        guard let bundle = ProductCatalogue.productContaining(chapterID: chapterID) else { return false }
         return isProductOwned(bundle.productID)
     }
 
@@ -359,43 +363,43 @@ final class StoreManager: ObservableObject {
     /// unlocked.
     func unlockingProduct(for chapterID: String) -> CourseProduct? {
         guard !isChapterUnlocked(chapterID) else { return nil }
-        return PaymentConfig.productContaining(chapterID)
+        return ProductCatalogue.productContaining(chapterID: chapterID)
     }
 
-    /// How many of the 12 products are unlocked, for the Purchases
+    /// How many catalogue products are unlocked, for the Purchases
     /// screen summary.
     var unlockedProductCount: Int {
         Self.allProductIDs.filter { isProductUnlocked($0) }.count
     }
 
-    /// True when a UPI claim is known for this user, whatever its
-    /// status. Display only; do not use it as an unlock check.
-    var hasUPIClaim: Bool {
-        upiClaim != nil
-    }
-
-    /// True only when the server says the latest UPI claim is
-    /// Verified. Display only: the unlock itself comes from the
-    /// user_purchases row that verification creates, read by
-    /// refreshEntitlementFromServer, not from this flag.
-    var isUPIClaimVerified: Bool {
-        upiClaim?.status == .verified
-    }
-
     private var updatesTask: Task<Void, Never>?
 
+    /// True while a product fetch is in flight, so concurrent
+    /// loadProducts() calls do not stack duplicate fetches. A failed
+    /// or partial fetch can always be retried once it finishes.
+    private var isLoadingProducts = false
+
     init() {
+        // The retired bypass key is purged in every build, so a
+        // bypass unlock left by an older DEBUG build can never
+        // unlock anything again.
+        UserDefaults.standard.removeObject(forKey: Self.buildPhaseUnlockedProductIDsKey)
+#if DEBUG
+        // DEBUG only: restore the verified-transaction cache so a
+        // development build keeps its unlocked state across
+        // restarts until refreshEntitlement() re-checks it. This
+        // cache is written only from verified transactions.
         let cached = UserDefaults.standard.stringArray(forKey: Self.purchasedProductIDsKey) ?? []
         purchasedProductIDs = Set(cached.filter { Self.allProductIDs.contains($0) })
-#if DEBUG
-        let testCached = UserDefaults.standard.stringArray(forKey: Self.testPurchasedProductIDsKey) ?? []
-        testPurchasedProductIDs = Set(testCached.filter { Self.allProductIDs.contains($0) })
-#endif
         // Older builds cached only the Situations purchase under the
         // single key; carry it into the per-product set once.
         if UserDefaults.standard.bool(forKey: Self.purchasedKey) {
             purchasedProductIDs.insert(Self.situationsProductID)
         }
+#else
+        // Release: start locked. Verified entitlements populate this
+        // set through refreshEntitlement() in start().
+#endif
     }
 
     deinit {
@@ -403,34 +407,50 @@ final class StoreManager: ObservableObject {
     }
 
     /// Load the products and re-check the entitlements. Call once at launch.
-    /// Starts the listener for transaction updates (refunds, purchases
-    /// made on another device, family sharing). Migrates any legacy
-    /// local UPI claim to the server first, then re-checks both the
-    /// App Store entitlements and the server entitlements.
+    /// Starts the listener for transaction updates (refunds,
+    /// revocations, purchases made on another device, family sharing),
+    /// then re-checks the App Store entitlements and the server
+    /// entitlements for the signed-in user, retries recording any
+    /// owned transaction the server has not confirmed yet (the
+    /// best-effort queue for the record-purchase call), sweeps the
+    /// transaction history for revokes the listener never saw, and
+    /// retries any pending server revoke. Calling start() again
+    /// restarts the listener instead of stacking a second one.
     func start() async {
+        updatesTask?.cancel()
         updatesTask = Task { [weak self] in
             for await update in Transaction.updates {
                 await self?.handleTransactionUpdate(update)
             }
         }
-        await loadProduct()
-        await migrateLegacyLocalClaim()
+        await loadProducts()
         await refreshEntitlement()
-        await refreshUPIClaimStatus()
+        await refreshEntitlementFromServer()
+        await syncOwnedTransactionsToServer()
+        await enqueueRevokesFromTransactionHistory()
+        await retryPendingRevokes()
     }
 
-    /// Fetch all 12 products from the App Store (or the local .storekit
-    /// file while there are no App Store Connect products yet).
+    /// Fetch all catalogue products from the App Store (or the local
+    /// .storekit file while there are no App Store Connect products
+    /// yet). Always refetches, so a failed or partial load can be
+    /// retried; concurrent calls share the in-flight fetch.
     func loadProducts() async {
-        guard products.isEmpty else { return }
+        guard !isLoadingProducts else { return }
+        isLoadingProducts = true
         isBusy = true
-        defer { isBusy = false }
+        defer {
+            isBusy = false
+            isLoadingProducts = false
+        }
         do {
             let fetched = try await Product.products(for: Self.allProductIDs)
             products = fetched.sorted { $0.id < $1.id }
             productLoadFailed = fetched.isEmpty
             if fetched.isEmpty {
                 statusMessage = "The products could not be loaded. Check your connection and try again."
+            } else if fetched.count < Self.allProductIDs.count {
+                statusMessage = "Some course prices could not be loaded. Check your connection and try again."
             }
         } catch {
             productLoadFailed = true
@@ -439,7 +459,7 @@ final class StoreManager: ObservableObject {
     }
 
     /// Fetch the products. Kept so existing call sites reading
-    /// loadProduct keep working; it loads all 12 products.
+    /// loadProduct keep working; it loads all catalogue products.
     func loadProduct() async {
         await loadProducts()
     }
@@ -450,40 +470,30 @@ final class StoreManager: ObservableObject {
         await purchase(productID: Self.situationsProductID)
     }
 
-#if DEBUG
-    /// Record a debug test purchase: unlocks the product on this
-    /// device only, for testing. Debug builds only; never touches
-    /// StoreKit or the server.
-    private func recordTestPurchase(productID: String) {
-        testPurchasedProductIDs.insert(productID)
-        UserDefaults.standard.set(Array(testPurchasedProductIDs), forKey: Self.testPurchasedProductIDsKey)
-        let name = PaymentConfig.product(for: productID)?.name ?? "The course"
-        statusMessage = "Test purchase: \(name) unlocked on this device."
-    }
-#endif
-
     /// Buy one product. Handles success, cancellation, pending and
-    /// failure with a clear message for each.
+    /// failure with a clear message for each. A failed, cancelled,
+    /// pending or unverified purchase never unlocks anything. A
+    /// purchase is only offered when the StoreKit product (and its
+    /// real price) has loaded; otherwise the buyer is told the price
+    /// is unavailable and nothing is charged.
     func purchase(productID: String) async {
-        guard PaymentConfig.product(for: productID) != nil else {
+        guard let catalogueProduct = ProductCatalogue.product(for: productID) else {
             statusMessage = "That product is not available. Please try again."
             return
         }
+        if isProductUnlocked(productID) {
+            statusMessage = "\(catalogueProduct.name) is already unlocked."
+            return
+        }
+        // Every build buys through StoreKit: in test builds the
+        // product comes from the local PaymentForge.storekit
+        // configuration, and only a verified transaction unlocks.
         if storeProduct(for: productID) == nil {
             await loadProducts()
         }
         guard let product = storeProduct(for: productID) else {
-#if DEBUG
-            // Debug builds only: the store has no products (no
-            // .storekit config or no App Store Connect products yet),
-            // so Buy records a local test purchase and unlocks now.
-            // Release builds keep the error below.
-            recordTestPurchase(productID: productID)
+            statusMessage = "The price is not available yet. Check your connection and try again."
             return
-#else
-            statusMessage = "The product could not be loaded. Check your connection and try again."
-            return
-#endif
         }
         isBusy = true
         defer { isBusy = false }
@@ -505,7 +515,10 @@ final class StoreManager: ObservableObject {
     }
 
     /// Restore purchases made on this Apple ID (reinstall, new device).
-    /// Asks the App Store to sync, then re-checks the entitlements.
+    /// Asks the App Store to sync, then re-checks both entitlement
+    /// sources, records any restored on-device purchases on the
+    /// server for the signed-in user, so they sync across devices,
+    /// and retries any pending server revoke.
     func restorePurchases() async {
         isBusy = true
         defer { isBusy = false }
@@ -517,27 +530,35 @@ final class StoreManager: ObservableObject {
         }
         await refreshEntitlement()
         await refreshEntitlementFromServer()
+        await syncOwnedTransactionsToServer()
+        await retryPendingRevokes()
         let unlocked = unlockedProductCount
         if unlocked > 0 {
-            statusMessage = "Purchases restored. \(unlocked) of 12 products unlocked."
+            statusMessage = "Purchases restored. \(unlocked) of \(Self.allProductIDs.count) products unlocked."
         } else {
             statusMessage = "No purchase was found for this Apple ID."
         }
     }
 
-    /// Re-check the current App Store entitlements for all 12 products.
-    /// A refunded or revoked transaction removes the entitlement and
-    /// clears the stored transaction, so the UI goes back to
-    /// Not purchased. Server entitlements are untouched by this:
-    /// refunds only apply to App Store purchases.
+    /// Re-check the current App Store entitlements for all catalogue
+    /// products. A refunded or revoked transaction removes the
+    /// entitlement and clears the stored transaction, so the UI goes
+    /// back to Not purchased. This function deliberately never calls
+    /// the server revoke: absence from currentEntitlements is not
+    /// proof of a revocation (a transaction can be absent for other
+    /// reasons), and revoking on absence could permanently revoke a
+    /// live purchase. The authoritative revocation signal is the
+    /// revocationDate on a delivered transaction update (see
+    /// handleRevokedTransaction) or in the transaction history (see
+    /// enqueueRevokesFromTransactionHistory, run at launch); both
+    /// persist a pending revoke that retries until confirmed.
+    /// Server entitlements are untouched by this function.
     func refreshEntitlement() async {
         var entitled: [Transaction] = []
         for await result in Transaction.currentEntitlements {
             guard case .verified(let transaction) = result else { continue }
-            if Self.allProductIDs.contains(transaction.productID),
-               transaction.revocationDate == nil {
-                entitled.append(transaction)
-            }
+            guard isEntitlingTransaction(transaction) else { continue }
+            entitled.append(transaction)
         }
         entitled.sort { $0.purchaseDate > $1.purchaseDate }
         ownedTransactions = entitled
@@ -546,255 +567,102 @@ final class StoreManager: ObservableObject {
 
     /// Re-read the server entitlements for the signed-in user from
     /// Supabase user_purchases. This is the only server unlock path.
-    /// Guests have no server entitlement. A revoked or refunded
-    /// server row (status not active) grants nothing.
+    /// Guests have no server entitlement, and an unconfigured server
+    /// means no server entitlement either: both clear the set.
+    /// A definitive server answer (the read succeeded) REPLACES the
+    /// set and the cache, even when it is empty: an empty answer
+    /// means no active row, and it is the only response that clears
+    /// a cached entitlement. A failed read (no network, a server
+    /// error, an undecodable reply, or no usable token) never clears
+    /// on its own: the fresh server-verified cache for this account
+    /// is replayed instead, or the set is cleared when there is no
+    /// fresh cache. The StoreKit entitlements are untouched.
     func refreshEntitlementFromServer() async {
         guard SupabaseConfig.isConfigured,
-              let userID = AuthService.shared.currentUser?.id,
-              let token = await AuthService.shared.validAccessToken() else {
+              let userID = AuthService.shared.currentUser?.id else {
             serverEntitledProductIDs = []
             return
         }
-        do {
-            let data = try await SupabaseClient.shared.restGet(
-                table: "user_purchases",
-                query: "select=user_id,product_id,store,status&user_id=eq.\(userID)&status=eq.active",
-                accessToken: token
-            )
-            let rows = try SupabaseClient.shared.decodeRows(data, as: UserPurchaseRow.self)
-            serverEntitledProductIDs = Set(rows.map { $0.productID }.filter { Self.allProductIDs.contains($0) })
-        } catch {
-            // A failed read never unlocks and never locks out a
-            // StoreKit purchase: it only leaves the server set empty
-            // when it was already empty, and keeps the StoreKit
-            // entitlements untouched.
-            serverEntitledProductIDs = []
-        }
-    }
-
-    // MARK: - UPI claims (server only, never local)
-
-    /// Submit a UTR for manual verification for Payment Situations.
-    /// Kept so existing call sites keep working.
-    @discardableResult
-    func submitUPIClaim(payerName: String, utr: String) async -> UPIClaim {
-        await submitUPIClaim(productID: Self.situationsProductID, payerName: payerName, utr: utr)
-    }
-
-    /// Submit a UTR for manual verification for one product. This
-    /// writes a PENDING row to Supabase payment_claims and returns the
-    /// claim; it does NOT unlock the product. Only an admin-verified
-    /// claim unlocks, through the user_purchases row the edge function
-    /// creates. A guest (not signed in) cannot write a server row under
-    /// RLS, so the claim is held in memory only and flagged for upload;
-    /// it is sent on the next refresh once the user signs in.
-    @discardableResult
-    func submitUPIClaim(productID: String, payerName: String, utr: String) async -> UPIClaim {
-        let product = PaymentConfig.product(for: productID)
-        let claim = UPIClaim(
-            productID: productID,
-            product: product.map { "\($0.name), \($0.contentsText)" } ?? productID,
-            amount: product?.priceINR ?? PaymentConfig.priceAmountINR,
-            payerName: payerName,
-            utr: utr,
-            submittedAt: ISO8601DateFormatter().string(from: Date()),
-            status: .pending
-        )
-        upiClaim = claim
-        hasPendingClaimUpload = true
-        await uploadClaimToServer(claim)
-        return upiClaim ?? claim
-    }
-
-    /// Retry sending a claim that is held locally because the user
-    /// was signed out (or the insert failed) when it was submitted.
-    /// Called from refreshUPIClaimStatus and from start().
-    func uploadPendingClaim() async {
-        guard let claim = upiClaim, hasPendingClaimUpload else { return }
-        await uploadClaimToServer(claim)
-    }
-
-    /// Send one claim row to Supabase payment_claims. Never grants
-    /// access; the row is always status pending.
-    private func uploadClaimToServer(_ claim: UPIClaim) async {
-        guard SupabaseConfig.isConfigured,
-              let userID = AuthService.shared.currentUser?.id,
-              let token = await AuthService.shared.validAccessToken() else {
-            // Not signed in (or not configured): keep the claim in
-            // memory only and retry after sign-in. Never unlock.
-            statusMessage = "Your UTR is recorded as Pending. Sign in so it can be sent for verification."
+        guard let token = await AuthService.shared.validAccessToken() else {
+            serverEntitledProductIDs = cachedServerEntitlements(for: userID) ?? []
             return
         }
-        let row = PaymentClaimRow(
-            id: nil,
-            userID: userID,
-            productID: claim.productID,
-            amount: Double(claim.amount),
-            payerName: claim.payerName,
-            utr: claim.utr,
-            status: UPIClaimStatus.pending.rawValue.lowercased(),
-            submittedAt: claim.submittedAt
-        )
-        do {
-            let data = try await SupabaseClient.shared.restInsert(
-                table: "payment_claims",
-                rows: [row],
-                accessToken: token,
-                returning: true
-            )
-            let inserted = try? SupabaseClient.shared.decodeRows(data, as: PaymentClaimRow.self)
-            var saved = claim
-            if let serverID = inserted?.first?.id {
-                saved = UPIClaim(
-                    id: serverID,
-                    productID: claim.productID,
-                    product: claim.product,
-                    amount: claim.amount,
-                    payerName: claim.payerName,
-                    utr: claim.utr,
-                    submittedAt: claim.submittedAt,
-                    status: claim.status
-                )
-            }
-            upiClaim = saved
-            hasPendingClaimUpload = false
-            statusMessage = nil
-        } catch {
-            // The insert failed: the claim stays pending-upload in
-            // memory and is retried later. It never unlocks.
-            hasPendingClaimUpload = true
-            statusMessage = "Your UTR could not be sent yet. Check your connection and refresh the claim status."
+        if let definitive = await fetchServerEntitledProductIDs(userID: userID, accessToken: token) {
+            applyDefinitiveServerEntitlements(definitive, userID: userID)
+        } else {
+            serverEntitledProductIDs = cachedServerEntitlements(for: userID) ?? []
         }
     }
 
-    /// Re-fetch the latest claim status for Payment Situations from
-    /// Supabase. Kept so existing call sites keep working.
-    func refreshUPIClaimStatus() async {
-        await refreshUPIClaimStatus(for: Self.situationsProductID)
-    }
-
-    /// Re-fetch the latest claim status for one product from Supabase
-    /// and update the UI. This is the ONLY way a claim status changes
-    /// in the app: no local method can mark a claim verified or
-    /// rejected. After reading the claim, the server entitlements are
-    /// re-read too, so an admin-verified payment unlocks through
-    /// user_purchases.
-    func refreshUPIClaimStatus(for productID: String) async {
-        await uploadPendingClaim()
-        guard SupabaseConfig.isConfigured,
-              let userID = AuthService.shared.currentUser?.id,
-              let token = await AuthService.shared.validAccessToken() else {
-            return
-        }
-        do {
-            let data = try await SupabaseClient.shared.restGet(
-                table: "payment_claims",
-                query: "select=id,user_id,product_id,amount,payer_name,utr,status,submitted_at&user_id=eq.\(userID)&product_id=eq.\(productID)&order=submitted_at.desc&limit=1",
-                accessToken: token
-            )
-            let rows = try SupabaseClient.shared.decodeRows(data, as: PaymentClaimRow.self)
-            if let row = rows.first {
-                let status = UPIClaimStatus(rawValue: row.status.capitalized) ?? .pending
-                let product = PaymentConfig.product(for: productID)
-                // Keep the payer name from the claim already on screen
-                // when it is for the same product; the server row does
-                // not always carry it back.
-                let payerName = (upiClaim?.productID == productID) ? (upiClaim?.payerName ?? "") : (row.payerName ?? "")
-                upiClaim = UPIClaim(
-                    id: row.id,
-                    productID: productID,
-                    product: product.map { "\($0.name), \($0.contentsText)" } ?? productID,
-                    amount: Int(row.amount),
-                    payerName: payerName,
-                    utr: row.utr,
-                    submittedAt: row.submittedAt ?? upiClaim?.submittedAt ?? ISO8601DateFormatter().string(from: Date()),
-                    status: status
-                )
-                hasPendingClaimUpload = false
-            } else if upiClaim?.productID == productID {
-                // No server claim for this product: clear a stale
-                // on-screen claim for it rather than showing another
-                // product's claim under this product's name.
-                upiClaim = nil
-            }
-        } catch {
-            // A failed refresh leaves the last known claim on screen
-            // and changes nothing about access.
-        }
+    /// Re-check both entitlement sources after authentication, and
+    /// record any on-device StoreKit purchases on the server so they
+    /// follow the account to other devices. Call this after sign-in
+    /// completes. It also covers purchases bought as a guest before
+    /// signing in: the verified on-device transactions are recorded
+    /// against the account that just signed in. Pending server
+    /// revokes for this account (including orphans filed while
+    /// signed out) are retried last.
+    func syncEntitlementsAfterSignIn() async {
+        await refreshEntitlement()
         await refreshEntitlementFromServer()
+        await syncOwnedTransactionsToServer()
+        await retryPendingRevokes()
     }
 
-    /// Remove the in-memory claim from this device. This deletes
-    /// nothing on the server: a submitted claim can only be decided
-    /// by an admin. Kept so the UI can clear a claim that was never
-    /// sent (for example a guest claim held only in memory).
-    func clearUPIClaim() {
-        upiClaim = nil
-        hasPendingClaimUpload = false
+    /// Drop every account-scoped entitlement. Call on sign-out so the
+    /// next account (or a guest) never inherits the previous
+    /// account's server entitlements. On-device StoreKit
+    /// entitlements are untouched: they belong to the Apple ID, not
+    /// to the app account. The server-verified cache and the pending
+    /// revokes are deliberately NOT deleted here: both stay filed
+    /// under the signed-out account's namespace, the in-memory set
+    /// is what is cleared, and account deletion removes the whole
+    /// namespace. A different account reads different keys and can
+    /// never replay this account's cache.
+    func clearAccountEntitlements() {
+        serverEntitledProductIDs = []
+        serverEntitlementSyncPending = false
     }
 
-    /// One-time migration for claims an older build stored locally
-    /// under pf.upiClaim.v1. The local copy is deleted immediately,
-    /// before any network call, so it can never be read as an unlock
-    /// again. The claim is then submitted ONCE to Supabase as status
-    /// pending (never granting access). When the user is signed out
-    /// the claim is held in memory only and uploaded on the next
-    /// refresh after sign-in.
-    private func migrateLegacyLocalClaim() async {
-        guard let json = UserDefaults.standard.string(forKey: Self.legacyUPIClaimKey),
-              let data = json.data(using: .utf8),
-              let legacy = try? JSONDecoder().decode(UPIClaim.self, from: data) else {
-            return
-        }
-        UserDefaults.standard.removeObject(forKey: Self.legacyUPIClaimKey)
-        // Never let a legacy verified-looking local status through:
-        // the migrated claim is always pending until the server says
-        // otherwise.
-        let pending = UPIClaim(
-            id: legacy.id,
-            productID: legacy.productID,
-            product: legacy.product,
-            amount: legacy.amount,
-            payerName: legacy.payerName,
-            utr: legacy.utr,
-            submittedAt: legacy.submittedAt,
-            status: .pending
-        )
-        upiClaim = pending
-        hasPendingClaimUpload = true
-        await uploadClaimToServer(pending)
+    /// Retry recording on-device purchases on the server after a
+    /// failed sync. No-op when nothing is pending. There is no
+    /// direct UI caller yet: retries happen on every launch
+    /// (start()), on every sign-in (syncEntitlementsAfterSignIn),
+    /// and through the restore and transaction-update paths, which
+    /// all record owned transactions. A dedicated retry trigger
+    /// (for example on foreground) is a follow-up.
+    func retryPendingServerSync() async {
+        guard serverEntitlementSyncPending else { return }
+        await syncOwnedTransactionsToServer()
     }
 
     // MARK: - Server purchase entitlement
 
     /// Record a verified StoreKit purchase on the server so the
-    /// entitlement syncs across devices. Called on purchase, on
-    /// restore and on transaction updates.
-    /// NOTE: under the current RLS (0002_rls.sql) user_purchases is
-    /// SELECT-only for the app, so a direct upsert is rejected and
-    /// this sets serverEntitlementSyncPending instead. The on-device
-    /// StoreKit entitlement is unaffected. A server-side
-    /// record-purchase edge function (service-role key, same pattern
-    /// as verify-upi-claim) is needed before cross-device StoreKit
-    /// sync works; until then the flag records that the write is due.
+    /// entitlement syncs across devices. Best effort only: unlocking
+    /// never waits for this call (callers run it detached, after the
+    /// local entitlement refresh), and a failed record is queued by
+    /// retry: the owned verified transactions are re-recorded on
+    /// every launch, sign-in, and restore until the server confirms.
+    /// Only verified, entitlement-granting transactions are ever
+    /// recorded: guests keep only the on-device StoreKit purchase,
+    /// and a failed server record sets
+    /// serverEntitlementSyncPending instead of locking the user out
+    /// here.
+    /// The write goes through the record-purchase Edge Function,
+    /// which holds the service-role key server-side, because
+    /// user_purchases is SELECT-only for the app under RLS. The
+    /// function upserts on transaction_id, so repeat calls never
+    /// duplicate.
     private func syncPurchaseEntitlementToServer(_ transaction: Transaction) async {
+        guard isEntitlingTransaction(transaction) else { return }
         guard SupabaseConfig.isConfigured,
               let userID = AuthService.shared.currentUser?.id,
               let token = await AuthService.shared.validAccessToken() else {
             // Guests keep only the on-device StoreKit purchase.
             return
         }
-        // user_purchases is SELECT-only for the app under RLS, so the
-        // write goes through the record-purchase edge function, which
-        // holds the service-role key server-side. The function upserts
-        // on transaction_id, so repeat calls never duplicate.
-        let ok = await SupabaseClient.shared.recordPurchaseViaFunction(
-            transactionID: String(transaction.id),
-            productID: transaction.productID,
-            userID: userID,
-            purchasedAt: transaction.purchaseDate,
-            accessToken: token
-        )
+        let ok = await recordTransactionOnServer(transaction, userID: userID, accessToken: token)
         if ok {
             serverEntitlementSyncPending = false
             await refreshEntitlementFromServer()
@@ -803,28 +671,308 @@ final class StoreManager: ObservableObject {
         }
     }
 
-    /// Ask the server to drop the entitlement for a refunded or
-    /// revoked transaction. Goes through the record-purchase edge
-    /// function (the app cannot update user_purchases under RLS).
-    /// Best effort only: a failed call only sets the sync-pending
-    /// flag. The on-device entitlement is already cleared by
-    /// refreshEntitlement, so access is lost on this device regardless.
-    private func revokeServerEntitlement(transactionID: String) async {
+    /// Record every currently owned on-device transaction on the
+    /// server, then refresh the server entitlements once. Used on
+    /// every launch, after restore, after sign-in, and when retrying
+    /// a pending sync. The owned verified transactions are the
+    /// queue: a record that failed before is simply tried again,
+    /// and the server upserts on transaction_id, so repeats never
+    /// duplicate.
+    private func syncOwnedTransactionsToServer() async {
         guard SupabaseConfig.isConfigured,
               let userID = AuthService.shared.currentUser?.id,
               let token = await AuthService.shared.validAccessToken() else {
             return
         }
-        _ = await SupabaseClient.shared.revokePurchaseViaFunction(
+        var allRecorded = true
+        for transaction in ownedTransactions {
+            guard isEntitlingTransaction(transaction) else { continue }
+            let ok = await recordTransactionOnServer(transaction, userID: userID, accessToken: token)
+            if !ok { allRecorded = false }
+        }
+        if allRecorded {
+            serverEntitlementSyncPending = false
+            await refreshEntitlementFromServer()
+        } else if !ownedTransactions.isEmpty {
+            serverEntitlementSyncPending = true
+        }
+    }
+
+    /// One record-purchase Edge Function call for one verified
+    /// transaction. Returns true only when the server confirmed the
+    /// record (the function replies with ok true). The caller owns
+    /// the signed-in user check; this helper only validates the
+    /// transaction itself.
+    private func recordTransactionOnServer(_ transaction: Transaction, userID: String, accessToken: String) async -> Bool {
+        guard isEntitlingTransaction(transaction) else { return false }
+        return await SupabaseClient.shared.recordPurchaseViaFunction(
+            transactionID: String(transaction.id),
+            productID: transaction.productID,
+            userID: userID,
+            purchasedAt: transaction.purchaseDate,
+            accessToken: accessToken
+        )
+    }
+
+    /// Ask the server to drop the entitlement for a refunded or
+    /// revoked transaction. Goes through the record-purchase Edge
+    /// Function (the app cannot update user_purchases under RLS).
+    /// Returns true ONLY when the server confirmed the revoke. The
+    /// caller must persist a pending revoke BEFORE calling this and
+    /// must honour a false result: a failed call means the server
+    /// row may still read active, so the pending record stays and
+    /// the transaction stays unfinished until a retry confirms.
+    /// StoreKit reports refunds and revocations through the same
+    /// revocation date, so both are recorded with status "revoked".
+    /// The revoke is idempotent server-side: revoking a row that is
+    /// already revoked still answers ok, so a retried revoke after
+    /// a lost reply is safe. A missing row answers 404, which this
+    /// Bool API cannot distinguish from a transient failure; the
+    /// callers therefore also accept a definitive server read
+    /// showing no active row as proof that nothing is left to revoke.
+    private func revokeServerEntitlement(transactionID: String) async -> Bool {
+        guard SupabaseConfig.isConfigured,
+              let userID = AuthService.shared.currentUser?.id,
+              let token = await AuthService.shared.validAccessToken() else {
+            return false
+        }
+        return await revokeServerEntitlement(transactionID: transactionID, userID: userID, accessToken: token)
+    }
+
+    /// One revoke call with credentials the caller already resolved,
+    /// so a retry loop does not re-fetch a token per record. Returns
+    /// true only when the server confirmed the revoke.
+    private func revokeServerEntitlement(transactionID: String, userID: String, accessToken: String) async -> Bool {
+        await SupabaseClient.shared.revokePurchaseViaFunction(
             transactionID: transactionID,
             userID: userID,
             status: "revoked",
-            accessToken: token
+            accessToken: accessToken
         )
+    }
+
+    // MARK: - Pending server revokes (C3)
+
+    /// The stored pending revokes for one namespace (an account user
+    /// ID, or the guest namespace for orphans). A corrupt or missing
+    /// record list reads as empty; the launch history sweep
+    /// re-enqueues revoked transactions, so a corrupt list cannot
+    /// permanently lose a revoke.
+    private func loadPendingRevokes(namespace: String) -> [PendingRevoke] {
+        let key = AccountScopedStorage.key(Self.pendingRevokeBaseKey, namespace: namespace)
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let records = try? JSONDecoder().decode([PendingRevoke].self, from: data) else {
+            return []
+        }
+        return records
+    }
+
+    private func savePendingRevokes(_ records: [PendingRevoke], namespace: String) {
+        let key = AccountScopedStorage.key(Self.pendingRevokeBaseKey, namespace: namespace)
+        if let data = try? JSONEncoder().encode(records) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    /// Persist a pending revoke before its revoke is attempted, so a
+    /// crash or a kill between the attempt and its reply cannot lose
+    /// it. One record per transaction ID: re-enqueueing the same
+    /// transaction is a no-op. Records are filed under the owning
+    /// account's namespace, or the guest namespace when the owner
+    /// is unknown.
+    private func enqueuePendingRevoke(_ record: PendingRevoke) {
+        let namespace = record.userID ?? AccountScopedStorage.guestNamespace
+        var records = loadPendingRevokes(namespace: namespace)
+        guard !records.contains(where: { $0.transactionID == record.transactionID }) else { return }
+        records.append(record)
+        savePendingRevokes(records, namespace: namespace)
+    }
+
+    private func removePendingRevoke(transactionID: String, namespace: String) {
+        let records = loadPendingRevokes(namespace: namespace)
+            .filter { $0.transactionID != transactionID }
+        savePendingRevokes(records, namespace: namespace)
+    }
+
+    /// Retry every pending server revoke for the signed-in user,
+    /// plus every orphan filed while signed out. Called on every
+    /// launch, every sign-in, and every restore. No-op when nothing
+    /// is pending, when the server is unconfigured, or when nobody
+    /// is signed in: pending records wait for their account. An
+    /// orphan is attempted under the current account; the server
+    /// enforces row ownership, so an attempt under the wrong account
+    /// fails harmlessly and the orphan stays pending for the owning
+    /// account. After the attempts, one definitive server read
+    /// cleans up phantom records for this account: a pending record
+    /// whose product has no active row needs no revoke (the row was
+    /// never recorded, or is already revoked). Orphans are never
+    /// cleaned this way, because the current account's read says
+    /// nothing about another account's rows. This function never
+    /// writes serverEntitledProductIDs or the cache: only
+    /// applyDefinitiveServerEntitlements writes that state, and this
+    /// function never calls it.
+    private func retryPendingRevokes() async {
+        guard SupabaseConfig.isConfigured,
+              let userID = AuthService.shared.currentUser?.id else { return }
+        let ownRecords = loadPendingRevokes(namespace: userID)
+        let orphanRecords = loadPendingRevokes(namespace: AccountScopedStorage.guestNamespace)
+        guard !ownRecords.isEmpty || !orphanRecords.isEmpty else { return }
+        guard let token = await AuthService.shared.validAccessToken() else { return }
+        for record in ownRecords {
+            let confirmed = await revokeServerEntitlement(
+                transactionID: record.transactionID, userID: userID, accessToken: token)
+            if confirmed {
+                removePendingRevoke(transactionID: record.transactionID, namespace: userID)
+                removeDownloadsForRevokedProduct(record.productID)
+            }
+        }
+        for record in orphanRecords {
+            let confirmed = await revokeServerEntitlement(
+                transactionID: record.transactionID, userID: userID, accessToken: token)
+            if confirmed {
+                removePendingRevoke(transactionID: record.transactionID, namespace: AccountScopedStorage.guestNamespace)
+                removeDownloadsForRevokedProduct(record.productID)
+            }
+        }
+        let remaining = loadPendingRevokes(namespace: userID)
+        guard !remaining.isEmpty else { return }
+        guard let definitive = await fetchServerEntitledProductIDs(userID: userID, accessToken: token) else { return }
+        for record in remaining where !definitive.contains(record.productID) {
+            removePendingRevoke(transactionID: record.transactionID, namespace: userID)
+            removeDownloadsForRevokedProduct(record.productID)
+        }
+    }
+
+    /// Launch-only sweep for revokes the updates listener never saw:
+    /// a refund whose transaction was already finished (for example
+    /// by a build that finished before revoking) is never
+    /// redelivered, but the transaction history still carries its
+    /// revocationDate. Only revocationDate-bearing entries enqueue a
+    /// pending revoke; absence from currentEntitlements is never
+    /// treated as a revocation. Enqueueing is idempotent, and the
+    /// retry in start() attempts what this sweep files. While
+    /// signed out, entries file as orphans for a later sign-in.
+    private func enqueueRevokesFromTransactionHistory() async {
+        let ownerID = AuthService.shared.currentUser?.id
+        for await result in Transaction.all {
+            guard case .verified(let transaction) = result else { continue }
+            guard Self.allProductIDs.contains(transaction.productID) else { continue }
+            guard transaction.revocationDate != nil else { continue }
+            enqueuePendingRevoke(PendingRevoke(
+                transactionID: String(transaction.id),
+                productID: transaction.productID,
+                userID: ownerID
+            ))
+        }
+    }
+
+    // MARK: - Server entitlement cache (H2)
+
+    /// One server read for the signed-in user's active rows. Returns
+    /// the product IDs when the server answered definitively (the
+    /// set may be empty: that means no active row), or nil on ANY
+    /// failure (no network, a server error, an undecodable reply).
+    /// Nil is never evidence about the rows; only a returned set is.
+    /// Callers must not treat nil as empty. This helper writes no
+    /// state: applying a definitive answer belongs to
+    /// applyDefinitiveServerEntitlements.
+    private func fetchServerEntitledProductIDs(userID: String, accessToken: String) async -> Set<String>? {
+        do {
+            let data = try await SupabaseClient.shared.restGet(
+                table: "user_purchases",
+                query: "select=user_id,product_id,store,status&user_id=eq.\(userID)&status=eq.active",
+                accessToken: accessToken
+            )
+            let rows = try SupabaseClient.shared.decodeRows(data, as: UserPurchaseRow.self)
+            return Set(rows.map { $0.productID }.filter { Self.allProductIDs.contains($0) })
+        } catch {
+            return nil
+        }
+    }
+
+    /// Apply one definitive server answer: replace the in-memory set
+    /// and overwrite the cache record for this account, even when
+    /// the answer is empty. An empty definitive answer is what
+    /// clears a cached entitlement; nothing else may clear it.
+    private func applyDefinitiveServerEntitlements(_ productIDs: Set<String>, userID: String) {
+        serverEntitledProductIDs = productIDs
+        saveServerEntitlementCache(productIDs: productIDs, userID: userID)
+    }
+
+    /// The fresh server-verified cache for one account, or nil when
+    /// there is no usable record: missing, corrupt, filed for a
+    /// different account, or older than the validity window. A
+    /// record dated in the future is also unusable (fail closed on
+    /// clock or storage surprises). The returned set holds only
+    /// known catalogue product IDs.
+    ///
+    /// Release safety and DEBUG separation: this cache holds ONLY
+    /// records written by saveServerEntitlementCache from decoded
+    /// server rows, and it is read ONLY here, only from
+    /// refreshEntitlementFromServer after a server read was
+    /// attempted and failed, or no usable token could be obtained.
+    /// No purchase or ownership path can write to it or be read
+    /// from it: the retired bypass used the separate
+    /// buildPhaseUnlockedProductIDsKey and purchasedProductIDsKey,
+    /// init() never loads this cache, and no purchase or ownership
+    /// path references these keys.
+    /// The cache is therefore server-verified in both DEBUG and
+    /// Release, and a build can never unlock from a retired bypass
+    /// record through it. The account check inside the record is a
+    /// second line of defence behind the account-scoped key: even
+    /// if a key were ever misfiled, a record for another account
+    /// is refused.
+    private func cachedServerEntitlements(for userID: String) -> Set<String>? {
+        let key = AccountScopedStorage.key(Self.serverEntitlementCacheBaseKey, namespace: userID)
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let cache = try? JSONDecoder().decode(ServerEntitlementCache.self, from: data),
+              cache.userID == userID else {
+            return nil
+        }
+        let age = Date().timeIntervalSince1970 - cache.verifiedAt
+        guard age >= 0, age < Self.serverEntitlementCacheValidity else { return nil }
+        return Set(cache.productIDs.filter { Self.allProductIDs.contains($0) })
+    }
+
+    /// Write one cache record from a definitive server answer. The
+    /// ONLY writer is applyDefinitiveServerEntitlements, fed only by
+    /// fetchServerEntitledProductIDs. Never call this from any
+    /// purchase, bypass, or local-cache path.
+    private func saveServerEntitlementCache(productIDs: Set<String>, userID: String) {
+        let cache = ServerEntitlementCache(
+            userID: userID,
+            productIDs: Array(productIDs),
+            verifiedAt: Date().timeIntervalSince1970
+        )
+        let key = AccountScopedStorage.key(Self.serverEntitlementCacheBaseKey, namespace: userID)
+        if let data = try? JSONEncoder().encode(cache) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
     }
 
     // MARK: - Private
 
+    /// True when a verified transaction grants an entitlement: a
+    /// known catalogue product, not revoked, and owned outright or
+    /// shared through Family Sharing (the products are family
+    /// shareable). All products are non-consumable, so there is no
+    /// expiry to check.
+    private func isEntitlingTransaction(_ transaction: Transaction) -> Bool {
+        guard Self.allProductIDs.contains(transaction.productID) else { return false }
+        guard transaction.revocationDate == nil else { return false }
+        return transaction.ownershipType == .purchased || transaction.ownershipType == .familyShared
+    }
+
+    /// Handle a completed purchase. Only a verified transaction for
+    /// a known product, with no revocation, unlocks anything, and
+    /// only verified transactions are finished. An unverified result
+    /// is never finished and never unlocks. A revoked transaction
+    /// unlocks nothing and is handled by handleRevokedTransaction:
+    /// its server revoke is persisted and retried, and the
+    /// transaction is finished only once the revoke is confirmed
+    /// (or a definitive server read shows no active row). An
+    /// unfinished transaction is redelivered through the updates
+    /// listener, which is the retry mechanism.
     private func handlePurchaseSuccess(_ verification: VerificationResult<Transaction>) async {
         guard case .verified(let transaction) = verification else {
             statusMessage = "Purchase could not be verified. Please try again."
@@ -834,35 +982,149 @@ final class StoreManager: ObservableObject {
             statusMessage = "Purchase could not be verified. Please try again."
             return
         }
+        guard transaction.revocationDate == nil else {
+            await handleRevokedTransaction(transaction)
+            statusMessage = "That purchase was refunded or revoked, so nothing was unlocked."
+            return
+        }
         await transaction.finish()
         await refreshEntitlement()
-        await syncPurchaseEntitlementToServer(transaction)
-        let name = PaymentConfig.product(for: transaction.productID)?.name ?? "The course"
+        // Unlocking is already done above, from the verified local
+        // transaction. Recording it on the server is best effort
+        // and runs detached, so an undeployed or slow
+        // record-purchase function can never delay or block the
+        // unlock or its confirmation; the launch, sign-in, and
+        // restore retries re-record it until the server confirms.
+        Task { await syncPurchaseEntitlementToServer(transaction) }
+        let name = ProductCatalogue.product(for: transaction.productID)?.name ?? "The course"
         statusMessage = "Thank you. \(name) is unlocked on this device."
     }
 
+    /// Handle one revoked or refunded transaction (C3). Design choice:
+    /// the transaction is finished ONLY when the server state is
+    /// confirmed, because finishing is irreversible: StoreKit never
+    /// redelivers a finished transaction, so finishing before the
+    /// revoke succeeds is what used to strand a live server row with
+    /// no retry. An unfinished transaction IS redelivered, and that
+    /// redelivery plus the persisted pending record (retried on
+    /// every launch, sign-in, and restore) is the retry mechanism,
+    /// so the queue is never stranded: every path either finishes
+    /// on confirmation or leaves a durable record and an unfinished
+    /// transaction that will be offered again.
+    ///
+    /// Order matters. The on-device entitlement is removed FIRST
+    /// (refreshEntitlement), so access on this device ends at once
+    /// whether or not the server call succeeds. The pending revoke
+    /// is persisted BEFORE the revoke is attempted, so a crash
+    /// cannot lose it. Confirmation is either (a) the revoke call
+    /// answering ok, or (b) a definitive server read showing no
+    /// active row for the product, which proves there is nothing
+    /// left to revoke when the row was never recorded or is already
+    /// revoked (the Bool revoke API cannot distinguish a missing
+    /// row from a transient failure, so this second proof is what
+    /// keeps a never-recorded purchase from holding its transaction
+    /// forever). A failed revoke with a failed or still-active read
+    /// finishes nothing: the record stays pending and the
+    /// transaction stays unfinished.
+    ///
+    /// Tradeoff, stated plainly: while a revoked transaction stays
+    /// unfinished, StoreKit blocks a repurchase of the same product.
+    /// That block lasts only until the server confirms or a
+    /// definitive read shows no active row, and every launch retries,
+    /// so it is bounded by server reachability. The alternative
+    /// (finishing first) lets a refunded buyer keep cross-device
+    /// access indefinitely, which is the defect being fixed.
+    ///
+    /// While signed out, no server row can be addressed, but the
+    /// purchase may have been recorded under an account that is
+    /// currently signed out, so the revoke files as an orphan and
+    /// the transaction stays unfinished. The sign-in retry attempts
+    /// orphans, and redelivery re-offers the transaction.
+    /// Remove downloaded audio for a revoked product, once the server
+    /// revoke is confirmed. A full-course revoke clears all downloads;
+    /// a bundle revoke clears only that bundle's chapters; a situations
+    /// revoke clears nothing (situations have no audio downloads).
+    /// Best-effort for files already on disk: a download still in
+    /// flight is not stopped and re-creates its file on completion.
+    /// Runs on the main actor (this class is @MainActor), which the
+    /// download store's published-state updates require.
+    private func removeDownloadsForRevokedProduct(_ productID: String) {
+        if productID == Self.fullCourseProductID {
+            LessonDownloadStore.shared.removeAllDownloads()
+            return
+        }
+        guard productID != Self.situationsProductID,
+              let chapters = ProductCatalogue.product(for: productID)?.chapterIDs,
+              !chapters.isEmpty else { return }
+        LessonDownloadStore.shared.removeDownloads(forChapterIDs: Set(chapters))
+    }
+
+    private func handleRevokedTransaction(_ transaction: Transaction) async {
+        await refreshEntitlement()
+        let transactionID = String(transaction.id)
+        guard SupabaseConfig.isConfigured,
+              let userID = AuthService.shared.currentUser?.id else {
+            enqueuePendingRevoke(PendingRevoke(
+                transactionID: transactionID,
+                productID: transaction.productID,
+                userID: nil
+            ))
+            return
+        }
+        enqueuePendingRevoke(PendingRevoke(
+            transactionID: transactionID,
+            productID: transaction.productID,
+            userID: userID
+        ))
+        if await revokeServerEntitlement(transactionID: transactionID) {
+            removePendingRevoke(transactionID: transactionID, namespace: userID)
+            removeDownloadsForRevokedProduct(transaction.productID)
+            await refreshEntitlementFromServer()
+            await transaction.finish()
+            return
+        }
+        guard let token = await AuthService.shared.validAccessToken(),
+              let definitive = await fetchServerEntitledProductIDs(userID: userID, accessToken: token) else {
+            await refreshEntitlementFromServer()
+            return
+        }
+        applyDefinitiveServerEntitlements(definitive, userID: userID)
+        guard !definitive.contains(transaction.productID) else { return }
+        removePendingRevoke(transactionID: transactionID, namespace: userID)
+        removeDownloadsForRevokedProduct(transaction.productID)
+        await transaction.finish()
+    }
+
+    /// Handle a StoreKit transaction update: a purchase made on
+    /// another device, a refund, a revocation, or a Family Sharing
+    /// change. Only verified updates for known products are finished.
+    /// Unverified updates are ignored and never finished. A refund or
+    /// revocation is handled by handleRevokedTransaction, which
+    /// finishes only once the server revoke is confirmed; a new
+    /// purchase on another device is finished at once, adds the
+    /// entitlement, and is recorded on the server for the signed-in
+    /// user (a failed server record there is covered by the pending
+    /// sync flag and its retry paths, not by holding the finish).
     private func handleTransactionUpdate(_ update: VerificationResult<Transaction>) async {
         guard case .verified(let transaction) = update else { return }
         guard Self.allProductIDs.contains(transaction.productID) else { return }
+        guard transaction.revocationDate == nil else {
+            await handleRevokedTransaction(transaction)
+            return
+        }
         await transaction.finish()
-        // A refund or revocation removes the entitlement; a new purchase
-        // on another device adds it. refreshEntitlement re-checks the
-        // live entitlement, so a revoked transaction clears the UI,
-        // and the server entitlement is dropped too.
-        let wasRevoked = transaction.revocationDate != nil
         await refreshEntitlement()
-        if wasRevoked {
-            await revokeServerEntitlement(transactionID: String(transaction.id))
-            await refreshEntitlementFromServer()
-        } else if purchasedProductIDs.contains(transaction.productID) {
-            await syncPurchaseEntitlementToServer(transaction)
+        if purchasedProductIDs.contains(transaction.productID) {
+            // Best effort, detached: see handlePurchaseSuccess.
+            Task { await syncPurchaseEntitlementToServer(transaction) }
         }
     }
 
     /// Cache the purchased product IDs locally. Cache only: the App
     /// Store entitlement is the source of truth, re-checked on launch
-    /// and on restore. The legacy single key is kept in step so older
-    /// builds' cached Situations purchase is not lost.
+    /// and on restore, and Release builds never read this cache to
+    /// unlock anything. The legacy single key is kept in step so
+    /// older builds' cached Situations purchase is not lost.
     private func setPurchasedProductIDs(_ value: Set<String>) {
         purchasedProductIDs = value
         UserDefaults.standard.set(Array(value), forKey: Self.purchasedProductIDsKey)

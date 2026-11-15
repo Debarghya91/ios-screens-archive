@@ -5,13 +5,27 @@
 // width, from the small iPhone SE to a Pro Max, in portrait and landscape.
 // No fixed widths anywhere; every card uses maxWidth .infinity.
 //
-// Every number here comes from the event-based ProgressStore only:
-// learningHours() sums recorded lesson and audio durations, never an
-// estimate; weeklyActivity() counts recorded events per day; streak,
-// lessons completed and quiz averages are all computed from recorded
+// Every number here comes from recorded data only, computed by
+// ProgressInsights over the existing stores: learningHours() sums
+// recorded lesson and audio durations, never an estimate; weekly
+// activity counts recorded events per day; streak, lessons
+// completed and quiz averages are all computed from recorded
 // events. With no recorded events every statistic is zero or empty,
 // and the screen says so honestly instead of showing a made-up
 // number. No narration-length fetching, no invented totals.
+//
+// Activity and demonstrated competence are labelled separately
+// throughout: "completed" and "opened" count activity, while
+// "demonstrated" counts only quiz, assessment and lab evidence.
+// Opening or completing a lesson alone never earns a proficiency
+// claim. Knowledge is grouped by competency dimension, because the
+// app has no domain grouping for lessons; dimension rows always
+// name the evidence behind them. Certificate rows state the real
+// rules from code: path certificates need every required lesson
+// complete and no exam, course certificates need a passed Final
+// Assessment, and no certificate implies formal accreditation or
+// bank endorsement. Gating follows the settled model: the first
+// lesson of each chapter is free, the rest unlock with a purchase.
 // No em dashes in any user-facing text.
 
 import SwiftUI
@@ -28,13 +42,25 @@ struct DashboardView: View {
     @EnvironmentObject private var contentService: ContentService
     @EnvironmentObject private var progressStore: ProgressStore
 
+    /// Read-only stores for the insight sections. This view never
+    /// writes to any of them: it only reads recorded progress,
+    /// assessments, lab results and drafts. The competency,
+    /// revision and notes stores are declared with the sections
+    /// that already used them, further down this file.
+    @ObservedObject private var onboardingStore = OnboardingStore.shared
+    @ObservedObject private var activePathStore = ActivePathStore.shared
+    @ObservedObject private var finalAssessmentStore = FinalAssessmentStore.shared
+    @ObservedObject private var labStore = ExceptionLabStore.shared
+    @ObservedObject private var investigationStore = InvestigationStore.shared
+    @ObservedObject private var studioStore = StudioDraftStore.shared
+
     /// Opens the side drawer. Passed in from the tab bar so the menu
     /// button can sit in this screen's navigation bar, and only here:
     /// pushed detail views have no menu button and keep a clean back button.
     @Binding var isDrawerOpen: Bool
 
     /// Optional tab selection, for the empty-state action. MainTabView
-    /// passes $selectedTab; without it the action navigates in-stack.
+    /// always passes $selectedTab, so the action switches to Learn.
     var selectedTab: Binding<Int>?
 
     init(isDrawerOpen: Binding<Bool>, selectedTab: Binding<Int>? = nil) {
@@ -44,9 +70,10 @@ struct DashboardView: View {
 
     @State private var showCheckout = false
     @State private var showResetConfirmation = false
+    @State private var showResetCompleteAlert = false
     @State private var selectedSegment: ProgressSegment = .overview
+    @State private var showAllQuizResults = false
 
-    private let goalOptions = [3, 5, 7, 10]
 
     // MARK: - Derived data, all event-based
 
@@ -81,7 +108,7 @@ struct DashboardView: View {
             return "No activity yet"
         }
         if progressStore.learningHours() == 0 {
-            return "No recorded listening time yet"
+            return "No recorded learning time yet"
         }
         return "From recorded lesson and audio time only"
     }
@@ -102,17 +129,30 @@ struct DashboardView: View {
         return weeklyActivity.map { formatter.string(from: $0.date) }
     }
 
-    /// Quiz results, best fraction correct per lesson, from recorded
-    /// attempts only. Lessons with no total recorded are listed with
-    /// their correct count and no percentage, never an invented one.
-    private var quizResults: [(lessonID: String, correct: Int, fraction: Double?)] {
+    /// Quiz results, one row per lesson, from recorded attempts only.
+    /// Each row pairs the best fraction correct with that same
+    /// attempt's correct count and total, so the percentage and the
+    /// numbers always belong together. Lessons with no total
+    /// recorded are listed with their correct count and no
+    /// percentage, never an invented one. Most recently attempted
+    /// first.
+    private var quizResults: [(lessonID: String, correct: Int, total: Int?, fraction: Double?, lastAttempt: Date)] {
         progressStore.quizHistory
             .map { entry in
-                (lessonID: entry.key,
-                 correct: entry.value.map(\.correct).max() ?? 0,
-                 fraction: progressStore.bestQuizScore(for: entry.key))
+                let attempts = entry.value
+                let best = attempts.compactMap { attempt -> (attempt: QuizAttempt, fraction: Double)? in
+                    guard let fraction = attempt.fractionCorrect else { return nil }
+                    return (attempt, fraction)
+                }.max { $0.fraction < $1.fraction }
+                return (
+                    lessonID: entry.key,
+                    correct: best?.attempt.correct ?? attempts.map(\.correct).max() ?? 0,
+                    total: best.map { $0.attempt.total },
+                    fraction: best?.fraction,
+                    lastAttempt: attempts.map(\.attemptedAt).max() ?? Date.distantPast
+                )
             }
-            .sorted { $0.lessonID < $1.lessonID }
+            .sorted { $0.lastAttempt > $1.lastAttempt }
     }
 
     private func lessonTitle(for id: String) -> String {
@@ -142,11 +182,241 @@ struct DashboardView: View {
         !progressStore.events.isEmpty || progressStore.totalLessonsCompleted > 0
     }
 
+    // MARK: - ProgressInsights, all computed from recorded data
+
+    /// The onboarding profile when the learner chose it. A skipped
+    /// profile is treated as no profile, exactly as HomeView does:
+    /// its role was never chosen, so it must not steer the pathway
+    /// or the recommendation.
+    private var effectiveProfile: OnboardingProfile? {
+        guard let profile = onboardingStore.profile, !profile.wasSkipped else { return nil }
+        return profile
+    }
+
+    /// The role route for the learner's chosen role, when one exists.
+    private var roleRoute: RoleRoute? {
+        guard let profile = effectiveProfile else { return nil }
+        return RoleRouteCatalogue.route(for: profile.role)
+    }
+
+    /// The guided path the pathway card links to: the active path
+    /// when one is set, otherwise the path named by the role route.
+    /// Nil when neither resolves, for example a sessions-only route.
+    private var pathwayPath: LearningPath? {
+        if let active = activePathStore.activePath {
+            return active
+        }
+        return roleRoute?.learningPath()
+    }
+
+    /// The pathway lessons and where they came from. The active
+    /// path wins when one is set. Otherwise the full role route
+    /// (path lessons plus session lessons, deduped) is used, so
+    /// session progress is not hidden when a route pairs a path
+    /// with sessions. Empty while the catalogue is loading.
+    private var pathwayLessons: (lessons: [SearchEntry], source: ProgressPathwaySource) {
+        if let path = activePathStore.activePath {
+            return (path.lessons(in: contentService), .activePath)
+        }
+        guard let route = roleRoute else { return ([], .none) }
+        let lessons = route.lessons(in: contentService)
+        if route.learningPath() != nil {
+            return (lessons, .roleRoutePath)
+        }
+        return (lessons, .roleRouteSessions)
+    }
+
+    /// The pathway title shown on the card, naming the path or the
+    /// role route so the learner knows which pathway the numbers
+    /// describe.
+    private var pathwayTitle: String {
+        switch pathwayLessons.source {
+        case .activePath:
+            return pathwayPath.map { "Your active path: \($0.title)" } ?? "Your active path"
+        case .roleRoutePath, .roleRouteSessions:
+            return roleRoute.map { "Your role route: \($0.title)" } ?? "Your role route"
+        case .none:
+            return "No pathway chosen yet"
+        }
+    }
+
+    private var pathwayInsight: ProgressPathwayInsight {
+        ProgressInsights.pathwayInsight(
+            lessonIDs: pathwayLessons.lessons.map(\.id),
+            completedLessonIDs: progressStore.completedLessonIDs,
+            history: progressStore.quizHistory,
+            source: pathwayLessons.source
+        )
+    }
+
+    private var quizSummary: ProgressQuizSummary {
+        ProgressInsights.quizSummary(history: progressStore.quizHistory)
+    }
+
+    private var demonstratedSummary: ProgressDemonstratedSummary {
+        ProgressInsights.demonstratedSummary(
+            completedLessonIDs: progressStore.completedLessonIDs,
+            history: progressStore.quizHistory
+        )
+    }
+
+    private var dimensionInsights: [ProgressDimensionInsight] {
+        ProgressInsights.dimensionInsights(
+            competencyScores: competencyStore.scores,
+            lessons: contentService.allLessons,
+            completedLessonIDs: progressStore.completedLessonIDs,
+            history: progressStore.quizHistory
+        )
+    }
+
+    private var evidenceAreas: (stronger: [ProgressEvidenceArea], needsAttention: [ProgressEvidenceArea]) {
+        ProgressInsights.evidenceAreas(dimensionInsights)
+    }
+
+    /// Completed lessons to revisit: the lowest average quiz
+    /// scores below the demonstration bar, at most three.
+    private var weakQuizLessons: [ProgressLessonQuizEvidence] {
+        ProgressInsights.weakQuizLessons(
+            history: progressStore.quizHistory,
+            completedLessonIDs: progressStore.completedLessonIDs,
+            limit: 3
+        )
+    }
+
+    private var labSummary: ProgressLabSummary {
+        ProgressInsights.labSummary(
+            results: labStore.results,
+            totalCases: ExceptionCaseCatalogue.allCases.count
+        )
+    }
+
+    private var labCaseInsights: [ProgressLabCaseInsight] {
+        ProgressInsights.labCaseInsights(results: labStore.results)
+    }
+
+    private func labCaseTitle(for caseID: String) -> String {
+        ExceptionCaseCatalogue.allCases.first(where: { $0.id == caseID })?.title ?? caseID
+    }
+
+    private var timeInsight: ProgressTimeInsight {
+        ProgressInsights.timeInsight(events: progressStore.events)
+    }
+
+    private var consistencyInsight: ProgressConsistencyInsight {
+        ProgressInsights.consistency(events: progressStore.events, referenceDate: Date())
+    }
+
+    private var activityCounts: ProgressActivityCounts {
+        ProgressInsights.activityCounts(events: progressStore.events)
+    }
+
+    private var pathCertificateInsights: [ProgressPathCertificateInsight] {
+        ProgressInsights.pathCertificateInsights(
+            LearningPath.all.map { path in
+                let progress = path.progress(in: progressStore, service: contentService)
+                return ProgressPathProgress(
+                    pathID: path.id,
+                    pathTitle: path.title,
+                    certificateTitle: path.certificateTitle,
+                    completed: progress.completed,
+                    total: progress.total
+                )
+            }
+        )
+    }
+
+    private var courseCertificateInsights: [ProgressCourseCertificateInsight] {
+        ProgressInsights.courseCertificateInsights(
+            courses: FinalAssessmentStore.assessableCourses,
+            certificates: finalAssessmentStore.certificates,
+            attemptsUsed: finalAssessmentStore.attemptsUsed
+        )
+    }
+
+    /// Path and course certificates earned, from eligibility and
+    /// stored certificates only. Path eligibility is computed from
+    /// lesson completion here; issuing happens only in
+    /// CertificateView, which this count never calls.
+    private var certificatesEarnedCount: Int {
+        let paths = pathCertificateInsights.filter(\.isEligible).count
+        let courses = courseCertificateInsights.filter(\.isPassed).count
+        return paths + courses
+    }
+
+    /// Dimensions with no competency score and no quiz average:
+    /// shown as having no evidence yet, never as weak.
+    private var unassessedDimensions: [ProgressDimensionInsight] {
+        dimensionInsights.filter { !$0.hasAnyEvidence }
+    }
+
+    /// Path certificates already earned by completion, course
+    /// certificates already earned by passing, paths still to
+    /// complete, and courses whose Final Assessment is still open.
+    private var earnedPathCertificates: [ProgressPathCertificateInsight] {
+        pathCertificateInsights.filter(\.isEligible)
+    }
+
+    private var earnedCourseCertificates: [ProgressCourseCertificateInsight] {
+        courseCertificateInsights.filter(\.isPassed)
+    }
+
+    private var pendingPathCertificates: [ProgressPathCertificateInsight] {
+        pathCertificateInsights.filter { $0.hasCertificate && !$0.isEligible }
+    }
+
+    private var openCourseCertificates: [ProgressCourseCertificateInsight] {
+        courseCertificateInsights.filter { $0.status == .attemptsLeft }
+    }
+
+    private var studioSummary: ProgressStudioSummary {
+        ProgressInsights.studioSummary(
+            drafts: studioStore.drafts,
+            totalExercises: StudioExercise.all.count
+        )
+    }
+
+    /// The suggested next action, from the recommendation engine
+    /// with its reason. Nil while the catalogue is loading or when
+    /// every lesson is complete.
+    private var nextRecommendation: LessonRecommendation? {
+        RecommendationEngine.nextLesson(
+            for: effectiveProfile,
+            progress: progressStore,
+            competency: competencyStore,
+            service: contentService
+        )
+    }
+
+    /// True when any assessment evidence exists: quiz attempts,
+    /// competency assessments, lab completions, Final Assessment
+    /// attempts or certificates, or a diagnostic score. The
+    /// Assessments segment shows its empty state only when none
+    /// of these exists.
+    private var hasAnyAssessmentEvidence: Bool {
+        progressStore.totalQuizAttempts > 0
+            || competencyStore.hasAssessments
+            || !labStore.results.isEmpty
+            || !finalAssessmentStore.attemptsUsed.isEmpty
+            || !finalAssessmentStore.certificates.isEmpty
+            || effectiveProfile?.diagnosticScore != nil
+    }
+
+    /// Lessons in a list whose best quiz fraction reaches the
+    /// demonstration bar. Used for the per-path demonstrated line.
+    private func demonstratedCount(in lessons: [SearchEntry]) -> Int {
+        lessons.filter { lesson in
+            guard let best = progressStore.bestQuizScore(for: lesson.id) else { return false }
+            return best >= RecommendationEngine.masteryThreshold
+        }.count
+    }
+
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: PFSpacing.xl) {
                     headerSection
+                        .id("dashboardTop")
 
                     segmentPicker
 
@@ -170,8 +440,11 @@ struct DashboardView: View {
             .background(Color.pfBackground)
             // Extra scrollable space at the bottom so the last card clears
             // the tab bar on every iPhone size.
-            .safeAreaInset(edge: .bottom) {
-                Color.clear.frame(height: PFSpacing.xl)
+            .pfTabBarClearance()
+            .onChange(of: selectedSegment) { _, _ in
+                withAnimation {
+                    proxy.scrollTo("dashboardTop", anchor: .top)
+                }
             }
             .navigationTitle("My Progress")
             .navigationBarTitleDisplayMode(.inline)
@@ -189,11 +462,22 @@ struct DashboardView: View {
                 titleVisibility: .visible
             ) {
                 Button("Reset progress", role: .destructive) {
+                    // resetAll() is synchronous: it clears and saves
+                    // before returning, so the success alert set on
+                    // the next line can only show after the wipe
+                    // has completed, never before or in parallel.
                     progressStore.resetAll()
+                    showResetCompleteAlert = true
                 }
                 Button("Cancel", role: .cancel) { }
             } message: {
-                Text("This clears completed lessons, quiz scores, your streak and your weekly progress on this device. It cannot be undone.")
+                Text("This clears completed lessons, quiz scores, your streak and your weekly progress on this device. Your weekly goal, notes, bookmarks and competency assessments are not affected. It cannot be undone.")
+            }
+            .alert("Progress reset", isPresented: $showResetCompleteAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("Your completed lessons, quiz scores, streak and weekly progress have been cleared on this device. Your weekly goal, notes, bookmarks and competency assessments were not affected.")
+            }
             }
         }
     }
@@ -222,8 +506,9 @@ struct DashboardView: View {
             .padding(.vertical, PFSpacing.sm)
             .background(Color.pfCard)
             .clipShape(Capsule())
+            .overlay(Capsule().stroke(Color.pfBorder, lineWidth: 1))
             .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
-            .accessibilityLabel("Streak, \(progressStore.streakCount) days")
+            .accessibilityLabel("Streak, \(progressStore.streakCount) \(progressStore.streakCount == 1 ? "day" : "days")")
         }
     }
 
@@ -245,13 +530,26 @@ struct DashboardView: View {
             PFEmptyStateView(
                 systemImage: "chart.bar.fill",
                 title: "No progress yet",
-                message: "Complete your first lesson and your progress, learning time and streak will appear here.",
+                message: "Complete your first lesson and your progress and streak will appear here. Learning time appears once listening or lesson time has been recorded.",
                 actionTitle: "Start learning",
                 action: { selectedTab?.wrappedValue = 1 }
             )
+            // A new learner still gets a next action, a pathway and
+            // the certificate rules, so the screen is useful before
+            // any progress exists. The suggested lesson is labelled
+            // when it is the free first lesson of its chapter.
+            nextActionSection
+            pathwaySection
+            certificateSummarySection
         } else {
+            nextActionSection
             learningProgressSection
+            pathwaySection
             statsSection
+            demonstratedStatsSection
+            knowledgeSection
+            strengthsSection
+            certificateSummarySection
             weeklyActivitySummarySection
             pathwaysSection
             recentHistorySection
@@ -259,29 +557,473 @@ struct DashboardView: View {
         }
     }
 
-    private var learningProgressSection: some View {
+    // MARK: - Suggested next action
+
+    /// The engine's single next lesson, with the engine's reason
+    /// shown in full. The reason names its real evidence, so the
+    /// suggestion can be checked. Tapping opens the lesson; lock
+    /// handling stays with LessonView and nothing here bypasses it.
+    private var nextActionSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: "Overall progress")
-            PFCard {
-                if contentService.searchIndex == nil {
-                    PFLoadingView(message: "Loading your progress...")
-                } else {
-                    HStack(spacing: PFSpacing.lg) {
-                        PFProgressRing(progress: overallProgress, size: 110, color: .pfRoyal)
-                        VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                            Text("\(progressStore.totalLessonsCompleted) of \(totalLessonCount) lessons completed")
-                                .font(.pfCardTitle)
-                                .foregroundColor(.pfNavy)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text("\(Int((overallProgress * 100).rounded()))% of the curriculum complete")
+            PFSectionHeader(title: "Suggested next action")
+            if contentService.searchIndex == nil {
+                PFCard {
+                    PFLoadingView(message: "Loading your next lesson...")
+                }
+            } else if let recommendation = nextRecommendation {
+                NavigationLink(destination: LessonView(entry: recommendation.lesson)) {
+                    PFCard {
+                        VStack(alignment: .leading, spacing: PFSpacing.md) {
+                            HStack(spacing: PFSpacing.md) {
+                                PFIconTile(systemImage: "play.fill", size: 52)
+                                VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                                    Text(recommendation.lesson.title)
+                                        .font(.pfCardTitle)
+                                        .foregroundColor(.pfNavy)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text(PFChapterHelper.chapterTitle(for: recommendation.lesson))
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    if let position = PFChapterHelper.readingPositionLabel(for: recommendation.lesson, in: contentService) {
+                                        Text(position)
+                                            .font(.pfCaption)
+                                            .foregroundColor(.pfSecondaryText)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    if PFChapterHelper.isSampleLesson(recommendation.lesson, in: contentService) {
+                                        Text("Free sample lesson: the first lesson of its chapter, free with full content.")
+                                            .font(.pfCaptionBold)
+                                            .foregroundColor(.pfSuccess)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }
+                            Text(recommendation.reason)
                                 .font(.pfBody)
                                 .foregroundColor(.pfSecondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
-                            if progressStore.totalLessonsCompleted == 0 {
-                                Text("Complete your first lesson to start your progress.")
+                        }
+                    }
+                }
+                .buttonStyle(PFCardButtonStyle())
+            } else {
+                PFCard {
+                    Text("You have completed every lesson in the catalogue. Revision, assessments and the investigation lab are still available below.")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    // MARK: - Pathway completion
+
+    /// Overall pathway completion for the active path or role
+    /// route, with quiz evidence inside the pathway kept separate
+    /// from completion. While the catalogue is loading the card
+    /// says so instead of showing 0 percent.
+    private var pathwaySection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "Your pathway")
+            if contentService.searchIndex == nil {
+                PFCard {
+                    PFLoadingView(message: "Loading your pathway...")
+                }
+            } else if pathwayLessons.source == .none {
+                PFCard {
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text(pathwayTitle)
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Choose a learning path to work through, or complete onboarding to get a route for your role. Your progress is counted per lesson either way, and choosing a path later never clears it.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("The first lesson of each chapter is free. Other lessons unlock with a purchase.")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } else if let fraction = pathwayInsight.fraction {
+                PFCard {
+                    VStack(alignment: .leading, spacing: PFSpacing.md) {
+                        HStack(spacing: PFSpacing.lg) {
+                            PFProgressRing(progress: fraction, size: 110, color: .pfRoyal)
+                            VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                                Text(pathwayTitle)
+                                    .font(.pfCardTitle)
+                                    .foregroundColor(.pfNavy)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text("\(pathwayInsight.completed) of \(pathwayInsight.total) lessons completed")
                                     .font(.pfBody)
                                     .foregroundColor(.pfSecondaryText)
                                     .fixedSize(horizontal: false, vertical: true)
+                                Text("Completed means marked complete. Demonstrated is counted separately below.")
+                                    .font(.pfCaption)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        Divider()
+                        Text("Demonstrated on quizzes in this pathway: \(pathwayInsight.demonstratedLessonCount) of \(pathwayInsight.total) lessons at 80% or above on their best quiz score. \(pathwayInsight.quizAttemptedLessonCount) lessons have a quiz attempt recorded.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let path = pathwayPath {
+                            NavigationLink(destination: PathDetailView(path: path)) {
+                                Text("Open \(path.title)")
+                                    .font(.pfCallout)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.pfRoyal)
+                                    .padding(.horizontal, PFSpacing.md)
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    .background(Color.pfRoyal.opacity(0.08))
+                                    .cornerRadius(PFSpacing.cornerRadius)
+                            }
+                        } else if pathwayLessons.source == .roleRouteSessions, let route = roleRoute {
+                            Text("This route follows guided sessions: \(route.sessions().map(\.title).joined(separator: ", ")).")
+                                .font(.pfCaption)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            } else {
+                // The catalogue loaded but the pathway resolved to
+                // no lessons. This means the route's chapters have
+                // no lessons in the loaded catalogue, not that
+                // progress is zero, so it is stated, not shown as
+                // a loading state or as 0 percent.
+                PFCard {
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text(pathwayTitle)
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("This pathway has no lessons in the loaded catalogue, so no completion can be shown yet.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Demonstrated competence stats
+
+    /// What the learner has demonstrated, kept apart from the
+    /// activity stats above it. Quiz accuracy is the mean of
+    /// recorded attempt fractions; lab performance is the mean of
+    /// best case scores; certificates counts only earned
+    /// certificates. Each card says when it has no evidence yet.
+    private var demonstratedStatsSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "Demonstrated")
+            HStack(spacing: PFSpacing.sm) {
+                PFStatCard(
+                    value: quizSummary.averageFraction.map { "\(Int(($0 * 100).rounded()))%" } ?? "No data",
+                    label: "Quiz accuracy",
+                    systemImage: "checkmark.circle.fill",
+                    caption: quizSummary.totalAttempts == 0
+                        ? "No quiz attempts recorded yet"
+                        : "\(quizSummary.totalAttempts) \(quizSummary.totalAttempts == 1 ? "attempt" : "attempts") recorded"
+                )
+                PFStatCard(
+                    value: labSummary.meanBestFraction.map { "\(Int(($0 * 100).rounded()))%" } ?? "No data",
+                    label: "Lab best scores",
+                    systemImage: "flask.fill",
+                    caption: labSummary.casesCompleted == 0
+                        ? "No lab cases completed yet"
+                        : "\(labSummary.casesCompleted) of \(labSummary.totalCases) cases completed"
+                )
+                PFStatCard(
+                    value: "\(certificatesEarnedCount)",
+                    label: "Certificates earned",
+                    systemImage: "seal.fill",
+                    caption: "Certificates of Completion only"
+                )
+            }
+            Text("Demonstrated means shown on a quiz, an assessment or in the lab. Completed lessons without that evidence are counted under Overall progress, not here.")
+                .font(.pfCaption)
+                .foregroundColor(.pfSecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: - Knowledge by area
+
+    /// Competency dimension scores with the quiz evidence for the
+    /// same chapters beside them. A dimension with no assessment
+    /// shows "Not assessed yet", never a made-up score, and a
+    /// dimension with no quiz attempts says so. Completion is
+    /// shown as activity only. Full detail and the assessment
+    /// links live in the Assessments segment.
+    private var knowledgeSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "Knowledge by area")
+            PFCard {
+                VStack(alignment: .leading, spacing: PFSpacing.md) {
+                    Text("By competency area, from recorded assessments and lesson quizzes. These are the \(CompetencyStore.CompetencyDimension.allCases.count) competency areas, not the \(ContentManifest.domainCount) catalogue domains: the app has no domain grouping for lessons.")
+                        .font(.pfCaption)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(dimensionInsights) { insight in
+                        VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                            HStack(spacing: PFSpacing.sm) {
+                                Image(systemName: insight.dimension.systemImage)
+                                    .foregroundColor(.pfRoyal)
+                                Text(insight.dimension.rawValue)
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfNavy)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer()
+                                if let score = insight.competencyScorePercent {
+                                    Text("\(Int(score.rounded()))% assessed")
+                                        .font(.pfCaptionBold)
+                                        .foregroundColor(.pfRoyal)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                } else {
+                                    Text("Not assessed yet")
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                }
+                            }
+                            if let average = insight.quizAverageFraction {
+                                Text("Quiz average \(Int((average * 100).rounded()))% across \(insight.quizAttemptsWithTotal) \(insight.quizAttemptsWithTotal == 1 ? "attempt" : "attempts"). \(insight.lessonsCompleted) of \(insight.lessonsTotal) lessons completed in this area.")
+                                    .font(.pfCaption)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else {
+                                Text("No quiz attempts with a recorded total in this area yet. \(insight.lessonsCompleted) of \(insight.lessonsTotal) lessons completed in this area.")
+                                    .font(.pfCaption)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            PFProgressBar(progress: (insight.competencyScorePercent ?? 0) / 100, height: 6)
+                        }
+                    }
+                    Button("See assessments and detail") {
+                        selectedSegment = .assessments
+                    }
+                    .font(.pfCallout)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.pfRoyal)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    // MARK: - Strong and weak areas
+
+    /// Stronger evidence and areas needing attention, each with
+    /// its evidence stated. Only dimensions with recorded evidence
+    /// appear; unassessed areas are listed separately as having
+    /// no evidence yet, never as weak. Lessons to revisit are
+    /// completed lessons with a low recorded quiz average.
+    private var strengthsSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "Stronger and weaker areas")
+            PFCard {
+                VStack(alignment: .leading, spacing: PFSpacing.md) {
+                    if evidenceAreas.stronger.isEmpty && evidenceAreas.needsAttention.isEmpty {
+                        Text("No assessment or quiz evidence yet")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Take a lesson quiz or a competency assessment and this section will show where your evidence is stronger and where it needs attention. Completed lessons alone do not place an area here.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        if !evidenceAreas.stronger.isEmpty {
+                            Text("Stronger evidence")
+                                .font(.pfCardTitle)
+                                .foregroundColor(.pfNavy)
+                            ForEach(evidenceAreas.stronger) { area in
+                                VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                                    Text(area.dimension.rawValue)
+                                        .font(.pfBody)
+                                        .foregroundColor(.pfNavy)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text(area.evidenceText)
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                        if !evidenceAreas.needsAttention.isEmpty {
+                            Text("Needs attention")
+                                .font(.pfCardTitle)
+                                .foregroundColor(.pfNavy)
+                            ForEach(evidenceAreas.needsAttention) { area in
+                                VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                                    Text(area.dimension.rawValue)
+                                        .font(.pfBody)
+                                        .foregroundColor(.pfNavy)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text(area.evidenceText)
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                        if !unassessedDimensions.isEmpty {
+                            Text("No evidence yet: \(unassessedDimensions.map(\.dimension.rawValue).joined(separator: ", ")).")
+                                .font(.pfCaption)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    if !weakQuizLessons.isEmpty {
+                        Divider()
+                        Text("Lessons to revisit")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                        ForEach(weakQuizLessons, id: \.lessonID) { lesson in
+                            HStack(spacing: PFSpacing.md) {
+                                Text(lessonTitle(for: lesson.lessonID))
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfNavy)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer()
+                                if let average = lesson.averageFraction {
+                                    Text("Quiz average \(Int((average * 100).rounded()))%")
+                                        .font(.pfCaptionBold)
+                                        .foregroundColor(.pfRoyal)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                }
+                            }
+                        }
+                        Text("These lessons are complete, but their recorded quiz averages are below 80%. Revisit the lesson, then retake its quiz.")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Certificate eligibility summary
+
+    /// What is earned and what is still needed, under the real
+    /// rules: path certificates need every required lesson
+    /// complete, course certificates need a passed Final
+    /// Assessment. No certificate here implies formal
+    /// accreditation or bank endorsement. Detail and issuing live
+    /// in Certificates, linked from this card and from Learning
+    /// tools below.
+    private var certificateSummarySection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "Certificates")
+            PFCard {
+                VStack(alignment: .leading, spacing: PFSpacing.md) {
+                    if contentService.searchIndex == nil {
+                        PFLoadingView(message: "Loading certificate progress...")
+                    } else {
+                        if earnedPathCertificates.isEmpty && earnedCourseCertificates.isEmpty {
+                            Text("No certificates earned yet")
+                                .font(.pfCardTitle)
+                                .foregroundColor(.pfNavy)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text("\(certificatesEarnedCount) \(certificatesEarnedCount == 1 ? "certificate" : "certificates") earned")
+                                .font(.pfCardTitle)
+                                .foregroundColor(.pfNavy)
+                                .fixedSize(horizontal: false, vertical: true)
+                            ForEach(earnedPathCertificates) { path in
+                                Text("\(path.certificateTitle ?? path.pathTitle): earned by completing every required lesson.")
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            ForEach(earnedCourseCertificates) { course in
+                                if let certificate = course.certificate {
+                                    Text("\(course.courseName): earned with \(certificate.scoreText) (\(Int(certificate.scorePercent.rounded()))%) on the Final Assessment.")
+                                        .font(.pfBody)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                        ForEach(pendingPathCertificates) { path in
+                            Text("\(path.certificateTitle ?? path.pathTitle): \(path.lessonsRemaining) \(path.lessonsRemaining == 1 ? "lesson" : "lessons") left to complete. No exam is required.")
+                                .font(.pfBody)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if !openCourseCertificates.isEmpty {
+                            Text("Final Assessments still open: \(openCourseCertificates.map(\.courseName).joined(separator: ", ")). Pass with more than 70% to earn the course certificate. Each course allows \(FinalAssessmentStore.maxAttempts) attempts.")
+                                .font(.pfBody)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text("Certificates of Completion certify completion of the named course or path. They are not accredited qualifications and carry no bank endorsement.")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        NavigationLink(destination: CertificatesListView()) {
+                            Text("View certificates")
+                                .font(.pfCallout)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.pfRoyal)
+                                .padding(.horizontal, PFSpacing.md)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .background(Color.pfRoyal.opacity(0.08))
+                                .cornerRadius(PFSpacing.cornerRadius)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var learningProgressSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "Overall progress")
+            if contentService.searchIndex == nil, let error = contentService.indexError {
+                PFErrorStateView(
+                    title: "Could not load the course catalogue",
+                    message: error,
+                    retryTitle: "Retry"
+                ) {
+                    Task { await contentService.loadSearchIndex() }
+                }
+            } else {
+                PFCard {
+                    if contentService.searchIndex == nil {
+                        PFLoadingView(message: "Loading your progress...")
+                    } else {
+                        HStack(spacing: PFSpacing.lg) {
+                            PFProgressRing(progress: overallProgress, size: 110, color: .pfRoyal)
+                            VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                                Text("\(progressStore.totalLessonsCompleted) of \(totalLessonCount) lessons completed")
+                                    .font(.pfCardTitle)
+                                    .foregroundColor(.pfNavy)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text("\(Int((overallProgress * 100).rounded()))% of the curriculum complete")
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text("Demonstrated on quizzes: \(demonstratedSummary.demonstratedLessonCount) of \(demonstratedSummary.completedLessonCount) completed lessons at 80% or above on their best quiz score. \(demonstratedSummary.noQuizEvidenceCount) completed \(demonstratedSummary.noQuizEvidenceCount == 1 ? "lesson has" : "lessons have") no quiz attempt recorded.")
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if progressStore.totalLessonsCompleted == 0 {
+                                    Text("Complete your first lesson to start your progress.")
+                                        .font(.pfBody)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                             }
                         }
                     }
@@ -348,13 +1090,102 @@ struct DashboardView: View {
         } else {
             weeklyActivitySection
             weeklyGoalSection
+            consistencySection
+            timeDetailSection
             dailyActivitySection
+        }
+    }
+
+    // MARK: - Consistency and recorded time
+
+    /// Learning consistency from real event dates: active days in
+    /// the last 7 and 28 days, the streak, and the most recent
+    /// activity. Neutral counts only, with no judgement about
+    /// missed days. Counts come from the retained events kept on
+    /// this device.
+    private var consistencySection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "Consistency")
+            HStack(spacing: PFSpacing.sm) {
+                PFStatCard(
+                    value: "\(consistencyInsight.activeDaysLast7)",
+                    label: "Active days, last 7 days",
+                    systemImage: "calendar"
+                )
+                PFStatCard(
+                    value: "\(consistencyInsight.activeDaysLast28)",
+                    label: "Active days, last 28 days",
+                    systemImage: "calendar.badge.clock"
+                )
+                PFStatCard(
+                    value: "\(consistencyInsight.distinctActiveDays)",
+                    label: "Active days in total",
+                    systemImage: "checkmark.circle.fill"
+                )
+            }
+            PFCard {
+                VStack(alignment: .leading, spacing: PFSpacing.md) {
+                    if let lastActivity = consistencyInsight.lastActivityDate {
+                        Text("Most recent activity: \(lastActivity, format: .dateTime.day().month().year()). Current streak: \(consistencyInsight.streakCount) \(consistencyInsight.streakCount == 1 ? "day" : "days").")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("Active means at least one recorded learning event that day, such as completing a lesson, finishing a quiz or listening to narration. Older events are dropped once the stored list is full, so the total is a lower bound.")
+                        .font(.pfCaption)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// Recorded learning time, split by what was actually measured:
+    /// lesson durations and finished audio listens. Partial listens
+    /// are not recorded, and reading, quiz, lab and studio time are
+    /// never recorded, so this is recorded time only, never an
+    /// estimate of total study time. When nothing was recorded the
+    /// card says so instead of showing a made-up number.
+    private var timeDetailSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "Time spent learning")
+            PFCard {
+                VStack(alignment: .leading, spacing: PFSpacing.md) {
+                    if timeInsight.hasRecordedTime {
+                        Text("Recorded time: \(ProgressInsights.durationLabel(totalSeconds: timeInsight.totalSeconds))")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Lesson time recorded: \(ProgressInsights.durationLabel(totalSeconds: timeInsight.lessonDurationSeconds)) from \(timeInsight.lessonDurationEventCount) \(timeInsight.lessonDurationEventCount == 1 ? "event" : "events").")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Audio time recorded: \(ProgressInsights.durationLabel(totalSeconds: timeInsight.audioSeconds)) from \(timeInsight.audioEventCount) finished \(timeInsight.audioEventCount == 1 ? "listen" : "listens").")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("No learning time recorded yet")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Time is recorded only from measured lesson durations and narration played to the end. Listen to a full narration and the time will appear here.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("Opened lessons in recorded events: \(activityCounts.distinctLessonsOpened). Completed lessons in recorded events: \(activityCounts.distinctLessonsCompletedInEvents). Opening a lesson is activity; it does not by itself demonstrate knowledge.")
+                        .font(.pfCaption)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 
     private var weeklyActivitySection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: "Weekly Activity")
+            PFSectionHeader(title: "Weekly activity")
             PFCard {
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
                     Text("\(progressStore.lessonsCompletedThisWeek) of \(progressStore.weeklyGoal) lessons this week")
@@ -371,6 +1202,23 @@ struct DashboardView: View {
         }
     }
 
+    /// "About 9 weeks left at 5 lessons a week · About 38 hrs of
+    /// lessons to go", from the lessons still to finish and the
+    /// weekly goal. Nil when everything is complete or the goal
+    /// is not set.
+    private var paceLine: String? {
+        let remaining = contentService.allLessons.filter { !progressStore.isLessonComplete($0.id) }
+        guard !remaining.isEmpty, progressStore.weeklyGoal > 0 else { return nil }
+        let weeks = (remaining.count + progressStore.weeklyGoal - 1) / progressStore.weeklyGoal
+        let weekText = weeks == 1 ? "About 1 week left" : "About \(weeks) weeks left"
+        let goalText = "at \(progressStore.weeklyGoal) lessons a week"
+        let remainingSeconds = remaining.reduce(0) { $0 + (LessonDurations.seconds(for: $1.id) ?? 0) }
+        guard let total = LessonDurations.totalLabel(seconds: remainingSeconds) else {
+            return "\(weekText) \(goalText)."
+        }
+        return "\(weekText) \(goalText) · \(total) of lessons to go."
+    }
+
     private var weeklyGoalSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
             PFSectionHeader(title: "Weekly goal")
@@ -383,13 +1231,27 @@ struct DashboardView: View {
                     Text("How many lessons do you want to finish each week?")
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
-                    Picker("Lessons per week", selection: $progressStore.weeklyGoal) {
-                        ForEach(goalOptions, id: \.self) { option in
-                            Text("\(option)").tag(option)
-                        }
+                    HStack(spacing: PFSpacing.md) {
+                        Text("\(progressStore.weeklyGoal)")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                            .frame(minWidth: 44, alignment: .center)
+                        Text("lessons per week")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                        Spacer()
+                        // Any goal from 1 to ContentManifest.lessonCount lessons: the same
+                        // range as LearningPreferencesView.
+                        Stepper("", value: $progressStore.weeklyGoal, in: 1...ContentManifest.lessonCount)
+                            .labelsHidden()
+                            .accessibilityLabel("Weekly goal in lessons")
                     }
-                    .pickerStyle(.segmented)
-                    .accessibilityLabel("Weekly goal in lessons")
+                    if let paceLine {
+                        Text(paceLine)
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
         }
@@ -415,6 +1277,10 @@ struct DashboardView: View {
                             Divider()
                         }
                     }
+                    Text("Each event is one recorded action, such as completing a lesson, finishing a quiz or listening to narration.")
+                        .font(.pfCaption)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -424,23 +1290,280 @@ struct DashboardView: View {
 
     @ViewBuilder
     private var assessmentsContent: some View {
-        if progressStore.totalQuizAttempts == 0 && !competencyStore.hasAssessments {
+        if !hasAnyAssessmentEvidence {
             PFEmptyStateView(
                 systemImage: "checkmark.circle.fill",
                 title: "No assessments yet",
-                message: "Take a lesson quiz or a competency assessment and your scores will appear here.",
+                message: "Take a lesson quiz, a competency assessment, a Final Assessment or an investigation lab case and your scores will appear here. Quizzes, competency scores, Final Assessments and lab scores are shown in separate sections.",
                 actionTitle: "Start learning",
                 action: { selectedTab?.wrappedValue = 1 }
             )
         } else {
             quizSection
             competencySection
+            diagnosticSection
+            finalAssessmentsSection
+            labSection
+            studioSection
+        }
+    }
+
+    /// The onboarding diagnostic score, shown only when one was
+    /// recorded. It is a starting point from onboarding, not a
+    /// current measure, and it never feeds the competency scores.
+    @ViewBuilder
+    private var diagnosticSection: some View {
+        if let profile = effectiveProfile, let score = profile.diagnosticScore {
+            VStack(alignment: .leading, spacing: PFSpacing.md) {
+                PFSectionHeader(title: "Onboarding diagnostic")
+                PFCard {
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text("\(Int((min(1, max(0, score)) * 100).rounded()))% at onboarding")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let takenAt = profile.diagnosticTakenAt {
+                            Text("Taken \(takenAt, format: .dateTime.day().month().year()).")
+                                .font(.pfBody)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text("A starting point from when onboarding was completed. It does not change as you learn, and it is not part of your competency scores.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Final Assessments
+
+    /// Final Assessment standing for every assessable course, from
+    /// the stored attempt counts and certificates. Failed attempt
+    /// scores are not stored, so only the passing score (on the
+    /// certificate) is ever shown. Rows do not link straight to
+    /// the exam: Certificates applies the ownership rules, so the
+    /// single link below goes there.
+    private var finalAssessmentsSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "Final Assessments")
+            PFCard {
+                VStack(alignment: .leading, spacing: PFSpacing.md) {
+                    Text("\(FinalAssessmentStore.questionCount) questions per course, pass mark more than 70%, that is at least \(FinalAssessmentStore.passCorrectCount) out of \(FinalAssessmentStore.questionCount) correct. Each course allows \(FinalAssessmentStore.maxAttempts) attempts.")
+                        .font(.pfCaption)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(courseCertificateInsights) { course in
+                        HStack(spacing: PFSpacing.md) {
+                            VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                                Text(course.courseName)
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfNavy)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let certificate = course.certificate {
+                                    Text("Passed: \(certificate.scoreText) (\(Int(certificate.scorePercent.rounded()))%). Certificate earned.")
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfSuccess)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                } else if course.status == .locked {
+                                    Text("Locked: all \(FinalAssessmentStore.maxAttempts) attempts used without a pass. Contact support for another attempt.")
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfError)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                } else if course.attemptsUsed > 0 {
+                                    Text("\(course.attemptsUsed) \(course.attemptsUsed == 1 ? "attempt" : "attempts") used, \(course.attemptsRemaining) left. Scores for attempts that did not pass are not kept.")
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                } else {
+                                    Text("Not attempted yet. \(course.attemptsRemaining) attempts available.")
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            Spacer()
+                        }
+                    }
+                    NavigationLink(destination: CertificatesListView()) {
+                        Text("View certificates and Final Assessments")
+                            .font(.pfCallout)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.pfRoyal)
+                            .padding(.horizontal, PFSpacing.md)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .background(Color.pfRoyal.opacity(0.08))
+                            .cornerRadius(PFSpacing.cornerRadius)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Investigation lab
+
+    /// Practical investigation performance, from the stored lab
+    /// scores. Scores measure investigation quality (best-first
+    /// actions, wrong turns, red herrings, evidence opened), and
+    /// the best score per case is kept. There is no pass mark for
+    /// the lab, so none is shown. Breakdown totals come from the
+    /// most recent completion of each case. Lab scores stay on
+    /// this device.
+    private var labSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "Investigation lab")
+            PFCard {
+                VStack(alignment: .leading, spacing: PFSpacing.md) {
+                    if labSummary.casesCompleted == 0 {
+                        Text("No lab cases completed yet")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Complete an investigation case and your best scores will appear here. The lab has \(labSummary.totalCases) cases.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        HStack(spacing: PFSpacing.lg) {
+                            if let mean = labSummary.meanBestFraction {
+                                PFProgressRing(progress: mean, size: 110, color: .pfRoyal)
+                            }
+                            VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                                if let mean = labSummary.meanBestFraction {
+                                    Text("\(Int((mean * 100).rounded()))% average best score")
+                                        .font(.pfSectionTitle)
+                                        .foregroundColor(.pfNavy)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Text("\(labSummary.casesCompleted) of \(labSummary.totalCases) cases completed, \(labSummary.totalCompletions) \(labSummary.totalCompletions == 1 ? "completion" : "completions") in total")
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let lowest = labSummary.lowestBestFraction, let highest = labSummary.highestBestFraction {
+                                    Text("Best scores range from \(Int((lowest * 100).rounded()))% to \(Int((highest * 100).rounded()))%.")
+                                        .font(.pfBody)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                        Divider()
+                        Text("From the most recent completion of each case: \(labSummary.stepsSolvedBestFirst) steps solved on the first pick, \(labSummary.stepsSolvedAfterWrongTurn) solved after a wrong turn, \(labSummary.totalWrongPicks) wrong picks, \(labSummary.totalRedHerringPicks) red herring picks, \(labSummary.evidenceOpenedCount) of \(labSummary.evidenceTotalCount) genuine evidence items opened.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ForEach(labCaseInsights) { result in
+                            HStack(spacing: PFSpacing.md) {
+                                VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                                    Text(labCaseTitle(for: result.caseID))
+                                        .font(.pfBody)
+                                        .foregroundColor(.pfNavy)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text("\(result.completions) \(result.completions == 1 ? "completion" : "completions"), last completed \(result.lastCompletedAt, format: .dateTime.day().month().year()).")
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    if let best = investigationStore.bestOverall(for: result.caseID) {
+                                        Text("Investigation best score: \(best) of 100.")
+                                            .font(.pfCaption)
+                                            .foregroundColor(.pfSecondaryText)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                Spacer()
+                                if let fraction = result.bestFraction {
+                                    Text("Best \(result.bestTotal) of \(result.bestMaximum) (\(Int((fraction * 100).rounded()))%)")
+                                        .font(.pfCaptionBold)
+                                        .foregroundColor(.pfRoyal)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                } else {
+                                    Text("Best \(result.bestTotal)")
+                                        .font(.pfCaptionBold)
+                                        .foregroundColor(.pfRoyal)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                }
+                            }
+                        }
+                        Text("Your lab scores stay on this device.")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    NavigationLink(destination: ExceptionInvestigationLabView()) {
+                        Text("Open the investigation lab")
+                            .font(.pfCallout)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.pfRoyal)
+                            .padding(.horizontal, PFSpacing.md)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .background(Color.pfRoyal.opacity(0.08))
+                            .cornerRadius(PFSpacing.cornerRadius)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Studio drafts
+
+    /// Studio work is activity, not assessed performance: drafts
+    /// carry no score and no completion state. This card reports
+    /// counts and dates only, and says so. Drafts stay on this
+    /// device.
+    private var studioSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFSectionHeader(title: "BA and PO Studio")
+            PFCard {
+                VStack(alignment: .leading, spacing: PFSpacing.md) {
+                    if !studioSummary.hasDrafts {
+                        Text("No studio drafts yet")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Save a draft in the studio and it will be counted here. The studio has \(studioSummary.totalExercises) exercises.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("\(studioSummary.draftsCount) \(studioSummary.draftsCount == 1 ? "draft" : "drafts") saved, across \(studioSummary.exercisesWithDrafts) of \(studioSummary.totalExercises) exercises")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let updated = studioSummary.lastUpdatedAt {
+                            Text("Most recent draft updated \(updated, format: .dateTime.day().month().year()).")
+                                .font(.pfBody)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text("Drafts are work in progress, not scores. Saving a draft does not demonstrate competence, and no draft is marked.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Your drafts stay on this device.")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    NavigationLink(destination: BAProductStudioView()) {
+                        Text("Open the studio")
+                            .font(.pfCallout)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.pfRoyal)
+                            .padding(.horizontal, PFSpacing.md)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .background(Color.pfRoyal.opacity(0.08))
+                            .cornerRadius(PFSpacing.cornerRadius)
+                    }
+                }
+            }
         }
     }
 
     private var quizSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: "Quiz Performance")
+            PFSectionHeader(title: "Quiz performance")
             PFCard {
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
                     if quizResults.isEmpty {
@@ -474,6 +1597,10 @@ struct DashboardView: View {
                                     .font(.pfBody)
                                     .foregroundColor(.pfSecondaryText)
                                     .fixedSize(horizontal: false, vertical: true)
+                                Text("Demonstrated: \(quizSummary.demonstratedLessonCount) \(quizSummary.demonstratedLessonCount == 1 ? "lesson" : "lessons") at 80% or above on their best quiz score, out of \(quizSummary.lessonsAttempted) \(quizSummary.lessonsAttempted == 1 ? "lesson" : "lessons") with a quiz attempt.")
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 Text("Averages come from recorded quiz attempts only.")
                                     .font(.pfCaption)
                                     .foregroundColor(.pfSecondaryText)
@@ -481,15 +1608,15 @@ struct DashboardView: View {
                             }
                         }
                         Divider()
-                        ForEach(quizResults.prefix(5), id: \.lessonID) { result in
+                        ForEach(quizResults.prefix(showAllQuizResults ? quizResults.count : 5), id: \.lessonID) { result in
                             HStack(spacing: PFSpacing.md) {
                                 Text(lessonTitle(for: result.lessonID))
                                     .font(.pfBody)
                                     .foregroundColor(.pfNavy)
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer()
-                                if let fraction = result.fraction {
-                                    Text("\(Int((fraction * 100).rounded()))% best")
+                                if let fraction = result.fraction, let total = result.total {
+                                    Text("\(Int((fraction * 100).rounded()))% best (\(result.correct) of \(total))")
                                         .font(.pfCaptionBold)
                                         .foregroundColor(.pfRoyal)
                                         .fixedSize(horizontal: true, vertical: false)
@@ -500,6 +1627,21 @@ struct DashboardView: View {
                                         .fixedSize(horizontal: true, vertical: false)
                                 }
                             }
+                        }
+                        if quizResults.contains(where: { $0.fraction == nil }) {
+                            Text("Some older results recorded only the number correct, with no total.")
+                                .font(.pfCaption)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if quizResults.count > 5 {
+                            Button(showAllQuizResults ? "Show fewer quiz results" : "Show all quiz results") {
+                                showAllQuizResults.toggle()
+                            }
+                            .font(.pfCallout)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.pfRoyal)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         }
                     }
                 }
@@ -571,11 +1713,34 @@ struct DashboardView: View {
                                 }
                             }
                             PFProgressBar(progress: (competencyStore.score(for: dimension) ?? 0) / 100, height: 6)
+                            if let insight = dimensionInsights.first(where: { $0.dimension == dimension }) {
+                                if let average = insight.quizAverageFraction {
+                                    Text("Lesson quizzes in this area: average \(Int((average * 100).rounded()))% across \(insight.quizAttemptsWithTotal) \(insight.quizAttemptsWithTotal == 1 ? "attempt" : "attempts"). \(insight.lessonsCompleted) of \(insight.lessonsTotal) lessons completed, \(insight.demonstratedLessonCount) demonstrated at 80% or above.")
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                } else {
+                                    Text("No lesson quiz attempts with a recorded total in this area yet. \(insight.lessonsCompleted) of \(insight.lessonsTotal) lessons completed.")
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                if insight.quizAttemptsWithoutTotal > 0 {
+                                    Text("\(insight.quizAttemptsWithoutTotal) older \(insight.quizAttemptsWithoutTotal == 1 ? "attempt recorded" : "attempts recorded") only the number correct, with no total, so they are not in the average.")
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
                             NavigationLink(destination: AssessmentView(dimension: dimension)) {
-                                Text("Take the \(dimension.shortName) assessment")
+                                Text(competencyStore.score(for: dimension) == nil ? "Take the \(dimension.shortName) assessment" : "Retake the \(dimension.shortName) assessment")
                                     .font(.pfCallout)
                                     .fontWeight(.semibold)
                                     .foregroundColor(.pfRoyal)
+                                    .padding(.horizontal, PFSpacing.md)
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    .background(Color.pfRoyal.opacity(0.08))
+                                    .cornerRadius(PFSpacing.cornerRadius)
                             }
                         }
                     }
@@ -676,23 +1841,31 @@ struct DashboardView: View {
                                 return 0
                             }
                         }()
-                        VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                            HStack(spacing: PFSpacing.sm) {
-                                Text(path.title)
-                                    .font(.pfBody)
-                                    .foregroundColor(.pfNavy)
+                        NavigationLink(destination: PathDetailView(path: path)) {
+                            VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                                HStack(spacing: PFSpacing.sm) {
+                                    Text(path.title)
+                                        .font(.pfBody)
+                                        .foregroundColor(.pfNavy)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Spacer()
+                                    Text("\(percent)%")
+                                        .font(.pfCaptionBold)
+                                        .foregroundColor(.pfRoyal)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                    Image(systemName: "chevron.right")
+                                        .foregroundColor(.pfSecondaryText)
+                                }
+                                Text("\(lessonProgress.completed) of \(lessonProgress.total) lessons complete")
+                                    .font(.pfCaption)
+                                    .foregroundColor(.pfSecondaryText)
                                     .fixedSize(horizontal: false, vertical: true)
-                                Spacer()
-                                Text("\(percent)%")
-                                    .font(.pfCaptionBold)
-                                    .foregroundColor(.pfRoyal)
-                                    .fixedSize(horizontal: true, vertical: false)
+                                Text("\(demonstratedCount(in: path.lessons(in: contentService))) demonstrated on quizzes at 80% or above.")
+                                    .font(.pfCaption)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                PFProgressBar(progress: Double(percent) / 100, height: 6)
                             }
-                            Text("\(lessonProgress.completed) of \(lessonProgress.total) lessons complete")
-                                .font(.pfCaption)
-                                .foregroundColor(.pfSecondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                            PFProgressBar(progress: Double(percent) / 100, height: 6)
                         }
                     }
                 }
@@ -759,7 +1932,7 @@ struct DashboardView: View {
                 PFLoadingView(message: "Loading recommendations...")
             } else if recommendedLessons.isEmpty {
                 PFCard {
-                    Text("You have completed every lesson in the catalogue.")
+                    Text(contentService.searchIndex == nil ? "Lessons will appear here once the course catalogue has loaded." : "You have completed every lesson in the catalogue.")
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -777,12 +1950,15 @@ struct DashboardView: View {
 
     // MARK: - Progress backup
 
+    /// The short readable backup, reachable by guests too. The complete
+    /// JSON export (account, profile, full history, preferences) lives
+    /// in Profile; the two serve different purposes and both are kept.
     private var backupSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
             PFSectionHeader(title: "Progress backup")
             PFCard {
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
-                    Text("Your progress stays on this device. Share a backup to keep a copy somewhere safe.")
+                    Text("Share a readable backup to keep a copy somewhere safe. It lists your completed lessons, quiz attempts, streak and learning time, and does not include your name or email.")
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
                     ShareLink(item: progressStore.backupText()) {
@@ -845,80 +2021,3 @@ struct DashboardView: View {
     }
 }
 
-// MARK: - Compact progress summary (in-stack destination)
-
-/// A compact progress summary, for places that link to My Progress
-/// from inside another NavigationStack (for example the Home quick
-/// links) where the My Progress tab itself cannot be pushed. It shows
-/// the same real progress as My Progress, without the analytics
-/// that need the full screen.
-struct YourProgressDetailView: View {
-    @EnvironmentObject private var contentService: ContentService
-    @EnvironmentObject private var progressStore: ProgressStore
-
-    private var totalLessonCount: Int {
-        if let count = contentService.searchIndex?.counts.lesson, count > 0 {
-            return count
-        }
-        return contentService.allLessons.count
-    }
-
-    private var overallProgress: Double {
-        guard totalLessonCount > 0 else { return 0 }
-        return Double(progressStore.totalLessonsCompleted) / Double(totalLessonCount)
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: PFSpacing.lg) {
-                PFCard {
-                    if contentService.searchIndex == nil {
-                        PFLoadingView(message: "Loading your progress...")
-                    } else {
-                        HStack(spacing: PFSpacing.lg) {
-                            PFProgressRing(progress: overallProgress, size: 110, color: .pfRoyal)
-                            VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                                Text("\(progressStore.totalLessonsCompleted) of \(totalLessonCount) lessons completed")
-                                    .font(.pfCardTitle)
-                                    .foregroundColor(.pfNavy)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                Text("\(Int((overallProgress * 100).rounded()))% of the curriculum complete")
-                                    .font(.pfBody)
-                                    .foregroundColor(.pfSecondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                    }
-                }
-                HStack(spacing: PFSpacing.sm) {
-                    PFStatCard(
-                        value: "\(progressStore.totalLessonsCompleted)",
-                        label: "Lessons completed",
-                        systemImage: "book.fill"
-                    )
-                    PFStatCard(
-                        value: "\(progressStore.streakCount)",
-                        label: "Day streak",
-                        systemImage: "flame.fill"
-                    )
-                    PFStatCard(
-                        value: "\(progressStore.totalQuizAttempts)",
-                        label: "Quiz attempts",
-                        systemImage: "checkmark.circle.fill"
-                    )
-                }
-                Text("Full analytics live on the My Progress tab.")
-                    .font(.pfCaption)
-                    .foregroundColor(.pfSecondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(PFSpacing.lg)
-        }
-        .background(Color.pfBackground)
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: PFSpacing.xl)
-        }
-        .navigationTitle("Your progress")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}

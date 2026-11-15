@@ -16,6 +16,9 @@ struct RevisionCentreView: View {
     @State private var reviewingConcept: RevisionService.RevisionConcept? = nil
     @State private var showAddLesson = false
     @State private var selectedTab = 0
+    @State private var visibleCount: Int = 20
+
+    private static let pageSize = 20
 
     private static let dueDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -29,6 +32,10 @@ struct RevisionCentreView: View {
         let dueDay = Calendar.current.startOfDay(for: concept.nextDue)
         if dueDay <= today { return "Due today" }
         return "Next due \(dueDateFormatter.string(from: concept.nextDue))"
+    }
+
+    private var visibleAllConcepts: [RevisionService.RevisionConcept] {
+        Array(revisionService.allConcepts.prefix(visibleCount))
     }
 
     var body: some View {
@@ -58,9 +65,7 @@ struct RevisionCentreView: View {
         // ScrollView, so they stay editable.
         .pfProtectedContent()
         .background(Color.pfBackground)
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: PFSpacing.xl)
-        }
+        .pfTabBarClearance()
         .navigationTitle("Revision Centre")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $reviewingConcept) { concept in
@@ -68,6 +73,9 @@ struct RevisionCentreView: View {
         }
         .sheet(isPresented: $showAddLesson) {
             AddLessonSheet()
+        }
+        .onChange(of: selectedTab) { _, _ in
+            visibleCount = Self.pageSize
         }
     }
 
@@ -138,9 +146,18 @@ struct RevisionCentreView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else {
-                ForEach(revisionService.allConcepts) { concept in
+                ForEach(visibleAllConcepts) { concept in
                     ConceptRow(concept: concept) {
                         reviewingConcept = concept
+                    }
+                }
+                if revisionService.allConcepts.count > visibleAllConcepts.count {
+                    Text("Showing \(visibleAllConcepts.count) of \(revisionService.allConcepts.count) concepts")
+                        .font(.pfCaption)
+                        .foregroundColor(.pfSecondaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    PFSecondaryButton(title: "Load more concepts") {
+                        visibleCount += Self.pageSize
                     }
                 }
             }
@@ -303,12 +320,20 @@ private struct AddLessonSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var revisionService = RevisionService.shared
 
+    @State private var visibleCount: Int = 20
+
+    private static let pageSize = 20
+
     private var completedLessons: [SearchEntry] {
         contentService.allLessons.filter { progressStore.isLessonComplete($0.id) }
     }
 
     private var unscheduled: [SearchEntry] {
         completedLessons.filter { !revisionService.isScheduled(lessonID: $0.id) }
+    }
+
+    private var visibleUnscheduled: [SearchEntry] {
+        Array(unscheduled.prefix(visibleCount))
     }
 
     var body: some View {
@@ -323,7 +348,7 @@ private struct AddLessonSheet: View {
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
-                        ForEach(unscheduled) { lesson in
+                        ForEach(visibleUnscheduled) { lesson in
                             Button {
                                 revisionService.scheduleLessonForRevision(lessonID: lesson.id, title: lesson.title)
                                 dismiss()
@@ -342,6 +367,15 @@ private struct AddLessonSheet: View {
                                 }
                             }
                             .buttonStyle(.plain)
+                        }
+                        if unscheduled.count > visibleUnscheduled.count {
+                            Text("Showing \(visibleUnscheduled.count) of \(unscheduled.count) lessons")
+                                .font(.pfCaption)
+                                .foregroundColor(.pfSecondaryText)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            PFSecondaryButton(title: "Load more lessons") {
+                                visibleCount += Self.pageSize
+                            }
                         }
                     }
                 }

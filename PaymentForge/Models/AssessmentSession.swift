@@ -1,5 +1,5 @@
 // AssessmentSession.swift
-// PaymentForge iOS - Timed and randomised assessment sessions (Phase 6).
+// PaymentForge iOS - Timed and randomised assessment sessions.
 //
 // An assessment session runs over real lesson quiz questions only:
 // questions are collected by AssessmentView from the lesson pages and
@@ -114,7 +114,10 @@ final class AssessmentSession: ObservableObject {
     /// so backgrounding the app cannot gain extra time.
     private var examEndsAt: Date?
     /// UserDefaults key the end time is persisted under, if any.
-    /// Kept so finish() can clear it.
+    /// The caller supplies a fully namespaced key from
+    /// AccountScopedStorage.currentKey, so one account's running
+    /// exam clock never resumes under another account. Kept so
+    /// finish() can clear it.
     private var persistKey: String?
 
     var currentQuestion: AssessmentQuestion? {
@@ -154,9 +157,9 @@ final class AssessmentSession: ObservableObject {
     /// question); the Final Assessment passes 30 minutes. Set
     /// perQuestionTimeout false to turn off the per-question
     /// auto-advance: the Final Assessment has only the total clock.
-    /// persistKey saves the wall-clock end time under that
-    /// UserDefaults key so an unfinished exam can be resumed with
-    /// the time left; finish() clears it.
+    /// persistKey saves the wall-clock end time under that fully
+    /// namespaced UserDefaults key so an unfinished exam can be
+    /// resumed with the time left; finish() clears it.
     func start(
         questions: [AssessmentQuestion],
         timed: Bool,
@@ -203,9 +206,9 @@ final class AssessmentSession: ObservableObject {
     }
 
     /// The wall-clock end of a timed exam started earlier, if one
-    /// was persisted under this key and has not been cleared by a
-    /// finish. The Final Assessment setup screen uses it to offer
-    /// a resume with the time left.
+    /// was persisted under this fully namespaced key and has not
+    /// been cleared by a finish. The Final Assessment setup screen
+    /// uses it to offer a resume with the time left.
     static func storedEndTime(forKey key: String) -> Date? {
         UserDefaults.standard.object(forKey: key) as? Date
     }

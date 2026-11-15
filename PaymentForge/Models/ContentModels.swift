@@ -30,7 +30,18 @@ struct SearchEntry: Codable, Identifiable, Hashable {
         return String(trimmed.prefix(140)) + "..."
     }
 
+    /// True when this entry is a supplemental lesson written for v34
+    /// to cover a CIPSP or Payment Guru syllabus topic that the
+    /// website catalogue does not teach in depth. Supplemental lessons
+    /// are bundled with the app, carry recorded narration, and their
+    /// detail is built locally instead of fetched from the website.
+    var isSupplemental: Bool {
+        id.hasSuffix("-supp")
+    }
+
     /// The audio file name for a lesson, for example "ch1s1.mp3".
+    /// Supplemental lessons return their own file too: all 72 have
+    /// recorded narration on the audio hosts.
     var audioFileName: String? {
         guard type == .lesson else { return nil }
         return id + ".mp3"
@@ -51,16 +62,35 @@ struct SearchEntry: Codable, Identifiable, Hashable {
         return Int(digits)
     }
 
-    /// The exact citation for a chat answer: the chapter and
-    /// lesson for lessons ("Chapter 39, Lesson 3: pacs.002
-    /// Explained"), the type and title for anything else
-    /// ("Guide: camt.029 Explained", "Situation: ..."). The
-    /// citation is what the learner taps to open the source, so
-    /// it must name the real place in the course, never a generic
-    /// "From the course" line.
+    /// The citation naming where an entry sits in the book: the
+    /// book chapter and lesson for lessons ("Chapter 26, Lesson 3:
+    /// pacs.002 Explained"), the type and title for anything else
+    /// ("Guide: camt.029 Explained", "Situation: ..."). Chapter
+    /// numbers are always book numbers from
+    /// PFBookModeReadingOrder, never internal chapter numbers. A
+    /// held-out chapter has no book number, so its lessons cite
+    /// the chapter name instead. Supplemental lessons (ids like
+    /// ch54s901-supp) have no lesson number in the catalogue:
+    /// their 901-style sequence is an authoring sequence, not a
+    /// position in the chapter, so the citation names the chapter
+    /// only ("Chapter 27: <title>") and never shows the 901 form.
+    /// Callers with a ContentService should use its citation(for:),
+    /// which numbers regular lessons by sequential position
+    /// within the chapter in catalogue order; for the current
+    /// catalogue the two agree, because every chapter's lesson
+    /// numbers are sequential.
     var citation: String {
-        if type == .lesson, let chapter = chapterNumber, let lesson = lessonNumber {
-            return "Chapter \(chapter), Lesson \(lesson): \(title)"
+        if type == .lesson, let chapter = chapterNumber {
+            if let book = PFBookModeReadingOrder.bookNumber(forInternalNumber: chapter) {
+                if isSupplemental {
+                    return "Chapter \(book): \(title)"
+                }
+                if let lesson = lessonNumber {
+                    return "Chapter \(book), Lesson \(lesson): \(title)"
+                }
+            } else if let name = chapterName {
+                return "\(name): \(title)"
+            }
         }
         return "\(type.displayName): \(title)"
     }
@@ -221,7 +251,7 @@ struct SearchCounts: Codable {
 // MARK: - Chapters and domains
 
 /// A chapter in the curriculum. Chapters are grouped into domains.
-/// The site has 100 chapters across 15 domains.
+/// The site has ContentManifest.chapterCount chapters across ContentManifest.domainCount domains.
 struct Chapter: Identifiable, Hashable {
     let id: String
     let number: Int
@@ -231,7 +261,7 @@ struct Chapter: Identifiable, Hashable {
     let lessonIDs: [String]
 }
 
-/// A domain grouping chapters. The site has 15 domains.
+/// A domain grouping chapters. The site has ContentManifest.domainCount domains.
 struct Domain: Identifiable, Hashable {
     let id: String
     let name: String
@@ -299,7 +329,7 @@ struct QuizQuestion: Identifiable, Hashable {
 
 // MARK: - Situations
 
-/// A Payment Situation. The site has 564, across 6 learning stages
+/// A Payment Situation. The site has ContentManifest.situationCount, across 6 learning stages
 /// and 3 levels (foundation, core, advanced). The full case (full
 /// explain text and visual) comes from the live situations data file;
 /// the search index carries only a short excerpt, so a Situation built
@@ -427,7 +457,7 @@ struct SituationStackedSegment: Codable, Hashable {
 /// deliberately not decoded: they are never shown in learner UI.
 ///
 /// AUTHORITATIVE METADATA (verified 11 Nov 2026 against the live
-/// file, all 564 items): every item carries `stage` (an integer,
+/// file, all ContentManifest.situationCount items): every item carries `stage` (an integer,
 /// 1 to 6) and `stage_name` (the matching stage name), plus `level`,
 /// `module` and `domain`. Those fields are read directly where they
 /// are present. `stage` is decoded flexibly (integer, or a string
@@ -452,12 +482,26 @@ struct FullSituationItem: Decodable {
     /// Curriculum domain string from the data file, when present.
     /// Informational only; no chapter mapping is derived from it.
     let domain: String?
+    /// Message codes named in the data file for this item, when the
+    /// stage-map join supplied them. Read by the investigation
+    /// engine; absent items fall back to codes found in the text.
+    let messages: [String]?
+    /// Failure category from the data file, when present. Read by
+    /// the investigation engine for severity, impact, and
+    /// hypothesis templates.
+    let failureCategory: String?
+    /// Resolution path from the data file, when present. Read by
+    /// the investigation engine for the closing decision note.
+    let resolution: String?
 
     enum CodingKeys: String, CodingKey {
         case id, title, level, module, seq, explain, takeaway, visual
         case stage
         case stageName = "stage_name"
         case domain
+        case messages
+        case failureCategory = "failure_category"
+        case resolution
     }
 
     init(from decoder: Decoder) throws {
@@ -472,6 +516,9 @@ struct FullSituationItem: Decodable {
         visual = try container.decodeIfPresent(SituationVisual.self, forKey: .visual)
         stageName = try container.decodeIfPresent(String.self, forKey: .stageName)
         domain = try container.decodeIfPresent(String.self, forKey: .domain)
+        messages = try container.decodeIfPresent([String].self, forKey: .messages)
+        failureCategory = try container.decodeIfPresent(String.self, forKey: .failureCategory)
+        resolution = try container.decodeIfPresent(String.self, forKey: .resolution)
         if let intStage = try? container.decodeIfPresent(Int.self, forKey: .stage) {
             stage = intStage
         } else if let stringStage = try? container.decodeIfPresent(String.self, forKey: .stage),

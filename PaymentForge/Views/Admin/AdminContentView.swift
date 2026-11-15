@@ -1,13 +1,16 @@
 // AdminContentView.swift
-// PaymentForge iOS - Content management admin tool (Phase 6).
+// PaymentForge iOS - Content management admin tool.
 //
-// An admin tool, not a learner feature: it is reachable only from
-// Profile, and it works only with the local registry on this device.
-// It lists every content type with its live count from the loaded
-// website data, shows each type's version and status summary, and
-// lets an admin mark an item as a preview or change its access
-// classification locally. Draft items are never shown to learners;
-// only published items appear.
+// An internal diagnostic tool, not a learner feature and not a
+// central content management system: its only entry point is the
+// Profile row, which is compiled in DEBUG builds only, so it is
+// absent from Release builds. It works only with the local registry
+// on this device. It lists every content type with its live count
+// from the loaded website data, shows each type's version and status
+// summary, and lets an admin mark an item as a preview or change its
+// access classification locally. Publication status is recorded in
+// the local registry only: no learner view reads it yet, so marking
+// an item Draft here does not hide it from learners.
 //
 // The website remains the source of truth: nothing here migrates,
 // copies or re-hosts content, and every change here is stored in the
@@ -34,6 +37,17 @@ struct AdminContentView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PFSpacing.lg) {
+                PFCard {
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text("Internal diagnostic view")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                        Text("This screen shows local registry data stored on this device only. It is not a central content management system, and changes here do not affect the published content or what other learners see.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 PFCard {
                     VStack(alignment: .leading, spacing: PFSpacing.sm) {
                         Text("Local registry, website source")
@@ -130,6 +144,10 @@ struct AdminContentTypeView: View {
     @ObservedObject private var management = ContentManagementService.shared
     let type: PFContentType
 
+    @State private var visibleCount: Int = 20
+
+    private static let pageSize = 20
+
     /// One listable item: its id and title from the loaded data.
     private struct AdminItem: Identifiable {
         var id: String { contentID }
@@ -159,6 +177,10 @@ struct AdminContentTypeView: View {
         }
     }
 
+    private var visibleItems: [AdminItem] {
+        Array(items.prefix(visibleCount))
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PFSpacing.md) {
@@ -181,11 +203,20 @@ struct AdminContentTypeView: View {
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)
-                    ForEach(items) { item in
+                    ForEach(visibleItems) { item in
                         NavigationLink(destination: AdminContentItemView(type: type, contentID: item.contentID, title: item.title)) {
                             AdminItemRow(type: type, contentID: item.contentID, title: item.title)
                         }
                         .buttonStyle(PFCardButtonStyle())
+                    }
+                    if items.count > visibleItems.count {
+                        Text("Showing \(visibleItems.count) of \(items.count) items")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        PFSecondaryButton(title: "Load more items") {
+                            visibleCount += Self.pageSize
+                        }
                     }
                 }
             }
@@ -310,7 +341,7 @@ struct AdminContentItemView: View {
                             .onChange(of: isPreview) { _, value in
                                 management.setPreview(value, contentType: type, contentID: contentID)
                             }
-                        Text("A preview item is shown with a Preview badge. It is not a separate copy of the content.")
+                        Text("A preview item is shown with a Preview badge in the admin list. It is not a separate copy of the content, and no learner view reads this flag yet.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -330,7 +361,7 @@ struct AdminContentItemView: View {
                         .onChange(of: status) { _, value in
                             management.setStatus(value, contentType: type, contentID: contentID)
                         }
-                        Text("Draft items are never shown to learners; only published items appear. Archived items are kept in the registry but hidden.")
+                        Text("Draft and Archived are recorded in the local registry only. No learner view reads this status yet, so changing it here does not hide the item from learners.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)

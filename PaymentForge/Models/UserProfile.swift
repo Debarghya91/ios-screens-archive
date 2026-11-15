@@ -91,12 +91,17 @@ enum InterestArea: String, CaseIterable, Codable {
 
 /// One row of the user_preferences table, plus the local fallback.
 /// Guests keep these in UserDefaults only; signed-in users also sync
-/// them to Supabase through SyncService.
+/// them to Supabase through SyncService. Local storage is namespaced
+/// per account through AccountScopedStorage, so one account's saved
+/// preferences are never served to another.
+/// The weekly goal lives in ONE place only: ProgressStore.weeklyGoal.
+/// It used to be duplicated here as weeklyTarget (and synced through
+/// SyncService); that duplicate is deleted, so there is one goal, one
+/// store, one value everywhere.
 struct LearningPreferences: Codable, Equatable {
     var userID: String?
     var experienceLevel: String?
     var domainInterests: [String]
-    var weeklyTarget: Int
     var includeAudio: Bool
     var updatedAt: String?
 
@@ -104,7 +109,6 @@ struct LearningPreferences: Codable, Equatable {
         case userID = "user_id"
         case experienceLevel = "experience_level"
         case domainInterests = "domain_interests"
-        case weeklyTarget = "weekly_target"
         case includeAudio = "include_audio"
         case updatedAt = "updated_at"
     }
@@ -113,7 +117,6 @@ struct LearningPreferences: Codable, Equatable {
         userID: nil,
         experienceLevel: nil,
         domainInterests: [],
-        weeklyTarget: 5,
         includeAudio: true,
         updatedAt: nil
     )
@@ -123,7 +126,6 @@ struct LearningPreferences: Codable, Equatable {
     private enum LocalKeys {
         static let experienceLevel = "pf.prefs.experienceLevel.v1"
         static let domainInterests = "pf.prefs.domainInterests.v1"
-        static let weeklyTarget = "pf.prefs.weeklyTarget.v1"
         static let includeAudio = "pf.prefs.includeAudio.v1"
         static let hasSaved = "pf.prefs.hasSaved.v1"
     }
@@ -133,37 +135,43 @@ struct LearningPreferences: Codable, Equatable {
     /// must never overwrite it. Until set, the server row (if any)
     /// is used to restore preferences on a fresh device.
     static var hasSavedLocally: Bool {
-        UserDefaults.standard.bool(forKey: LocalKeys.hasSaved)
+        UserDefaults.standard.bool(forKey: AccountScopedStorage.currentKey(LocalKeys.hasSaved))
     }
 
     static func loadLocal() -> LearningPreferences {
+        for baseKey in [LocalKeys.experienceLevel, LocalKeys.domainInterests, LocalKeys.includeAudio, LocalKeys.hasSaved] {
+            AccountScopedStorage.adoptLegacyKey(baseKey)
+        }
         let defaults = UserDefaults.standard
-        let target = defaults.integer(forKey: LocalKeys.weeklyTarget)
         return LearningPreferences(
             userID: nil,
-            experienceLevel: defaults.string(forKey: LocalKeys.experienceLevel),
-            domainInterests: defaults.stringArray(forKey: LocalKeys.domainInterests) ?? [],
-            weeklyTarget: target > 0 ? target : 5,
-            includeAudio: defaults.object(forKey: LocalKeys.includeAudio) as? Bool ?? true,
+            experienceLevel: defaults.string(forKey: AccountScopedStorage.currentKey(LocalKeys.experienceLevel)),
+            domainInterests: defaults.stringArray(forKey: AccountScopedStorage.currentKey(LocalKeys.domainInterests)) ?? [],
+            includeAudio: defaults.object(forKey: AccountScopedStorage.currentKey(LocalKeys.includeAudio)) as? Bool ?? true,
             updatedAt: nil
         )
     }
 
     func saveLocal() {
         let defaults = UserDefaults.standard
-        defaults.set(experienceLevel, forKey: LocalKeys.experienceLevel)
-        defaults.set(domainInterests, forKey: LocalKeys.domainInterests)
-        defaults.set(weeklyTarget, forKey: LocalKeys.weeklyTarget)
-        defaults.set(includeAudio, forKey: LocalKeys.includeAudio)
-        defaults.set(true, forKey: LocalKeys.hasSaved)
+        defaults.set(experienceLevel, forKey: AccountScopedStorage.currentKey(LocalKeys.experienceLevel))
+        defaults.set(domainInterests, forKey: AccountScopedStorage.currentKey(LocalKeys.domainInterests))
+        defaults.set(includeAudio, forKey: AccountScopedStorage.currentKey(LocalKeys.includeAudio))
+        defaults.set(true, forKey: AccountScopedStorage.currentKey(LocalKeys.hasSaved))
     }
 
+    /// Clear the current namespace's saved preferences, including
+    /// the has-saved flag, so a later sign-in can restore the
+    /// account's server row. Before namespacing this left the flag
+    /// set; clearing it is part of clearing. Other namespaces are
+    /// untouched. Account deletion removes the whole namespace
+    /// separately through AccountScopedStorage.
     static func clearLocal() {
         let defaults = UserDefaults.standard
-        defaults.removeObject(forKey: LocalKeys.experienceLevel)
-        defaults.removeObject(forKey: LocalKeys.domainInterests)
-        defaults.removeObject(forKey: LocalKeys.weeklyTarget)
-        defaults.removeObject(forKey: LocalKeys.includeAudio)
+        defaults.removeObject(forKey: AccountScopedStorage.currentKey(LocalKeys.experienceLevel))
+        defaults.removeObject(forKey: AccountScopedStorage.currentKey(LocalKeys.domainInterests))
+        defaults.removeObject(forKey: AccountScopedStorage.currentKey(LocalKeys.includeAudio))
+        defaults.removeObject(forKey: AccountScopedStorage.currentKey(LocalKeys.hasSaved))
     }
 }
 

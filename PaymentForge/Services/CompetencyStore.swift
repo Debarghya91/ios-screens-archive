@@ -1,6 +1,7 @@
 // CompetencyStore.swift
 // PaymentForge iOS - Competency tracking from real assessments only.
-// Stored locally with UserDefaults, guest by default, no sign-in.
+// Stored locally with UserDefaults, namespaced per account through
+// AccountScopedStorage.
 // A dimension has no score until an assessment is taken for it: scores
 // are never invented, seeded or estimated. Each assessment adds its
 // correct/total to a running cumulative total per dimension, so the
@@ -59,6 +60,18 @@ final class CompetencyStore: ObservableObject {
         didSet { save(); refreshScores() }
     }
 
+    /// Suppresses save() while loading, so a reload into an account
+    /// with no stored totals does not write an empty set into that
+    /// namespace (which would block guest migration for it).
+    private var suppressSave = false
+
+    private func withoutSaving(_ work: () -> Void) {
+        let previous = suppressSave
+        suppressSave = true
+        defer { suppressSave = previous }
+        work()
+    }
+
     /// Recorded score per dimension, 0 to 100. A dimension is absent
     /// until an assessment has been taken for it.
     @Published private(set) var scores: [CompetencyDimension: Double] = [:]
@@ -101,6 +114,14 @@ final class CompetencyStore: ObservableObject {
         refreshScores()
     }
 
+    /// Reload for the current account namespace, clearing the
+    /// previous account's scores first.
+    func reloadForCurrentAccount() {
+        withoutSaving { totals = [:] }
+        load()
+        refreshScores()
+    }
+
     private func refreshScores() {
         var next: [CompetencyDimension: Double] = [:]
         for (dimension, entry) in totals where entry.total > 0 {
@@ -110,7 +131,8 @@ final class CompetencyStore: ObservableObject {
     }
 
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: Keys.totals),
+        AccountScopedStorage.adoptLegacyKey(Keys.totals)
+        guard let data = UserDefaults.standard.data(forKey: AccountScopedStorage.currentKey(Keys.totals)),
               let decoded = try? JSONDecoder().decode([String: Totals].self, from: data) else { return }
         var restored: [CompetencyDimension: Totals] = [:]
         for (key, value) in decoded {
@@ -118,16 +140,17 @@ final class CompetencyStore: ObservableObject {
                 restored[dimension] = value
             }
         }
-        totals = restored
+        withoutSaving { totals = restored }
     }
 
     private func save() {
+        guard !suppressSave else { return }
         var raw: [String: Totals] = [:]
         for (dimension, value) in totals {
             raw[dimension.rawValue] = value
         }
         if let data = try? JSONEncoder().encode(raw) {
-            UserDefaults.standard.set(data, forKey: Keys.totals)
+            UserDefaults.standard.set(data, forKey: AccountScopedStorage.currentKey(Keys.totals))
         }
     }
 }

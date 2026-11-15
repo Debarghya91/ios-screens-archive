@@ -1,10 +1,10 @@
 // NotesView.swift
-// PaymentForge iOS - Learner notes and collections.
+// PaymentForge iOS - Learner notes, one flat list.
 // White cards on the soft blue-grey background, royal blue primary,
 // matching the mockup's general language. Notes are the learner's own
-// text about real lessons, stored locally. Search covers note text,
-// lesson title and collection. The composer lives here, not in
-// LessonView, and picks a lesson from completed lessons.
+// text about real lessons, stored locally. Search covers note text
+// and lesson title. The composer lives here, not in LessonView, and
+// picks a lesson from completed lessons.
 // No em dashes in any user-facing text.
 
 import SwiftUI
@@ -15,30 +15,30 @@ struct NotesView: View {
     @ObservedObject private var notesStore = NotesStore.shared
 
     @State private var searchText = ""
-    @State private var selectedCollection: String? = nil
     @State private var showComposer = false
-    @State private var showNewCollection = false
-    @State private var newCollectionName = ""
+    @State private var visibleCount: Int = 20
+
+    private static let pageSize = 20
 
     private var filteredNotes: [NotesStore.Note] {
-        let searched = notesStore.searchNotes(query: searchText)
-        guard let selectedCollection else { return searched }
-        return searched.filter { $0.collection == selectedCollection }
+        notesStore.searchNotes(query: searchText)
+    }
+
+    private var visibleNotes: [NotesStore.Note] {
+        Array(filteredNotes.prefix(visibleCount))
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PFSpacing.lg) {
+                deviceOnlyLabel
                 searchField
-                collectionsRow
                 notesList
             }
             .padding(PFSpacing.lg)
         }
         .background(Color.pfBackground)
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: PFSpacing.xl)
-        }
+        .pfTabBarClearance()
         .navigationTitle("My Notes")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -54,19 +54,24 @@ struct NotesView: View {
         .sheet(isPresented: $showComposer) {
             NoteComposerSheet()
         }
-        .alert("New collection", isPresented: $showNewCollection) {
-            TextField("Collection name", text: $newCollectionName)
-            Button("Create") {
-                if notesStore.createCollection(newCollectionName) {
-                    selectedCollection = newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-                newCollectionName = ""
-            }
-            Button("Cancel", role: .cancel) {
-                newCollectionName = ""
-            }
-        } message: {
-            Text("Name a new collection for your notes.")
+        .onChange(of: searchText) { _, _ in
+            visibleCount = Self.pageSize
+        }
+    }
+
+    // MARK: - Device-only label
+
+    /// Notes are stored only on this device and never sync. The
+    /// label stays visible above the list so the learner is never
+    /// left assuming notes follow their account.
+    private var deviceOnlyLabel: some View {
+        HStack(spacing: PFSpacing.sm) {
+            Image(systemName: "iphone")
+                .foregroundColor(.pfSecondaryText)
+            Text("Notes are stored only on this device. They do not sync to other devices.")
+                .font(.pfCaption)
+                .foregroundColor(.pfSecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -89,31 +94,6 @@ struct NotesView: View {
         )
     }
 
-    // MARK: - Collections
-
-    private var collectionsRow: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.sm) {
-            Text("Collections")
-                .font(.pfCaptionBold)
-                .foregroundColor(.pfSecondaryText)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: PFSpacing.sm) {
-                    PFChip(text: "All notes", isSelected: selectedCollection == nil) {
-                        selectedCollection = nil
-                    }
-                    ForEach(notesStore.collections(), id: \.self) { collection in
-                        PFChip(text: collection, isSelected: selectedCollection == collection) {
-                            selectedCollection = collection
-                        }
-                    }
-                    PFChip(text: "+ New collection", isSelected: false) {
-                        showNewCollection = true
-                    }
-                }
-            }
-        }
-    }
-
     // MARK: - List
 
     private var notesList: some View {
@@ -126,7 +106,7 @@ struct NotesView: View {
                             .foregroundColor(.pfNavy)
                         Text(notesStore.allNotes().isEmpty
                             ? "Write your first note about a lesson you completed. Notes stay on this device."
-                            : "Try a different search or collection.")
+                            : "Try a different search.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -136,11 +116,20 @@ struct NotesView: View {
                     }
                 }
             } else {
-                ForEach(filteredNotes) { note in
+                ForEach(visibleNotes) { note in
                     NavigationLink(destination: NoteDetailView(note: note)) {
                         NoteRow(note: note)
                     }
                     .buttonStyle(PFCardButtonStyle())
+                }
+                if filteredNotes.count > visibleNotes.count {
+                    Text("Showing \(visibleNotes.count) of \(filteredNotes.count) notes")
+                        .font(.pfCaption)
+                        .foregroundColor(.pfSecondaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    PFSecondaryButton(title: "Load more notes") {
+                        visibleCount += Self.pageSize
+                    }
                 }
             }
         }
@@ -173,12 +162,9 @@ private struct NoteRow: View {
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                         .lineLimit(1)
-                    HStack(spacing: PFSpacing.sm) {
-                        PFPill(text: note.collection)
-                        Text(Self.dateFormatter.string(from: note.createdAt))
-                            .font(.pfCaption)
-                            .foregroundColor(.pfSecondaryText)
-                    }
+                    Text(Self.dateFormatter.string(from: note.createdAt))
+                        .font(.pfCaption)
+                        .foregroundColor(.pfSecondaryText)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -211,16 +197,12 @@ struct NoteDetailView: View {
                 PFCard {
                     VStack(alignment: .leading, spacing: PFSpacing.md) {
                         HStack(spacing: PFSpacing.sm) {
-                            PFPill(text: note.collection)
                             Spacer()
                             Text(Self.dateFormatter.string(from: note.createdAt))
                                 .font(.pfCaption)
                                 .foregroundColor(.pfSecondaryText)
                         }
-                        Text(note.text)
-                            .font(.pfBody)
-                            .foregroundColor(.pfNavy)
-                            .fixedSize(horizontal: false, vertical: true)
+                        PFBodyText(text: note.text)
                         if let highlighted = note.highlightedText, !highlighted.isEmpty {
                             VStack(alignment: .leading, spacing: PFSpacing.xs) {
                                 Text("Highlighted from the lesson")
@@ -252,6 +234,7 @@ struct NoteDetailView: View {
             .padding(PFSpacing.lg)
         }
         .background(Color.pfBackground)
+        .pfTabBarClearance()
         .navigationTitle("Note")
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog(
@@ -272,8 +255,8 @@ struct NoteDetailView: View {
 
 // MARK: - Note composer
 
-/// The note composer: pick a completed lesson, a collection, and write
-/// the note. Lessons are real completed lessons from ProgressStore.
+/// The note composer: pick a completed lesson and write the note.
+/// Lessons are real completed lessons from ProgressStore.
 private struct NoteComposerSheet: View {
     @EnvironmentObject private var contentService: ContentService
     @EnvironmentObject private var progressStore: ProgressStore
@@ -281,8 +264,6 @@ private struct NoteComposerSheet: View {
     @ObservedObject private var notesStore = NotesStore.shared
 
     @State private var selectedLessonID: String = ""
-    @State private var selectedCollection: String = NotesStore.defaultCollections[0]
-    @State private var newCollectionName = ""
     @State private var noteText = ""
     @State private var highlightedText = ""
 
@@ -330,37 +311,6 @@ private struct NoteComposerSheet: View {
                         }
                     }
                     VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                        Text("Collection")
-                            .font(.pfCaptionBold)
-                            .foregroundColor(.pfSecondaryText)
-                        Picker("Collection", selection: $selectedCollection) {
-                            ForEach(notesStore.collections(), id: \.self) { collection in
-                                Text(collection).tag(collection)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        HStack(spacing: PFSpacing.sm) {
-                            TextField("Or a new collection name", text: $newCollectionName)
-                                .font(.pfBody)
-                                .padding(PFSpacing.sm)
-                                .background(Color.pfCard)
-                                .cornerRadius(PFSpacing.cornerRadius)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: PFSpacing.cornerRadius)
-                                        .stroke(Color.pfBorder, lineWidth: 1)
-                                )
-                            Button("Add") {
-                                if notesStore.createCollection(newCollectionName) {
-                                    selectedCollection = newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines)
-                                }
-                                newCollectionName = ""
-                            }
-                            .font(.pfBody.weight(.semibold))
-                            .foregroundColor(.pfRoyal)
-                            .disabled(newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                    }
-                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
                         Text("Note")
                             .font(.pfCaptionBold)
                             .foregroundColor(.pfSecondaryText)
@@ -394,8 +344,7 @@ private struct NoteComposerSheet: View {
                             lessonID: lesson.id,
                             lessonTitle: lesson.title,
                             text: noteText,
-                            highlightedText: highlighted.isEmpty ? nil : highlighted,
-                            collection: selectedCollection
+                            highlightedText: highlighted.isEmpty ? nil : highlighted
                         )
                         dismiss()
                     }

@@ -1,6 +1,7 @@
 // RevisionService.swift
 // PaymentForge iOS - Spaced repetition for completed lessons.
-// Stored locally with UserDefaults, guest by default, no sign-in.
+// Stored locally with UserDefaults, namespaced per account through
+// AccountScopedStorage.
 // Intervals, in days: same day (0), next day (1), day 3, day 7, day 30.
 // On a correct recall the concept advances to the next interval; on an
 // incorrect recall it resets to the same day. Nothing here invents
@@ -38,6 +39,18 @@ final class RevisionService: ObservableObject {
 
     private var concepts: [RevisionConcept] = [] {
         didSet { save(); refreshDerived() }
+    }
+
+    /// Suppresses save() while loading, so a reload into an account
+    /// with no stored concepts does not write an empty list into
+    /// that namespace (which would block guest migration for it).
+    private var suppressSave = false
+
+    private func withoutSaving(_ work: () -> Void) {
+        let previous = suppressSave
+        suppressSave = true
+        defer { suppressSave = previous }
+        work()
     }
 
     /// Concepts due for revision today, earliest due first.
@@ -106,6 +119,14 @@ final class RevisionService: ObservableObject {
         refreshDerived()
     }
 
+    /// Reload for the current account namespace, clearing the
+    /// previous account's revision concepts first.
+    func reloadForCurrentAccount() {
+        withoutSaving { concepts = [] }
+        load()
+        refreshDerived()
+    }
+
     private func refreshDerived() {
         let todayEnd = Calendar.current.startOfDay(for: Date()).addingTimeInterval(24 * 60 * 60 - 1)
         dueToday = concepts
@@ -117,14 +138,16 @@ final class RevisionService: ObservableObject {
     }
 
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: Keys.concepts),
+        AccountScopedStorage.adoptLegacyKey(Keys.concepts)
+        guard let data = UserDefaults.standard.data(forKey: AccountScopedStorage.currentKey(Keys.concepts)),
               let decoded = try? JSONDecoder().decode([RevisionConcept].self, from: data) else { return }
-        concepts = decoded
+        withoutSaving { concepts = decoded }
     }
 
     private func save() {
+        guard !suppressSave else { return }
         if let data = try? JSONEncoder().encode(concepts) {
-            UserDefaults.standard.set(data, forKey: Keys.concepts)
+            UserDefaults.standard.set(data, forKey: AccountScopedStorage.currentKey(Keys.concepts))
         }
     }
 }

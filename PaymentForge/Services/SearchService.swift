@@ -1,11 +1,18 @@
 // SearchService.swift
-// PaymentForge iOS - Intelligent search over the live catalogue.
+// Payments Training Hub iOS - Intelligent search over the live catalogue.
 // Debounced by the caller (SearchView waits ~0.3s after typing stops
-// before calling search). Ranking, typo tolerance, suggestions,
+// before calling search, and runs the search itself off the main
+// thread). Ranking, typo tolerance, suggestions,
 // recent searches and match highlighting live here, so the view stays
 // thin. Only real catalogue entries are ever returned; counts come
 // from the live index, never from hardcoded totals.
 // No em dashes in any user-facing text.
+// Performance: every function here is a pure static with no actor
+// isolation, so callers may run it on a background task. Regexes are
+// compiled once and cached, and search() splits each entry's title
+// and body words once per search and skips fuzzy passes that cannot
+// beat the best score already found, so a search over the whole
+// catalogue never blocks the main thread for seconds.
 
 import Foundation
 import SwiftUI
@@ -32,12 +39,16 @@ struct SearchSuggestion: Identifiable, Hashable {
 enum SearchService {
     // MARK: - Recent searches
 
+    /// Base key for recent searches. The stored key is namespaced
+    /// per account through AccountScopedStorage: recent searches
+    /// are personal data and must never leak across accounts.
     private static let recentKey = "pf.search.recent.v1"
     static let maxRecentSearches = 10
 
     /// The last searches, most recent first, at most 10.
     static func recentSearches() -> [String] {
-        (UserDefaults.standard.array(forKey: recentKey) as? [String]) ?? []
+        AccountScopedStorage.adoptLegacyKey(recentKey)
+        return (UserDefaults.standard.array(forKey: AccountScopedStorage.currentKey(recentKey)) as? [String]) ?? []
     }
 
     /// Record a search, most recent first, deduplicated, capped at 10.
@@ -49,11 +60,18 @@ enum SearchService {
         if recents.first?.lowercased() == trimmed.lowercased() { return }
         recents.removeAll { $0.lowercased() == trimmed.lowercased() }
         recents.insert(trimmed, at: 0)
-        UserDefaults.standard.set(Array(recents.prefix(maxRecentSearches)), forKey: recentKey)
+        UserDefaults.standard.set(Array(recents.prefix(maxRecentSearches)), forKey: AccountScopedStorage.currentKey(recentKey))
     }
 
     static func clearRecentSearches() {
-        UserDefaults.standard.removeObject(forKey: recentKey)
+        UserDefaults.standard.removeObject(forKey: AccountScopedStorage.currentKey(recentKey))
+    }
+
+    /// Adopt any legacy recent searches into the current namespace.
+    /// Recent searches hold no in-memory cache, so adoption is the
+    /// whole reload. Called by AuthService on account switch.
+    static func reloadForCurrentAccount() {
+        AccountScopedStorage.adoptLegacyKey(recentKey)
     }
 
     // MARK: - Synonym, acronym and symptom map
@@ -118,11 +136,34 @@ enum SearchService {
     }
 
     /// Whole-word match for a single word, substring match for a
-    /// phrase (a needle with a space or a dot).
+    /// phrase (a needle with a space or a dot). The whole-word
+    /// regexes are compiled once and cached: compiling one per
+    /// synonym per search made every keystroke pay for dozens of
+    /// regex compilations. A needle outside the cache (only
+    /// possible for a future caller) still compiles on the spot,
+    /// with the same pattern, so the match is identical.
+    private static let wordBoundaryRegexes: [String: NSRegularExpression] = {
+        var cache: [String: NSRegularExpression] = [:]
+        for entry in synonyms {
+            for needle in [entry.key, entry.expansion.lowercased()] {
+                guard !needle.contains(" ") && !needle.contains(".") else { continue }
+                let pattern = "\\b" + NSRegularExpression.escapedPattern(for: needle) + "\\b"
+                if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+                    cache[needle] = regex
+                }
+            }
+        }
+        return cache
+    }()
+
     static func queryContains(_ query: String, needle: String) -> Bool {
         let hasSeparator = needle.contains(" ") || needle.contains(".")
         if hasSeparator {
             return query.contains(needle)
+        }
+        if let regex = wordBoundaryRegexes[needle] {
+            let range = NSRange(query.startIndex..., in: query)
+            return regex.firstMatch(in: query, options: [], range: range) != nil
         }
         let pattern = "\\b" + NSRegularExpression.escapedPattern(for: needle) + "\\b"
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
@@ -161,6 +202,14 @@ enum SearchService {
         "mt101", "mt103", "mt202", "mt210", "mt900", "mt910", "mt940", "mt942", "mt950"
     ]
 
+    /// The message-code patterns, compiled once and cached.
+    /// messageCodes(in:) used to compile all four on every call,
+    /// and it is called on every search.
+    private static let mxCodeRegex: NSRegularExpression? = try? NSRegularExpression(pattern: #"\b(pacs|pain|camt|remt|acmt)[.\s]?(\d{3})\b"#, options: [.caseInsensitive])
+    private static let mtCodeRegex: NSRegularExpression? = try? NSRegularExpression(pattern: #"\bmt[\s]?(\d{3})\b"#, options: [.caseInsensitive])
+    private static let typoCodeRegex: NSRegularExpression? = try? NSRegularExpression(pattern: #"\b([a-z]{2,5})\.(\d{3})\b"#, options: [.caseInsensitive])
+    private static let vsTailRegex: NSRegularExpression? = try? NSRegularExpression(pattern: #"\bvs\.?\s+(\d{1,3})\b"#, options: [.caseInsensitive])
+
     /// The message codes a question names, canonicalised. Handles
     /// the dotted ("pacs.008"), spaced ("pacs 008") and joined
     /// ("pacs008") spellings, MT codes ("mt103", "mt 103"), a 1-2
@@ -173,8 +222,8 @@ enum SearchService {
         func add(_ code: String) {
             if !found.contains(code) { found.append(code) }
         }
-        func matches(_ pattern: String) -> [NSTextCheckingResult] {
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return [] }
+        func matches(_ regex: NSRegularExpression?) -> [NSTextCheckingResult] {
+            guard let regex else { return [] }
             return regex.matches(in: q, options: [], range: NSRange(q.startIndex..., in: q))
         }
         func group(_ match: NSTextCheckingResult, _ index: Int) -> String? {
@@ -183,20 +232,20 @@ enum SearchService {
             return String(q[swiftRange])
         }
         // Dotted, spaced or joined MX codes.
-        for match in matches(#"\b(pacs|pain|camt|remt|acmt)[.\s]?(\d{3})\b"#) {
+        for match in matches(mxCodeRegex) {
             if let family = group(match, 1), let number = group(match, 2) {
                 add("\(family).\(number)")
             }
         }
         // MT codes.
-        for match in matches(#"\bmt[\s]?(\d{3})\b"#) {
+        for match in matches(mtCodeRegex) {
             if let number = group(match, 1) {
                 add("mt\(number)")
             }
         }
         // Typo correction: a word shaped like <letters>.<3 digits>
         // 1-2 edits from a known dotted code.
-        for match in matches(#"\b([a-z]{2,5})\.(\d{3})\b"#) {
+        for match in matches(typoCodeRegex) {
             guard let family = group(match, 1), let number = group(match, 2) else { continue }
             let candidate = "\(family).\(number)"
             if found.contains(candidate) || knownMessageCodes.contains(candidate) { continue }
@@ -212,7 +261,7 @@ enum SearchService {
         // "vs <digits>" tail, after typo correction so the family
         // is known: "pacs.008 vs 9" names pacs.009 as well, and
         // "mt103 vs 202" names mt202 as well.
-        if let match = matches(#"\bvs\.?\s+(\d{1,3})\b"#).first,
+        if let match = matches(vsTailRegex).first,
            let digits = group(match, 1),
            let first = found.first {
             let padded = String(repeating: "0", count: max(0, 3 - digits.count)) + digits
@@ -246,9 +295,19 @@ enum SearchService {
     /// so it ranks above single-code entries.
     static func messageCodeScore(entry: SearchEntry, codes: [String]) -> Int {
         guard !codes.isEmpty else { return 0 }
-        let title = entry.title.lowercased()
-        let id = entry.id.lowercased()
-        let text = entry.text.lowercased()
+        return messageCodeScore(
+            title: entry.title.lowercased(),
+            id: entry.id.lowercased(),
+            text: entry.text.lowercased(),
+            codes: codes
+        )
+    }
+
+    /// The same boost from already-lowercased strings, so search()
+    /// does not lowercase every entry a second time. Same scores,
+    /// same order, same result as messageCodeScore(entry:codes:).
+    static func messageCodeScore(title: String, id: String, text: String, codes: [String]) -> Int {
+        guard !codes.isEmpty else { return 0 }
         var total = 0
         var titleHits = 0
         for code in codes {
@@ -280,7 +339,13 @@ enum SearchService {
     /// not hidden and get no penalty: the row marks them Completed.
     /// Capped at 60 hits. The fuzzy pass runs on title words first and
     /// only then on a bounded slice of body words, so 1660 entries
-    /// stay fast.
+    /// stay fast. Each entry's lowercased strings and word lists are
+    /// built once per search and shared by every needle (the query
+    /// plus every expansion term): the old code re-split the title
+    /// and body words for every needle and every query word, and ran
+    /// the fuzzy pass over up to 300 body words per needle, which is
+    /// what made a single search take seconds on the main thread.
+    /// Pure and synchronous: callers run it off the main thread.
     static func search(
         entries: [SearchEntry],
         query: String,
@@ -288,7 +353,8 @@ enum SearchService {
         currentChapterPrefix: String? = nil,
         limit: Int = 60
     ) -> [SearchHit] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let q = trimmedQuery.lowercased()
         guard !q.isEmpty else { return [] }
         // Query words for the multi-word path: trailing punctuation
         // stripped ("mt103?" to "mt103"), stop words removed, so a
@@ -304,6 +370,20 @@ enum SearchService {
         for entry in entries {
             let title = entry.title.lowercased()
             let text = entry.text.lowercased()
+            let lowerID = entry.id.lowercased()
+            // Built once per entry, shared by every needle below.
+            // The body list is the first 300 words only, exactly
+            // the slice the old code re-derived on every check,
+            // built lazily so an entry that matches in its title
+            // never pays for a body split at all.
+            let entryTitleWords = titleWords(title)
+            var cachedBodyWords: [String]? = nil
+            func bodyWords() -> [String] {
+                if let existing = cachedBodyWords { return existing }
+                let words = Array(titleWords(text).prefix(300))
+                cachedBodyWords = words
+                return words
+            }
             var bestScore = 0
             var bestReason = ""
             var bestTerm: String? = nil
@@ -317,23 +397,23 @@ enum SearchService {
             }
 
             // Direct phrase match on the query as typed.
-            scoreNeedle(q, title: title, text: text, displayQuery: query.trimmingCharacters(in: .whitespacesAndNewlines), consider: consider)
+            scoreNeedle(q, title: title, text: text, titleWords: entryTitleWords, bodyWords: bodyWords, displayQuery: trimmedQuery, currentBest: bestScore, consider: consider)
             // Extra credit when every content word lands in the title
             // ("upi timeout" against a UPI timeout situation) or body.
             // Stop words are already removed from queryWords, so a
             // single meaningful word ("mt103") earns it too.
             if !queryWords.isEmpty {
                 let titleWordHits = queryWords.filter { word in
-                    title.contains(word) || titleWords(title).contains(where: { $0.hasPrefix(word) })
+                    title.contains(word) || entryTitleWords.contains(where: { $0.hasPrefix(word) })
                 }.count
                 if titleWordHits == queryWords.count {
-                    consider(score: 850, reason: "Matches '\(query.trimmingCharacters(in: .whitespacesAndNewlines))' in the title", term: q)
+                    consider(score: 850, reason: "Matches '\(trimmedQuery)' in the title", term: q)
                 } else if titleWordHits > 0 {
-                    consider(score: 500 + 100 * titleWordHits, reason: "Matches: \(query.trimmingCharacters(in: .whitespacesAndNewlines))", term: q)
+                    consider(score: 500 + 100 * titleWordHits, reason: "Matches: \(trimmedQuery)", term: q)
                 }
                 let bodyWordHits = queryWords.filter { text.contains($0) }.count
                 if bodyWordHits == queryWords.count {
-                    consider(score: 380, reason: "Matches: \(query.trimmingCharacters(in: .whitespacesAndNewlines))", term: nil)
+                    consider(score: 380, reason: "Matches: \(trimmedQuery)", term: nil)
                 }
             }
             // Synonym and symptom expansion matches.
@@ -342,12 +422,12 @@ enum SearchService {
                     let display = synonym.isSymptom
                         ? "Matches your search for '\(synonym.key)'"
                         : "Matches '\(synonym.key)' (\(synonym.expansion))"
-                    scoreNeedle(term, title: title, text: text, displayQuery: synonym.key, isExpansion: true, reasonOverride: display, consider: consider)
+                    scoreNeedle(term, title: title, text: text, titleWords: entryTitleWords, bodyWords: bodyWords, displayQuery: synonym.key, currentBest: bestScore, isExpansion: true, reasonOverride: display, consider: consider)
                 }
             }
             // Message-code boost: entries about the exact codes the
             // question names rank first, above any stop-word match.
-            let codeScore = messageCodeScore(entry: entry, codes: codes)
+            let codeScore = messageCodeScore(title: title, id: lowerID, text: text, codes: codes)
             guard bestScore > 0 || codeScore > 0 else { continue }
             // Ranking boosts. Free samples and the learner's current
             // chapter rank higher; nothing is hidden for being done.
@@ -367,42 +447,59 @@ enum SearchService {
     /// Score one needle (the query or one expansion term) against a
     /// title and body. Title outranks body at every step; exact
     /// phrase outranks partial; a 1-2 edit typo on a word of 4 or more
-    /// letters still counts, title first, then body.
+    /// letters still counts, title first, then body. The word lists
+    /// come from the caller, built once per entry, never re-split
+    /// here. `currentBest` is the best score already found for this
+    /// entry: passes whose top score cannot beat it are skipped,
+    /// because consider() only keeps strictly better scores, so
+    /// skipping them cannot change the result. That is what stops
+    /// the body fuzzy pass (150) running for entries that already
+    /// matched in the title.
     private static func scoreNeedle(
         _ needle: String,
         title: String,
         text: String,
+        titleWords: [String],
+        bodyWords: () -> [String],
         displayQuery: String,
+        currentBest: Int,
         isExpansion: Bool = false,
         reasonOverride: String? = nil,
         consider: (_ score: Int, _ reason: String, _ term: String?) -> Void
     ) {
+        // No needle can score above 1000, and consider() only
+        // keeps strictly better scores.
+        guard currentBest < 1000 else { return }
         let titleReason = reasonOverride ?? "Matches '\(displayQuery)' in the title"
         let bodyReason = reasonOverride ?? "Matches your search for '\(displayQuery)'"
         let baseTitle = isExpansion ? 650 : 800
         let baseBody = isExpansion ? 350 : 300
+        let needleChars = Array(needle)
         if title.contains(needle) {
             let score = title == needle ? 1000 : (title.hasPrefix(needle) ? 900 : baseTitle)
             consider(score, titleReason, needle)
             return
         }
-        if titleWords(title).contains(where: { $0.hasPrefix(needle) }) {
+        if titleWords.contains(where: { $0.hasPrefix(needle) }) {
             consider(700, titleReason, needle)
             return
         }
-        if let fuzzyWord = fuzzyWordMatch(needle: needle, in: title) {
+        if currentBest < 600, let fuzzyWord = fuzzyWordMatch(needle: needle, needleChars: needleChars, words: titleWords) {
             consider(600, "Close match for '\(displayQuery)' in the title", fuzzyWord)
             return
         }
+        // Every remaining pass scores at most 450, so none can
+        // beat a best score of 450 or more.
+        guard currentBest < 450 else { return }
         if text.contains(needle) {
             consider(text == needle ? 450 : baseBody, bodyReason, nil)
             return
         }
-        if titleWords(text).prefix(300).contains(where: { $0.hasPrefix(needle) }) {
+        if currentBest < 250, bodyWords().contains(where: { $0.hasPrefix(needle) }) {
             consider(250, bodyReason, nil)
             return
         }
-        if fuzzyWordMatch(needle: needle, in: text, maxWords: 300) != nil {
+        if currentBest < 150, fuzzyWordMatch(needle: needle, needleChars: needleChars, words: bodyWords()) != nil {
             consider(150, "Close match for '\(displayQuery)'", nil)
         }
     }
@@ -410,16 +507,15 @@ enum SearchService {
     /// The title word (or body word) within 1-2 edits of the needle,
     /// for a needle of 4 or more letters. Short needles never fuzzy
     /// match: "upi" must not match "up" or "api" by accident. Returns
-    /// the matched word, for highlighting.
-    private static func fuzzyWordMatch(needle: String, in text: String, maxWords: Int = .max) -> String? {
+    /// the matched word, for highlighting. The word list and the
+    /// needle characters come from the caller, so neither is
+    /// rebuilt for every word checked.
+    private static func fuzzyWordMatch(needle: String, needleChars: [Character], words: [String]) -> String? {
         guard needle.count >= 4, !needle.contains(" ") else { return nil }
         let allowed = needle.count <= 5 ? 1 : 2
-        var checked = 0
-        for word in titleWords(text) {
-            guard checked < maxWords else { break }
-            checked += 1
+        for word in words {
             guard word.count >= 4, abs(word.count - needle.count) <= allowed else { continue }
-            if levenshtein(word, needle, maxDistance: allowed) <= allowed {
+            if levenshtein(Array(word), needleChars, maxDistance: allowed) <= allowed {
                 return word
             }
         }
@@ -429,8 +525,7 @@ enum SearchService {
     /// Words of a string, lowercased, split on anything that is not a
     /// letter or a digit. Dots stay out, so "pacs.008" splits into
     /// "pacs" and "008" for the fuzzy pass only; exact matching still
-    /// uses the raw string. Internal so the chat answer pipeline can
-    /// share the same word splitting.
+    /// uses the raw string.
     static func titleWords(_ text: String) -> [String] {
         text.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
@@ -439,10 +534,18 @@ enum SearchService {
 
     /// Levenshtein distance, capped: returns a value above
     /// maxDistance as soon as the distance is known to exceed it.
+    /// Identical strings cost nothing: the fuzzy pass compares
+    /// the same common words again and again.
     static func levenshtein(_ a: String, _ b: String, maxDistance: Int) -> Int {
-        if abs(a.count - b.count) > maxDistance { return maxDistance + 1 }
-        let aChars = Array(a)
-        let bChars = Array(b)
+        if a == b { return 0 }
+        return levenshtein(Array(a), Array(b), maxDistance: maxDistance)
+    }
+
+    /// The same capped distance over pre-split characters, so the
+    /// fuzzy pass converts each needle once instead of once per
+    /// word compared. Same rows, same early exit, same result.
+    private static func levenshtein(_ aChars: [Character], _ bChars: [Character], maxDistance: Int) -> Int {
+        if abs(aChars.count - bChars.count) > maxDistance { return maxDistance + 1 }
         if aChars.isEmpty { return bChars.count }
         if bChars.isEmpty { return aChars.count }
         var previous = Array(0...bChars.count)
@@ -468,7 +571,9 @@ enum SearchService {
     /// beneficiary not credited" resolve to the right cases), then
     /// lesson and Situation titles that start with or contain the
     /// query. Prefix matches come before substring matches. Capped
-    /// at 8, deduplicated.
+    /// at 8, deduplicated. One pass over the entries, lowercasing
+    /// each title once: the old code mapped every title and then
+    /// lowercased each one twice more, on every keystroke.
     static func suggestions(query: String, entries: [SearchEntry], limit: Int = 8) -> [SearchSuggestion] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard q.count >= 2 else { return [] }
@@ -480,14 +585,26 @@ enum SearchService {
             out.append(SearchSuggestion(title: title, query: query))
         }
         for synonym in synonyms where synonym.key.hasPrefix(q) || synonym.key.contains(q) || synonym.expansion.lowercased().contains(q) {
-            append(title: "\(synonym.key) — \(synonym.expansion)", query: synonym.key)
+            append(title: "\(synonym.key) (\(synonym.expansion))", query: synonym.key)
         }
-        let titles = entries.map(\.title)
-        for title in titles where title.lowercased().hasPrefix(q) {
-            append(title: title, query: title)
+        // Prefix matches append at once, in catalogue order;
+        // substring-only titles are collected and appended after,
+        // in catalogue order, exactly as the old two-pass version
+        // produced them. A prefix title never needs the substring
+        // pass: it was already appended, or deduplicated away.
+        var substringTitles: [String] = []
+        for entry in entries {
+            let lowerTitle = entry.title.lowercased()
+            if lowerTitle.hasPrefix(q) {
+                append(title: entry.title, query: entry.title)
+                if out.count >= limit { return out }
+            } else if lowerTitle.contains(q) {
+                substringTitles.append(entry.title)
+            }
         }
-        for title in titles where title.lowercased().contains(q) {
+        for title in substringTitles {
             append(title: title, query: title)
+            if out.count >= limit { break }
         }
         return out
     }
@@ -511,26 +628,28 @@ enum SearchService {
         ("ISO 20022", ["iso 20022"])
     ]
 
+    /// The scheme regexes, compiled once and cached. rail(for:)
+    /// is called for every rendered result row, and the old code
+    /// compiled up to nine regexes per row.
+    private static let railRegexes: [(display: String, regexes: [NSRegularExpression])] = railPatterns.map { rail in
+        let compiled = rail.patterns.compactMap { pattern -> NSRegularExpression? in
+            try? NSRegularExpression(pattern: "\\b" + pattern + "\\b", options: [.caseInsensitive])
+        }
+        return (display: rail.display, regexes: compiled)
+    }
+
     /// The scheme named by an entry title or text, or nil when it
     /// names none. Whole-word matching, so a short rail never matches
     /// inside another word. Title and text only, never invented.
     static func rail(for entry: SearchEntry) -> String? {
         let haystack = entry.title + " " + entry.text
-        for rail in railPatterns {
-            for pattern in rail.patterns where containsWord(haystack, pattern: pattern) {
+        let range = NSRange(haystack.startIndex..., in: haystack)
+        for rail in railRegexes {
+            for regex in rail.regexes where regex.firstMatch(in: haystack, options: [], range: range) != nil {
                 return rail.display
             }
         }
         return nil
-    }
-
-    /// Whole-word match, so a short rail or acronym never matches inside
-    /// another word.
-    private static func containsWord(_ text: String, pattern: String) -> Bool {
-        let regexPattern = "\\b" + pattern + "\\b"
-        guard let regex = try? NSRegularExpression(pattern: regexPattern, options: [.caseInsensitive]) else { return false }
-        let range = NSRange(text.startIndex..., in: text)
-        return regex.firstMatch(in: text, options: [], range: range) != nil
     }
 
     // MARK: - Dynamic counts

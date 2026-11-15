@@ -1,25 +1,32 @@
 // SearchView.swift
-// PaymentForge iOS - Search across the whole catalogue.
+// Payments Training Hub iOS - Search across the whole catalogue.
 // Native SwiftUI only, no WebView.
 //
-// Layout follows the mockup (DESIGN_REFERENCE.md, Screen 5): filter
-// chips above the search field (All / Lifecycle / Scheme / Difficulty),
-// result rows with an icon tile on the left, a bold title (2 lines
-// max), tags below (scheme, category, level) and a bookmark icon on
-// the right. The bookmark icon shows the saved state from
-// PFBookmarkStore; bookmarking itself happens in the lesson and
-// situation detail views, the same pattern SituationsView uses, so a
-// row never nests a button inside its navigation link.
+// Layout follows the mockup (DESIGN_REFERENCE.md, Screen 5):
+// a difficulty pill row above the search field (All / Foundation
+// / Core / Advanced), result rows with an icon tile on the left,
+// a bold title (2 lines max), tags below (scheme, category,
+// level) and a bookmark icon on the right. The bookmark icon toggles the saved state in
+// PFBookmarkStore; it is a borderless button, so tapping it does not
+// follow the row's navigation link. The same toggle also lives in
+// the lesson and situation detail views. Result tags wrap onto a
+// second row instead of overflowing on a narrow phone.
 //
 // Smarter search: the query is expanded through a payments-domain
 // acronym, synonym and failure-symptom map in SearchService, so
 // typing "RRN", "UTR" or "beneficiary not credited" also finds entries
 // that only use the expanded terms. Every result says why it matched.
-// Typing waits ~0.3s (debounce) before the search runs; suggestions
-// appear as you type and recent searches persist on device. Filters
-// (Lifecycle, Scheme, Difficulty, Type, Progress, Access) are
-// derived from the entry title and text only, never invented. Duration
-// is deliberately NOT offered as a filter: narration length lives only
+// Typing waits ~0.15s (debounce) before the search runs; suggestions
+// appear as you type and recent searches persist on device. The
+// search, the level filter, the per-type totals and the matching
+// chapters are computed once per query, off the main thread, into
+// a snapshot held in state: rendering never re-runs the search.
+// (The old code recomputed the full search from computed
+// properties several times per render, on the main thread, which
+// is what made search feel extremely slow and hung the app.)
+// The one filter, Difficulty, is derived from the entry title and
+// text only, never invented. Duration is deliberately NOT
+// offered as a filter: narration length lives only
 // in each lesson page (durationSec in the lesson detail) and is not in
 // the search index, so a duration filter here would have to guess.
 // Browse-by-type counts come from the live index entries, never from
@@ -40,7 +47,14 @@ struct SearchView: View {
     @Binding var isDrawerOpen: Bool
 
     @State private var query = ""
-    /// The query the results actually ran for. Updated ~0.3s after
+    /// The latest tour demo run accepted: keystrokes from an
+    /// older run are ignored, so a demo abandoned mid-typing
+    /// can never overwrite a newer one.
+    @State private var tourDemoRun = 0
+    /// Keyboard focus for the search field, so pressing Search and
+    /// the keyboard Done button can dismiss the keyboard.
+    @FocusState private var isSearchFieldFocused: Bool
+    /// The query the results actually ran for. Updated ~0.15s after
     /// the user stops typing, so typing never re-filters on every
     /// keystroke. See the .task(id: query) debounce in body.
     @State private var debouncedQuery = ""
@@ -48,17 +62,17 @@ struct SearchView: View {
     /// each distinct search once.
     @State private var lastRecordedQuery = ""
     @State private var recentSearches: [String] = SearchService.recentSearches()
+    /// Confirmation before wiping all recent searches: clearing
+    /// history cannot be undone.
+    @State private var showClearRecentsConfirmation = false
     @State private var sheetEntry: SearchEntry? = nil
     @State private var selectedBrowseType: SearchEntryType? = nil
 
-    // MARK: - Filter state (mockup chips + extra filters)
+    // MARK: - Filter state (difficulty only)
 
+    /// The one filter: difficulty level, picked from the pill
+    /// row above the search field. Nil means all levels.
     @State private var selectedLevel: SituationLevel? = nil
-    @State private var selectedRail: String? = nil
-    @State private var selectedLifecycle: String? = nil
-    @State private var selectedType: SearchEntryType? = nil
-    @State private var completedFilter: SearchCompletedFilter = .all
-    @State private var accessFilter: SearchAccessFilter = .all
 
     /// Results shown at first: 20 per page, Load more adds 20.
     /// Only the shown results are grouped and rendered, so a
@@ -66,17 +80,32 @@ struct SearchView: View {
     private static let resultsPageSize = 20
     @State private var visibleResultCount = 20
 
-    private enum SearchCompletedFilter: String, CaseIterable {
-        case all = "All"
-        case completed = "Completed"
-        case notCompleted = "Not completed"
+    /// One fully computed result set for one query, filter and
+    /// catalogue state: the level-filtered hits, the per-type
+    /// totals across all of them, and the matching chapters.
+    /// Computed once, off the main thread, by the task keyed on
+    /// searchWorkKey below. Rendering reads this state and never
+    /// re-runs the search, the filter, the totals or the chapter
+    /// match, however many times the body evaluates.
+    private struct SearchResultsSnapshot {
+        let hits: [SearchHit]
+        let totals: [SearchEntryType: Int]
+        let chapters: [Int]
+        static let empty = SearchResultsSnapshot(hits: [], totals: [:], chapters: [])
     }
 
-    private enum SearchAccessFilter: String, CaseIterable {
-        case all = "All"
-        case free = "Free"
-        case premium = "Premium"
-    }
+    /// The latest computed snapshot. Empty until the first
+    /// computation finishes.
+    @State private var searchSnapshot = SearchResultsSnapshot.empty
+    /// The work key the snapshot above was computed for. When it
+    /// differs from searchWorkKey, a newer computation is still
+    /// running and the visible results belong to the older key.
+    @State private var snapshotKey = ""
+    /// Live suggestions for the text being typed, computed off
+    /// the main thread so typing never scans the catalogue on
+    /// the main thread. Empty while the field holds under 2
+    /// characters, exactly as SearchService.suggestions returns.
+    @State private var suggestionList: [SearchSuggestion] = []
 
     private let popularSearches = [
         "MT103", "pacs.008", "ISO 20022", "SEPA",
@@ -94,22 +123,12 @@ struct SearchView: View {
 
     private let typeOrder: [SearchEntryType] = [.lesson, .guide, .situation, .lab, .test, .faq]
 
-    /// Scheme filter options, in match order. Derived from the entry
-    /// title and text only, never invented. The single source of
-    /// truth lives in SearchService, which also owns detection.
-    private var railOptions: [String] { SearchService.railOptions }
-
     private var trimmedQuery: String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var hasActiveFilters: Bool {
-        selectedLevel != nil || selectedRail != nil || selectedLifecycle != nil
-            || selectedType != nil || completedFilter != .all || accessFilter != .all
-    }
-
-    private var mockupFiltersActive: Bool {
-        selectedLevel != nil || selectedRail != nil || selectedLifecycle != nil
+        selectedLevel != nil
     }
 
     // MARK: - Synonym, acronym and symptom map
@@ -141,69 +160,193 @@ struct SearchView: View {
     }
 
     /// Live suggestions for the text being typed, from lesson and
-    /// Situation titles and the synonym map.
+    /// Situation titles and the synonym map. Held in state and
+    /// computed off the main thread by the suggestions task, so
+    /// reading them here costs nothing.
     private var liveSuggestions: [SearchSuggestion] {
-        SearchService.suggestions(query: query, entries: contentService.searchIndex?.entries ?? [])
+        suggestionList
     }
 
     // MARK: - Results
 
-    /// Ranked results for the debounced query, from SearchService:
-    /// title outranks body, exact phrase outranks partial, synonym
-    /// and symptom expansions resolve to the right cases, and a 1-2
-    /// edit typo still finds the right lesson or Situation. Free
-    /// samples and lessons in the learner's current chapter (the
-    /// chapter of the last lesson they opened) rank higher. Completed
-    /// items are marked in the row, never hidden. Capped at 60.
-    private var scoredResults: [SearchHit] {
+    /// One string for everything the snapshot depends on: the
+    /// debounced query, the difficulty filter, the loaded
+    /// catalogue size, the loaded situations size (the full file
+    /// wins for a situation's level), and the last lesson opened
+    /// (its chapter ranks higher). The snapshot task reruns when
+    /// this changes, and only then: typing alone never recomputes
+    /// anything, because the raw query is not part of the key.
+    private var searchWorkKey: String {
+        [
+            debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            selectedLevel?.rawValue ?? "",
+            "\(contentService.searchIndex?.entries.count ?? 0)",
+            "\(contentService.fullSituations?.count ?? -1)",
+            progressStore.lastLessonID ?? ""
+        ].joined(separator: "|")
+    }
+
+    /// True while a snapshot computation for the current key is
+    /// still running: the visible snapshot belongs to an older key.
+    private var isAwaitingSnapshot: Bool {
+        snapshotKey != searchWorkKey
+    }
+
+    /// The level-filtered hits from the latest snapshot. A plain
+    /// state read: rendering never re-runs the search or the
+    /// filter. Ranked results for the debounced query come from
+    /// SearchService (title outranks body, exact phrase outranks
+    /// partial, synonym and symptom expansions resolve to the
+    /// right cases, a 1-2 edit typo still finds the right lesson
+    /// or Situation, free samples and the current chapter rank
+    /// higher, completed items are marked, never hidden, capped
+    /// at 60). With no search text, every catalogue entry is the
+    /// base set and the difficulty filter alone applies.
+    private var filteredResults: [SearchHit] {
+        searchSnapshot.hits
+    }
+
+    /// Compute the snapshot for the current debounced query and
+    /// filter. The heavy work (search, level filter, totals,
+    /// chapter match) runs on a detached background task; this
+    /// function only gathers the inputs on the main actor and
+    /// awaits the result, so the main thread stays free. With no
+    /// query and no filter the browse content shows instead, so
+    /// no work is done at all. The situations level map is built
+    /// here (one cheap pass, first item wins for a repeated id,
+    /// exactly as first(where:) behaved) so the background task
+    /// receives only plain sendable values.
+    private func computeSnapshot() async -> SearchResultsSnapshot {
         let q = debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return [] }
+        let level = selectedLevel
+        guard !q.isEmpty || level != nil else { return .empty }
+        let entries = contentService.searchIndex?.entries ?? []
+        guard !entries.isEmpty else { return .empty }
+        var situationLevelsByID: [String: String] = [:]
+        for item in contentService.fullSituations ?? [] {
+            if situationLevelsByID[item.id] == nil {
+                situationLevelsByID[item.id] = item.level
+            }
+        }
         let chapterPrefix = progressStore.lastLessonID.flatMap { SearchService.chapterPrefix(forLessonID: $0) }
-        return SearchService.search(
-            entries: contentService.searchIndex?.entries ?? [],
-            query: q,
-            freeSampleIDs: Set(ContentService.freeSampleIDs),
-            currentChapterPrefix: chapterPrefix
+        return await Task.detached(priority: .userInitiated) {
+            Self.computeSnapshotSync(
+                entries: entries,
+                query: q,
+                level: level,
+                situationLevelsByID: situationLevelsByID,
+                chapterPrefix: chapterPrefix
+            )
+        }.value
+    }
+
+    /// The snapshot computation itself: search (or the whole
+    /// catalogue when there is no query), the difficulty filter,
+    /// the per-type totals, and the matching chapters. Nonisolated
+    /// and synchronous, so it runs on the detached task with no
+    /// hop back to the main actor. Same index source, same
+    /// matching semantics, same level rules as the old computed
+    /// properties: only the thread and the frequency change.
+    private nonisolated static func computeSnapshotSync(
+        entries: [SearchEntry],
+        query: String,
+        level: SituationLevel?,
+        situationLevelsByID: [String: String],
+        chapterPrefix: String?
+    ) -> SearchResultsSnapshot {
+        let base: [SearchHit]
+        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            base = entries.map { SearchHit(entry: $0, score: 0, reason: "", matchedTerm: nil) }
+        } else {
+            base = SearchService.search(
+                entries: entries,
+                query: query,
+                freeSampleIDs: Set(ContentService.freeSampleIDs),
+                currentChapterPrefix: chapterPrefix
+            )
+        }
+        let filtered: [SearchHit]
+        if let wantedLevel = level {
+            filtered = base.filter { levelForEntry($0.entry, situationLevelsByID: situationLevelsByID) == wantedLevel }
+        } else {
+            filtered = base
+        }
+        var totals: [SearchEntryType: Int] = [:]
+        for hit in filtered {
+            totals[hit.entry.type, default: 0] += 1
+        }
+        return SearchResultsSnapshot(
+            hits: filtered,
+            totals: totals,
+            chapters: matchedChaptersSync(entries: entries, query: query)
         )
     }
 
-    /// Every catalogue entry, with no match reason. Used when filters
-    /// are set with no search text, so the mockup chips work on their own.
-    private var allEntries: [SearchHit] {
-        (contentService.searchIndex?.entries ?? []).map {
-            SearchHit(entry: $0, score: 0, reason: "", matchedTerm: nil)
+    /// The level of an entry, or nil when it cannot be derived.
+    /// Situations use the full data file level first, then a text
+    /// hint, defaulting to Core the same way situation(from:) does.
+    /// Other types only get a level when their text names one.
+    /// Title and text only, never invented. The situations map is
+    /// prebuilt by the caller, so this is one dictionary lookup
+    /// instead of a linear scan of the full situations file per
+    /// entry, which the old level(for:) did for every filtered
+    /// entry on every render.
+    private nonisolated static func levelForEntry(_ entry: SearchEntry, situationLevelsByID: [String: String]) -> SituationLevel? {
+        if entry.type == .situation {
+            if let rawLevel = situationLevelsByID[entry.id] {
+                switch rawLevel.lowercased() {
+                case "foundation": return .foundation
+                case "advanced": return .advanced
+                default: return .core
+                }
+            }
+            let lower = entry.text.lowercased()
+            if lower.contains("foundation") { return .foundation }
+            if lower.contains("advanced") { return .advanced }
+            return .core
         }
+        let lower = entry.text.lowercased()
+        if lower.contains("foundation") { return .foundation }
+        if lower.contains("advanced") { return .advanced }
+        return nil
     }
 
-    private var baseResults: [SearchHit] {
-        debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? allEntries : scoredResults
-    }
-
-    private var filteredResults: [SearchHit] {
-        baseResults.filter { scored in
-            let entry = scored.entry
-            if let wantedLevel = selectedLevel, level(for: entry) != wantedLevel { return false }
-            if let wantedRail = selectedRail, rail(for: entry) != wantedRail { return false }
-            if let lifecycle = selectedLifecycle, topic(for: entry) != lifecycle { return false }
-            if let type = selectedType, entry.type != type { return false }
-            switch completedFilter {
-            case .all:
-                break
-            case .completed:
-                guard progressStore.isLessonComplete(entry.id) else { return false }
-            case .notCompleted:
-                guard !progressStore.isLessonComplete(entry.id) else { return false }
+    /// Chapters whose title, or whose course name, matches the
+    /// query, so a search for "ISO 20022" shows the ISO 20022
+    /// chapters as well as their lessons. Title matches first,
+    /// then course-name matches, capped at 10 so one broad query
+    /// never floods the results. Empty when there is no query:
+    /// courses appear only for a search, never for filters.
+    /// Lessons are grouped by chapter once, instead of scanning
+    /// the whole lesson list per chapter per render.
+    private nonisolated static func matchedChaptersSync(entries: [SearchEntry], query: String) -> [Int] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return [] }
+        var lessonsByChapter: [Int: [SearchEntry]] = [:]
+        for entry in entries where entry.type == .lesson {
+            if let number = PFChapterHelper.chapterNumber(from: entry.id) {
+                lessonsByChapter[number, default: []].append(entry)
             }
-            switch accessFilter {
-            case .all:
-                break
-            case .free:
-                guard isFree(entry) else { return false }
-            case .premium:
-                guard isLocked(entry) else { return false }
-            }
-            return true
         }
+        var titleMatches: [Int] = []
+        var bundleMatches: [Int] = []
+        // Reading order, not numeric chapter order: the matched
+        // chapters list follows the book.
+        let orderedNumbers = lessonsByChapter.keys.sorted {
+            PFBookModeReadingOrder.readingOrderIndex(forInternalNumber: $0)
+                < PFBookModeReadingOrder.readingOrderIndex(forInternalNumber: $1)
+        }
+        for number in orderedNumbers {
+            let lessons = lessonsByChapter[number] ?? []
+            let title = PFChapterHelper.chapterTitle(for: lessons, number: number)
+            if title.lowercased().contains(q) {
+                titleMatches.append(number)
+            } else if let bundle = ProductCatalogue.productContaining(chapterID: "ch\(number)"),
+                      bundle.name.lowercased().contains(q) {
+                bundleMatches.append(number)
+            }
+        }
+        return Array((titleMatches + bundleMatches).prefix(10))
     }
 
     private var groupedResults: [(type: SearchEntryType, entries: [SearchHit])] {
@@ -223,56 +366,38 @@ struct SearchView: View {
         Array(filteredResults.prefix(visibleResultCount))
     }
 
-    /// Chapters whose title, or whose course name, matches the
-    /// debounced query, so a search for "ISO 20022" shows the
-    /// ISO 20022 chapters as well as their lessons. Title matches
-    /// first, then course-name matches, capped at 10 so one broad
-    /// query never floods the results. Empty when there is no
-    /// query: courses appear only for a search, never for filters.
-    private var matchedChapters: [Int] {
-        let q = debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return [] }
-        var titleMatches: [Int] = []
-        var bundleMatches: [Int] = []
-        for number in PFChapterHelper.chapterNumbers(in: contentService) {
-            let lessons = PFChapterHelper.lessons(forChapter: number, in: contentService)
-            let title = PFChapterHelper.chapterTitle(for: lessons, number: number)
-            if title.lowercased().contains(q) {
-                titleMatches.append(number)
-            } else if let bundle = PaymentConfig.productContaining("ch\(number)"),
-                      bundle.name.lowercased().contains(q) {
-                bundleMatches.append(number)
-            }
-        }
-        return Array((titleMatches + bundleMatches).prefix(10))
+    /// Full per-type totals across ALL filtered results, not just
+    /// the visible page, so a group header reads the live filtered
+    /// total for its type instead of the page count. Counts here
+    /// always come from the filtered live results, never from
+    /// catalogue totals. A state read from the snapshot: computed
+    /// once with the results, never re-tallied per render.
+    private var groupTotals: [SearchEntryType: Int] {
+        searchSnapshot.totals
     }
 
-    /// One string for the current query and filters, so a change
-    /// to any of them resets the pagination to page 1.
+    /// True while the text field holds a newer query than the one
+    /// the results ran for: the 0.15s debounce has not caught up
+    /// yet, so the visible results belong to the previous query.
+    private var isAwaitingDebouncedSearch: Bool {
+        trimmedQuery != debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Chapters whose title, or whose course name, matches the
+    /// debounced query, from the snapshot. A state read: the
+    /// chapter match runs once with the search, off the main
+    /// thread, never per render.
+    private var matchedChapters: [Int] {
+        searchSnapshot.chapters
+    }
+
+    /// One string for the current query and filter, so a change
+    /// to either resets the pagination to page 1.
     private var filterSignature: String {
         [
             debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-            selectedLevel?.rawValue ?? "",
-            selectedRail ?? "",
-            selectedLifecycle ?? "",
-            selectedType?.rawValue ?? "",
-            completedFilter.rawValue,
-            accessFilter.rawValue
+            selectedLevel?.rawValue ?? ""
         ].joined(separator: "|")
-    }
-
-    /// Lifecycle options from the real catalogue: the chapter title
-    /// for lessons and the module for situations. Sorted, capped so
-    /// the menu stays usable.
-    private var lifecycleOptions: [String] {
-        guard let index = contentService.searchIndex else { return [] }
-        var topics = Set<String>()
-        for entry in index.entries {
-            if let topic = topic(for: entry) {
-                topics.insert(topic)
-            }
-        }
-        return Array(Array(topics).sorted().prefix(24))
     }
 
     private var expansionNote: String {
@@ -285,107 +410,51 @@ struct SearchView: View {
         return "Also matching: " + parts.joined(separator: ", ")
     }
 
+    /// The no-results hint. The filter clause only appears when a
+    /// filter is actually active: with no filter set, telling the
+    /// learner to clear one would point at nothing.
+    private var noResultsHintText: String {
+        if hasActiveFilters {
+            return "Try a different word, for example MT103, SEPA or chargeback, or clear the difficulty filter."
+        }
+        return "Try a different word, for example MT103, SEPA or chargeback."
+    }
+
+    /// True when the no-results state should offer tappable popular
+    /// searches: the learner typed a query, and the live suggestions
+    /// row above the results is empty, so no synonym or title
+    /// suggestion is already on screen. When suggestions exist,
+    /// they are the synonym next step and are not repeated here.
+    private var shouldShowNoResultsFallbackChips: Bool {
+        !trimmedQuery.isEmpty && liveSuggestions.isEmpty
+    }
+
     // MARK: - Derived entry facts (title and text only, never invented)
 
-    /// The rail named by an entry title or text, or nil when it names
-    /// none. Detection lives in SearchService (title and text only,
-    /// never invented).
-    private func rail(for entry: SearchEntry) -> String? {
-        SearchService.rail(for: entry)
-    }
+    // The level derivation lives in levelForEntry above, next to
+    // the snapshot computation that uses it, with the full
+    // situations file prebuilt into a lookup map. Row-level
+    // derivation lives in SearchResultRow below.
 
-    /// The level of an entry, or nil when it cannot be derived.
-    /// Situations use the full data file level first, then a text
-    /// hint, defaulting to Core the same way situation(from:) does.
-    /// Other types only get a level when their text names one.
-    private func level(for entry: SearchEntry) -> SituationLevel? {
-        if entry.type == .situation {
-            if let full = contentService.fullSituations?.first(where: { $0.id == entry.id }) {
-                switch full.level.lowercased() {
-                case "foundation": return .foundation
-                case "advanced": return .advanced
-                default: return .core
-                }
+    /// The full situations file as a lookup map, first item wins
+    /// for a repeated id (exactly as first(where:) behaved).
+    /// Each list reads it once into a local and passes it to its
+    /// rows, so no row scans the whole file to find its own
+    /// situation on every render.
+    private var situationLookup: [String: FullSituationItem] {
+        var lookup: [String: FullSituationItem] = [:]
+        for item in contentService.fullSituations ?? [] {
+            if lookup[item.id] == nil {
+                lookup[item.id] = item
             }
-            let lower = entry.text.lowercased()
-            if lower.contains("foundation") { return .foundation }
-            if lower.contains("advanced") { return .advanced }
-            return .core
         }
-        let lower = entry.text.lowercased()
-        if lower.contains("foundation") { return .foundation }
-        if lower.contains("advanced") { return .advanced }
-        return nil
-    }
-
-    /// The lifecycle category of an entry: the module for situations,
-    /// the chapter title (second line of the entry text) for lessons.
-    /// Nil for everything else, so no category is ever invented.
-    private func topic(for entry: SearchEntry) -> String? {
-        if entry.type == .situation {
-            return contentService.fullSituations?.first(where: { $0.id == entry.id })?.module
-        }
-        if entry.type == .lesson {
-            let parts = entry.text.components(separatedBy: "\n")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
-            if parts.count >= 2 { return parts[1] }
-        }
-        return nil
-    }
-
-    /// Free means open content. A situation is free when it is one
-    /// of the 10 free samples. A lesson is free when its chapter is
-    /// unlocked. Guides, labs, tests and FAQs are open.
-    private func isFree(_ entry: SearchEntry) -> Bool {
-        if entry.type == .situation {
-            return ContentService.freeSampleIDs.contains(entry.id)
-        }
-        if entry.type == .lesson {
-            return isLessonUnlocked(entry)
-        }
-        return true
-    }
-
-    /// Locked means a situation that is not a free sample and the
-    /// user has not unlocked Payment Situations, or a lesson whose
-    /// chapter is not unlocked.
-    private func isLocked(_ entry: SearchEntry) -> Bool {
-        if entry.type == .situation {
-            return !ContentService.freeSampleIDs.contains(entry.id)
-                && !storeManager.isSituationsUnlocked
-        }
-        if entry.type == .lesson {
-            return !isLessonUnlocked(entry)
-        }
-        return false
-    }
-
-    /// A lesson is unlocked when its chapter is: the bundle
-    /// containing it, or the Integrated Course, is owned. An entry
-    /// with no chapter number is never locked.
-    private func isLessonUnlocked(_ entry: SearchEntry) -> Bool {
-        guard let number = PFChapterHelper.chapterNumber(from: entry.id) else { return true }
-        return storeManager.isChapterUnlocked("ch\(number)")
-    }
-
-    private func clearMockupFilters() {
-        selectedLevel = nil
-        selectedRail = nil
-        selectedLifecycle = nil
-    }
-
-    private func clearAllFilters() {
-        clearMockupFilters()
-        selectedType = nil
-        completedFilter = .all
-        accessFilter = .all
+        return lookup
     }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                filterChipsRow
+                difficultyPillsRow
                 searchField
                 if contentService.isShowingCachedContent {
                     PFOfflineBanner()
@@ -431,6 +500,12 @@ struct SearchView: View {
                 ToolbarItem(placement: .navigationBarLeading) {
                     DrawerMenuButton(isDrawerOpen: $isDrawerOpen)
                 }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        isSearchFieldFocused = false
+                    }
+                }
             }
             .sheet(item: $sheetEntry) { entry in
                 SearchEntrySheet(entry: entry)
@@ -438,81 +513,115 @@ struct SearchView: View {
             .navigationDestination(item: $selectedBrowseType) { type in
                 SearchTypeListView(type: type)
             }
-            // Debounced search: waits 0.3s after the user stops typing
+            // Debounced search: waits 0.15s after the user stops typing
             // before running the search, so typing never re-filters on
             // every keystroke. The task restarts (and the previous one
             // is cancelled) on each keystroke. The finished query is
             // recorded in recents once.
             .task(id: query) {
-                try? await Task.sleep(nanoseconds: 300_000_000)
+                try? await Task.sleep(nanoseconds: 150_000_000)
                 guard !Task.isCancelled else { return }
                 debouncedQuery = trimmedQuery
                 recordCurrentSearch()
+            }
+            // Live suggestions, computed off the main thread so
+            // typing never scans the catalogue on the main thread.
+            // The task restarts on each keystroke (and when the
+            // catalogue loads), cancelling the previous run; a
+            // stale result is discarded, never shown. No debounce
+            // delay: suggestions stay live as the learner types,
+            // exactly as before, only on a background task now.
+            .task(id: query + "|" + "\(contentService.searchIndex?.entries.count ?? 0)") {
+                let current = query
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard trimmed.count >= 2 else {
+                    suggestionList = []
+                    return
+                }
+                let entries = contentService.searchIndex?.entries ?? []
+                let found = await Task.detached(priority: .userInitiated) {
+                    SearchService.suggestions(query: current, entries: entries)
+                }.value
+                guard !Task.isCancelled else { return }
+                suggestionList = found
+            }
+            // The result snapshot: search, level filter, totals
+            // and chapter match, computed once per work key, off
+            // the main thread. The task restarts only when the
+            // key changes (debounced query, filter, catalogue or
+            // situations load, last lesson), never per keystroke.
+            // A stale result is discarded, never shown.
+            .task(id: searchWorkKey) {
+                let key = searchWorkKey
+                let snapshot = await computeSnapshot()
+                guard !Task.isCancelled else { return }
+                searchSnapshot = snapshot
+                snapshotKey = key
             }
             // Any query or filter change: back to the first page of
             // results, so Load more never shows a stale slice.
             .onChange(of: filterSignature) { _, _ in
                 visibleResultCount = Self.resultsPageSize
             }
+            // The guided tour's Search demo: the tour types a
+            // query character by character and taps search.
+            // Demo keystrokes only land when the field is empty
+            // or already holds the demo prefix, so the
+            // learner's own typing is never overwritten, and
+            // stale runs are ignored. The reset clears only
+            // the exact demo query.
+            .onReceive(NotificationCenter.default.publisher(for: .tourSearchDemoType)) { note in
+                guard let run = note.userInfo?["run"] as? Int, run >= tourDemoRun,
+                      let text = note.userInfo?["text"] as? String,
+                      let full = note.userInfo?["full"] as? String,
+                      query.isEmpty || full.hasPrefix(query) else { return }
+                tourDemoRun = run
+                query = text
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .tourSearchDemoSubmit)) { note in
+                guard let run = note.userInfo?["run"] as? Int, run >= tourDemoRun,
+                      let term = note.userInfo?["query"] as? String,
+                      query.isEmpty || term.hasPrefix(query) else { return }
+                tourDemoRun = run
+                runSearch(term)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .tourSearchDemoReset)) { note in
+                guard let term = note.userInfo?["query"] as? String, query == term else { return }
+                query = ""
+                debouncedQuery = ""
+            }
         }
     }
 
-    // MARK: - Filter chips above the search field (mockup Screen 5)
+    // MARK: - Difficulty pills above the search field
 
-    private var filterChipsRow: some View {
+    /// The one filter, as pills that are always visible: one tap
+    /// picks a level, tapping All clears it. No menus, no hidden
+    /// choices. The pills work with no search text too, filtering
+    /// the whole catalogue.
+    private var difficultyPillsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: PFSpacing.sm) {
-                PFChip(text: "All", isSelected: !mockupFiltersActive) {
-                    clearMockupFilters()
+                Text("Difficulty")
+                    .font(.pfCaptionBold)
+                    .foregroundColor(.pfSecondaryText)
+                    .accessibilityHidden(true)
+                PFChip(text: "All", isSelected: selectedLevel == nil) {
+                    selectedLevel = nil
                 }
-                SearchFilterMenu(label: selectedLifecycle ?? "Lifecycle", isSelected: selectedLifecycle != nil) {
-                    menuOption(title: "All lifecycles", isSelected: selectedLifecycle == nil) {
-                        selectedLifecycle = nil
+                .pfMinimumTouchTarget()
+                ForEach([SituationLevel.foundation, .core, .advanced], id: \.self) { option in
+                    PFChip(text: option.displayName, isSelected: selectedLevel == option) {
+                        selectedLevel = option
                     }
-                    ForEach(lifecycleOptions, id: \.self) { option in
-                        menuOption(title: option, isSelected: selectedLifecycle == option) {
-                            selectedLifecycle = option
-                        }
-                    }
-                }
-                SearchFilterMenu(label: selectedRail ?? "Scheme", isSelected: selectedRail != nil) {
-                    menuOption(title: "All schemes", isSelected: selectedRail == nil) {
-                        selectedRail = nil
-                    }
-                    ForEach(railOptions, id: \.self) { option in
-                        menuOption(title: option, isSelected: selectedRail == option) {
-                            selectedRail = option
-                        }
-                    }
-                }
-                SearchFilterMenu(label: selectedLevel?.displayName ?? "Difficulty", isSelected: selectedLevel != nil) {
-                    menuOption(title: "All difficulties", isSelected: selectedLevel == nil) {
-                        selectedLevel = nil
-                    }
-                    ForEach([SituationLevel.foundation, .core, .advanced], id: \.self) { option in
-                        menuOption(title: option.displayName, isSelected: selectedLevel == option) {
-                            selectedLevel = option
-                        }
-                    }
+                    .pfMinimumTouchTarget()
                 }
             }
             .padding(.horizontal, PFSpacing.lg)
         }
         .padding(.top, PFSpacing.md)
-    }
-
-    /// One option row inside a filter menu, with a checkmark on the
-    /// current choice.
-    private func menuOption(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack {
-                Text(title)
-                Spacer()
-                if isSelected {
-                    Image(systemName: "checkmark")
-                }
-            }
-        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Difficulty filter")
     }
 
     /// Always-visible search field below the filter chips. The
@@ -523,12 +632,22 @@ struct SearchView: View {
         HStack(spacing: PFSpacing.sm) {
             Image(systemName: "magnifyingglass")
                 .foregroundColor(.pfSecondaryText)
-            TextField("Search lessons, guides, situations", text: $query)
+                .accessibilityHidden(true)
+            TextField("Search lessons, guides, situations and more", text: $query)
                 .font(.pfBody)
                 .foregroundColor(.pfNavy)
                 .autocapitalization(.none)
                 .disableAutocorrection(true)
                 .submitLabel(.search)
+                .focused($isSearchFieldFocused)
+                .onSubmit(of: .search) {
+                    // Pressing Search runs the query at once instead
+                    // of waiting for the debounce, and dismisses the
+                    // keyboard so the results are fully visible.
+                    debouncedQuery = trimmedQuery
+                    recordCurrentSearch()
+                    isSearchFieldFocused = false
+                }
             if !query.isEmpty {
                 Button {
                     query = ""
@@ -538,6 +657,7 @@ struct SearchView: View {
                         .foregroundColor(.pfSecondaryText)
                 }
                 .buttonStyle(.plain)
+                .pfMinimumTouchTarget()
                 .accessibilityLabel("Clear search")
             }
         }
@@ -550,6 +670,10 @@ struct SearchView: View {
                 .stroke(Color.pfBorder, lineWidth: 1)
         )
         .shadow(color: Color.pfNavy.opacity(0.06), radius: 8, x: 0, y: 2)
+        // Reports the field frame for the tour's typing demo.
+        // Attached before the outer padding, so the bounds are
+        // the field box itself, not the padded strip.
+        .anchorPreference(key: SearchFieldAnchorKey.self, value: .bounds) { $0 }
         .padding(.horizontal, PFSpacing.lg)
         .padding(.top, PFSpacing.md)
         .background(Color.pfBackground)
@@ -566,12 +690,14 @@ struct SearchView: View {
                             PFSectionHeader(title: "Recent searches")
                             Spacer()
                             Button("Clear") {
-                                SearchService.clearRecentSearches()
-                                recentSearches = []
+                                showClearRecentsConfirmation = true
                             }
                             .font(.pfCaptionBold)
                             .foregroundColor(.pfRoyal)
                             .buttonStyle(.plain)
+                            .pfMinimumTouchTarget()
+                            .accessibilityLabel("Clear recent searches")
+                            .accessibilityHint("Asks before clearing all recent searches from this device.")
                         }
                         FlowChips(
                             items: recentSearches,
@@ -590,33 +716,9 @@ struct SearchView: View {
 
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
                     PFSectionHeader(title: "Browse by type")
-                    VStack(spacing: PFSpacing.sm) {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: PFSpacing.md) {
                         ForEach(browseTypes, id: \.type) { item in
-                            Button {
-                                selectedBrowseType = item.type
-                            } label: {
-                                HStack {
-                                    PFPill(text: item.type.displayName)
-                                    Text(typeBrowseLabel(for: item.type))
-                                        .font(.pfBody)
-                                        .foregroundColor(.pfNavy)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    Spacer()
-                                    if let count = item.count {
-                                        Text("\(count)")
-                                            .font(.pfCaptionBold)
-                                            .foregroundColor(.pfSecondaryText)
-                                    }
-                                    Image(systemName: "chevron.right")
-                                        .font(.pfCaption.weight(.semibold))
-                                        .foregroundColor(.pfSecondaryText)
-                                }
-                                .padding(PFSpacing.lg)
-                                .background(Color.pfCard)
-                                .cornerRadius(PFSpacing.cardRadius)
-                                .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
-                            }
-                            .buttonStyle(.plain)
+                            browseTypeCard(item)
                         }
                     }
                 }
@@ -624,10 +726,22 @@ struct SearchView: View {
             .padding(PFSpacing.lg)
         }
         .background(Color.pfBackground)
+        .scrollDismissesKeyboard(.interactively)
         // Extra scrollable space at the bottom so the last row clears
         // the tab bar on every iPhone size.
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: PFSpacing.xl)
+        .pfTabBarClearance()
+        .confirmationDialog(
+            "Clear recent searches?",
+            isPresented: $showClearRecentsConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clear recent searches", role: .destructive) {
+                SearchService.clearRecentSearches()
+                recentSearches = []
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This removes all recent searches from this device. It cannot be undone.")
         }
     }
 
@@ -640,6 +754,56 @@ struct SearchView: View {
         case .test: return "Tests"
         case .faq: return "FAQs"
         }
+    }
+
+    /// The browse card icon, the same symbol the result rows use
+    /// for each type, so a type looks the same everywhere.
+    private func typeBrowseSymbol(for type: SearchEntryType) -> String {
+        switch type {
+        case .lesson: return "play.fill"
+        case .guide: return "book"
+        case .situation: return "briefcase.fill"
+        case .lab: return "flask"
+        case .test: return "checkmark.circle"
+        case .faq: return "questionmark.circle.fill"
+        }
+    }
+
+    /// One browse card: the type's icon tile, its name, and the
+    /// live count from the loaded index. No count shows when the
+    /// index has no entries of that type, never a made-up total.
+    private func browseTypeCard(_ item: (type: SearchEntryType, count: Int?)) -> some View {
+        Button {
+            selectedBrowseType = item.type
+        } label: {
+            VStack(alignment: .leading, spacing: PFSpacing.md) {
+                HStack {
+                    PFIconTile(systemImage: typeBrowseSymbol(for: item.type), size: 44)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.pfCaption.weight(.semibold))
+                        .foregroundColor(.pfSecondaryText)
+                        .pfDecorative()
+                }
+                VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                    Text(typeBrowseLabel(for: item.type))
+                        .font(.pfCardTitle)
+                        .foregroundColor(.pfNavy)
+                    if let count = item.count {
+                        Text("\(count) \(count == 1 ? "item" : "items")")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(PFSpacing.lg)
+            .background(Color.pfCard)
+            .cornerRadius(PFSpacing.cardRadius)
+            .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(typeBrowseLabel(for: item.type))\(item.count.map { ", \($0) items" } ?? "")")
     }
 
     // MARK: - Results
@@ -659,6 +823,7 @@ struct SearchView: View {
                                 Image(systemName: "magnifyingglass")
                                     .font(.pfCaption.weight(.semibold))
                                     .foregroundColor(.pfSecondaryText)
+                                    .accessibilityHidden(true)
                                 Text(suggestion.title)
                                     .font(.pfBody)
                                     .foregroundColor(.pfNavy)
@@ -667,11 +832,13 @@ struct SearchView: View {
                                 Image(systemName: "arrow.up.left")
                                     .font(.pfCaption.weight(.semibold))
                                     .foregroundColor(.pfSecondaryText)
+                                    .accessibilityHidden(true)
                             }
                             .padding(.horizontal, PFSpacing.lg)
                             .padding(.vertical, PFSpacing.sm)
                         }
                         .buttonStyle(.plain)
+                        .pfMinimumTouchTarget()
                     }
                 }
                 .padding(.bottom, PFSpacing.sm)
@@ -680,10 +847,11 @@ struct SearchView: View {
     }
 
     private var resultsContent: some View {
-        VStack(spacing: 0) {
-            extraFilterRow
+        let situationsByID = situationLookup
+        return VStack(spacing: 0) {
             suggestionsSection
-            if !trimmedQuery.isEmpty && debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if (!trimmedQuery.isEmpty && debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                || (isAwaitingSnapshot && filteredResults.isEmpty) {
                 VStack(spacing: PFSpacing.md) {
                     ProgressView()
                     Text("Searching...")
@@ -693,12 +861,23 @@ struct SearchView: View {
                 .padding(PFSpacing.xl)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if filteredResults.isEmpty {
+                // No results is never a dead end. The next steps are:
+                // clear the difficulty filter (when one is active),
+                // try a suggested search, and browse by type. The
+                // synonym next step lives in the suggestions row
+                // above this state whenever live suggestions exist
+                // (synonym-map entries first); when that row is
+                // empty, tappable popular searches are offered here
+                // instead, so the synonym step is never duplicated.
+                // Browse by type clears the query and the filter,
+                // which returns the learner to the browse content.
                 VStack(spacing: PFSpacing.md) {
                     Image(systemName: "magnifyingglass")
                         .font(.pfScreenTitle.weight(.regular))
                         .foregroundColor(.pfSecondaryText)
+                        .pfDecorative()
                     if debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("No results match these filters")
+                        Text("No results match this filter")
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
                             .multilineTextAlignment(.center)
@@ -710,20 +889,54 @@ struct SearchView: View {
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text("Try a different word, for example MT103, SEPA or chargeback, or clear your filters.")
+                    Text(noResultsHintText)
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
                         .multilineTextAlignment(.center)
                     if hasActiveFilters {
-                        PFSecondaryButton(title: "Clear filters") {
-                            clearAllFilters()
+                        PFSecondaryButton(title: "Clear filter") {
+                            selectedLevel = nil
                         }
                         .padding(.horizontal, PFSpacing.xl)
                     }
+                    if shouldShowNoResultsFallbackChips {
+                        Text("Try a popular search")
+                            .font(.pfCaptionBold)
+                            .foregroundColor(.pfSecondaryText)
+                        // The same three examples the hint names,
+                        // made tappable. All three are in the
+                        // popular searches list.
+                        FlowChips(items: ["MT103", "SEPA", "chargeback"], onTap: { runSearch($0) })
+                            .frame(maxWidth: .infinity)
+                    }
+                    PFSecondaryButton(title: "Browse by type") {
+                        query = ""
+                        debouncedQuery = ""
+                        selectedLevel = nil
+                        isSearchFieldFocused = false
+                    }
+                    .padding(.horizontal, PFSpacing.xl)
                 }
                 .padding(PFSpacing.xl)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                // A second or later query: the results below still
+                // belong to the previous query until the debounce
+                // catches up or the new snapshot lands, so a small
+                // searching indicator says so instead of leaving
+                // stale results unexplained.
+                // The first query uses the full-screen state above.
+                if isAwaitingDebouncedSearch || isAwaitingSnapshot {
+                    HStack(spacing: PFSpacing.sm) {
+                        ProgressView()
+                        Text("Searching...")
+                            .font(.pfCaption)
+                            .foregroundColor(.pfSecondaryText)
+                    }
+                    .padding(.horizontal, PFSpacing.lg)
+                    .padding(.top, PFSpacing.md)
+                    .accessibilityLabel("Searching")
+                }
                 resultsHeader
                 List {
                     if !matchedChapters.isEmpty {
@@ -737,9 +950,9 @@ struct SearchView: View {
                         }
                     }
                     ForEach(groupedResults, id: \.type) { group in
-                        Section(header: Text("\(group.type.displayName)s (\(group.entries.count))")) {
+                        Section(header: Text("\(group.type.displayName)s (\(groupTotals[group.type] ?? group.entries.count))")) {
                             ForEach(group.entries) { scored in
-                                resultRow(for: scored)
+                                resultRow(for: scored, situationsByID: situationsByID)
                             }
                         }
                     }
@@ -751,6 +964,7 @@ struct SearchView: View {
                             .font(.pfBody.weight(.semibold))
                             .foregroundColor(.pfRoyal)
                             .frame(maxWidth: .infinity, alignment: .center)
+                            .pfMinimumTouchTarget()
                             .listRowBackground(Color.pfCard)
                         }
                     }
@@ -762,48 +976,11 @@ struct SearchView: View {
                 // the tab bar.
                 .scrollContentBackground(.hidden)
                 .background(Color.pfBackground)
-                .safeAreaInset(edge: .bottom) {
-                    Color.clear.frame(height: PFSpacing.lg)
-                }
+                .scrollDismissesKeyboard(.interactively)
+                .pfTabBarClearance()
             }
         }
         .background(Color.pfBackground)
-    }
-
-    /// Type, progress and access filters, shown while results are
-    /// on screen. The mockup chips above the search field cover
-    /// Lifecycle, Scheme and Difficulty; these three cover the rest.
-    private var extraFilterRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: PFSpacing.sm) {
-                SearchFilterMenu(label: selectedType?.displayName ?? "Type", isSelected: selectedType != nil) {
-                    menuOption(title: "All types", isSelected: selectedType == nil) {
-                        selectedType = nil
-                    }
-                    ForEach(typeOrder, id: \.self) { option in
-                        menuOption(title: option.displayName, isSelected: selectedType == option) {
-                            selectedType = option
-                        }
-                    }
-                }
-                SearchFilterMenu(label: completedFilter == .all ? "Progress" : completedFilter.rawValue, isSelected: completedFilter != .all) {
-                    ForEach(SearchCompletedFilter.allCases, id: \.self) { option in
-                        menuOption(title: option.rawValue, isSelected: completedFilter == option) {
-                            completedFilter = option
-                        }
-                    }
-                }
-                SearchFilterMenu(label: accessFilter == .all ? "Access" : accessFilter.rawValue, isSelected: accessFilter != .all) {
-                    ForEach(SearchAccessFilter.allCases, id: \.self) { option in
-                        menuOption(title: option.rawValue, isSelected: accessFilter == option) {
-                            accessFilter = option
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, PFSpacing.lg)
-        }
-        .padding(.top, PFSpacing.md)
     }
 
     private var resultsHeader: some View {
@@ -815,8 +992,8 @@ struct SearchView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 if hasActiveFilters {
-                    Button("Clear filters") {
-                        clearAllFilters()
+                    Button("Clear filter") {
+                        selectedLevel = nil
                     }
                     .font(.pfCaptionBold)
                     .foregroundColor(.pfRoyal)
@@ -857,17 +1034,24 @@ struct SearchView: View {
         let lessons = PFChapterHelper.lessons(forChapter: chapterNumber, in: contentService)
         let title = PFChapterHelper.chapterTitle(for: lessons, number: chapterNumber)
         let completed = lessons.filter { progressStore.isLessonComplete($0.id) }.count
+        let bookNumber = PFBookModeReadingOrder.bookNumber(forInternalNumber: chapterNumber)
         return HStack(alignment: .top, spacing: PFSpacing.md) {
-            Text("\(chapterNumber)")
+            Text(bookNumber.map(String.init) ?? "•")
                 .font(.pfCardTitle.weight(.bold))
                 .foregroundColor(.white)
                 .frame(width: 40, height: 40)
                 .background(Color.pfRoyal)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                Text("Chapter \(chapterNumber)")
-                    .font(.pfCaptionBold)
-                    .foregroundColor(.pfRoyal)
+                if let bookNumber {
+                    Text("Chapter \(bookNumber)")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfRoyal)
+                } else {
+                    Text("Outside the main reading path")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfRoyal)
+                }
                 Text(title)
                     .font(.pfCardTitle)
                     .foregroundColor(.pfNavy)
@@ -882,6 +1066,7 @@ struct SearchView: View {
                 .font(.pfCaption.weight(.semibold))
                 .foregroundColor(.pfSecondaryText)
                 .padding(.top, PFSpacing.xs)
+                .pfDecorative()
         }
         .textSelection(.disabled)
         .padding(.vertical, PFSpacing.xs)
@@ -889,33 +1074,35 @@ struct SearchView: View {
 
     /// A Situation for a search entry. The full data file wins when it
     /// has loaded (full explain, visual and stage); the search index
-    /// entry is the fallback so the detail never goes empty.
-    private func situationFor(entry: SearchEntry) -> Situation {
-        if let full = contentService.fullSituations?.first(where: { $0.id == entry.id }) {
+    /// entry is the fallback so the detail never goes empty. The
+    /// lookup map is built once by the list, so this is one
+    /// dictionary lookup instead of a scan of the whole file.
+    private func situationFor(entry: SearchEntry, situationsByID: [String: FullSituationItem]) -> Situation {
+        if let full = situationsByID[entry.id] {
             return situation(fromFull: full)
         }
         return situation(from: entry)
     }
 
     @ViewBuilder
-    private func resultRow(for scored: SearchHit) -> some View {
+    private func resultRow(for scored: SearchHit, situationsByID: [String: FullSituationItem]) -> some View {
         let entry = scored.entry
         switch entry.type {
         case .lesson:
             NavigationLink(destination: LessonView(entry: entry)) {
-                SearchResultRow(entry: entry, reason: scored.reason, matchedTerm: scored.matchedTerm, query: debouncedQuery)
+                SearchResultRow(entry: entry, reason: scored.reason, matchedTerm: scored.matchedTerm, query: debouncedQuery, situationsByID: situationsByID)
             }
             .listRowBackground(Color.pfCard)
         case .situation:
-            NavigationLink(destination: SituationDetailView(situation: situationFor(entry: entry))) {
-                SearchResultRow(entry: entry, reason: scored.reason, matchedTerm: scored.matchedTerm, query: debouncedQuery)
+            NavigationLink(destination: SituationDetailView(situation: situationFor(entry: entry, situationsByID: situationsByID))) {
+                SearchResultRow(entry: entry, reason: scored.reason, matchedTerm: scored.matchedTerm, query: debouncedQuery, situationsByID: situationsByID)
             }
             .listRowBackground(Color.pfCard)
         case .guide, .lab, .test, .faq:
             Button {
                 sheetEntry = entry
             } label: {
-                SearchResultRow(entry: entry, reason: scored.reason, matchedTerm: scored.matchedTerm, query: debouncedQuery)
+                SearchResultRow(entry: entry, reason: scored.reason, matchedTerm: scored.matchedTerm, query: debouncedQuery, situationsByID: situationsByID)
             }
             .buttonStyle(.plain)
             .listRowBackground(Color.pfCard)
@@ -927,9 +1114,10 @@ struct SearchView: View {
 
 /// Icon tile left, bold title (2 lines max), tags below (scheme,
 /// category, level, plus a status tag when one applies), the match
-/// reason underneath, and a bookmark icon on the right. The bookmark
-/// icon is display only: it reflects PFBookmarkStore, and toggling
-/// happens in the lesson and situation detail views.
+/// reason underneath, and a bookmark button on the right that
+/// toggles the saved state. The button is borderless, so tapping it
+/// does not follow the row's navigation link. The type icons match
+/// the Learn library rows (unfilled book, flask and checkmark).
 private struct SearchResultRow: View {
     @EnvironmentObject private var contentService: ContentService
     @EnvironmentObject private var progressStore: ProgressStore
@@ -943,14 +1131,31 @@ private struct SearchResultRow: View {
     var matchedTerm: String? = nil
     /// The query that produced these results, for highlighting.
     var query: String = ""
+    /// The full situations file as a lookup map, built once by the
+    /// list that owns this row. Nil falls back to a scan of the
+    /// loaded file, so a caller without a map still works; every
+    /// caller in this file passes one, so no row scans the file
+    /// on every render.
+    var situationsByID: [String: FullSituationItem]? = nil
+
+    /// True when this row is a locked situation: not a free sample
+    /// and Payment Situations not unlocked. The row itself shows
+    /// teaser fields only (title, tags, read time, match reason),
+    /// never excerpt text; the identifier lets the D101 UI test
+    /// open a locked result from search and assert the detail gate.
+    private var isLockedSituation: Bool {
+        entry.type == .situation
+            && !ContentService.freeSampleIDs.contains(entry.id)
+            && !storeManager.isSituationsUnlocked
+    }
 
     private var systemImage: String {
         switch entry.type {
         case .lesson: return "play.fill"
-        case .guide: return "book.fill"
+        case .guide: return "book"
         case .situation: return "briefcase.fill"
-        case .lab: return "flask.fill"
-        case .test: return "checkmark.circle.fill"
+        case .lab: return "flask"
+        case .test: return "checkmark.circle"
         case .faq: return "questionmark.circle.fill"
         }
     }
@@ -964,11 +1169,30 @@ private struct SearchResultRow: View {
                     .foregroundColor(.pfNavy)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                    // The highlighted title is styled fragments;
+                    // VoiceOver reads the plain title once instead.
+                    .accessibilityLabel(entry.title)
+                if entry.type == .lesson, let position = PFChapterHelper.readingPositionLabel(for: entry, in: contentService) {
+                    Text(position)
+                        .font(.pfCaption)
+                        .foregroundColor(.pfSecondaryText)
+                }
                 tagRow
+                if let timeLabel {
+                    HStack(spacing: PFSpacing.xs) {
+                        Image(systemName: "clock")
+                            .font(.pfCaption.weight(.semibold))
+                            .accessibilityHidden(true)
+                        Text(timeLabel)
+                    }
+                    .font(.pfCaption)
+                    .foregroundColor(.pfSecondaryText)
+                }
                 if !reason.isEmpty {
                     HStack(spacing: PFSpacing.xs) {
                         Image(systemName: "magnifyingglass")
                             .font(.pfCaption.weight(.semibold))
+                            .accessibilityHidden(true)
                         Text(reason)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -984,12 +1208,15 @@ private struct SearchResultRow: View {
         // editable.
         .textSelection(.disabled)
         .padding(.vertical, PFSpacing.xs)
+        .accessibilityIdentifier(isLockedSituation ? "lockedSituationSearchRow" : "searchResultRow")
     }
 
     /// Tags derived from the entry title and text only, with the
     /// full situations file winning for a situation's level and
     /// module. A tag is omitted when it cannot be derived, never
-    /// invented.
+    /// invented. Tags wrap onto a second row (SearchTagFlow) so a
+    /// result with five or six pills never overflows or clips on a
+    /// narrow phone or at large text sizes.
     @ViewBuilder
     private var tagRow: some View {
         // The tags are computed inline here because this row owns its
@@ -997,7 +1224,7 @@ private struct SearchResultRow: View {
         let rail = SearchRowFacts.rail(for: entry)
         let topic = topicTag
         let level = levelTag
-        HStack(spacing: PFSpacing.xs) {
+        SearchTagFlow(spacing: PFSpacing.xs) {
             PFPill(text: entry.type.displayName)
             if let rail {
                 PFPill(text: rail)
@@ -1038,12 +1265,33 @@ private struct SearchResultRow: View {
         return !storeManager.isChapterUnlocked("ch\(number)")
     }
 
+    /// Approximate time for this result: the narration length
+    /// for a lesson when the manifest knows it, else the read
+    /// time of the indexed text. Nil shows nothing.
+    private var timeLabel: String? {
+        if entry.type == .lesson, let label = LessonDurations.label(for: entry.id) {
+            return "About " + label
+        }
+        return ReadTime.label(for: entry.text)
+    }
+
+    /// The full situation for this row's entry, from the lookup
+    /// map when the list supplied one, else a scan of the loaded
+    /// file. Same item either way: the map is first-wins, exactly
+    /// as first(where:) is.
+    private func fullSituation() -> FullSituationItem? {
+        if let lookup = situationsByID {
+            return lookup[entry.id]
+        }
+        return contentService.fullSituations?.first(where: { $0.id == entry.id })
+    }
+
     /// The lifecycle category tag: the module for situations (full
     /// data file), the chapter title for lessons (second line of the
     /// entry text). Nil otherwise.
     private var topicTag: String? {
         if entry.type == .situation {
-            return contentService.fullSituations?.first(where: { $0.id == entry.id })?.module
+            return fullSituation()?.module
         }
         if entry.type == .lesson {
             let parts = entry.text.components(separatedBy: "\n")
@@ -1059,7 +1307,7 @@ private struct SearchResultRow: View {
     /// situation(from:) uses). Nil for other types with no hint.
     private var levelTag: SituationLevel? {
         if entry.type == .situation {
-            if let full = contentService.fullSituations?.first(where: { $0.id == entry.id }) {
+            if let full = fullSituation() {
                 switch full.level.lowercased() {
                 case "foundation": return .foundation
                 case "advanced": return .advanced
@@ -1077,16 +1325,35 @@ private struct SearchResultRow: View {
         return nil
     }
 
+    /// A bookmark button for lessons and situations: tapping it
+    /// toggles the saved state in PFBookmarkStore without opening
+    /// the item. Borderless, so the tap does not also follow the
+    /// row's navigation link. The labels match the detail views.
     @ViewBuilder
     private var bookmarkIcon: some View {
         if entry.type == .lesson || entry.type == .situation {
             let marked = entry.type == .lesson
                 ? bookmarkStore.isLessonBookmarked(entry.id)
                 : bookmarkStore.isSituationBookmarked(entry.id)
-            Image(systemName: marked ? "bookmark.fill" : "bookmark")
-                .font(.pfBody.weight(.semibold))
-                .foregroundColor(marked ? .pfGold : .pfSecondaryText)
-                .accessibilityLabel(marked ? "Bookmarked" : "Not bookmarked")
+            Button {
+                if entry.type == .lesson {
+                    bookmarkStore.toggleLesson(entry.id)
+                } else {
+                    bookmarkStore.toggleSituation(entry.id)
+                }
+            } label: {
+                Image(systemName: marked ? "bookmark.fill" : "bookmark")
+                    .font(.pfBody.weight(.semibold))
+                    .foregroundColor(marked ? .pfGold : .pfSecondaryText)
+                    .padding(4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .pfMinimumTouchTarget()
+            .accessibilityLabel(
+                marked ? "Remove bookmark"
+                    : entry.type == .lesson ? "Bookmark this lesson" : "Bookmark this situation"
+            )
         }
     }
 }
@@ -1109,44 +1376,6 @@ private enum SearchRowFacts {
 //
 // A Menu styled as a pill: royal blue with white text when a choice
 // is active, white with a hairline border otherwise. Used for the
-// Lifecycle, Scheme, Difficulty, Type, Progress and Access filters.
-
-private struct SearchFilterMenu<Content: View>: View {
-    let label: String
-    let isSelected: Bool
-    var content: () -> Content
-
-    init(label: String, isSelected: Bool, @ViewBuilder content: @escaping () -> Content) {
-        self.label = label
-        self.isSelected = isSelected
-        self.content = content
-    }
-
-    var body: some View {
-        Menu {
-            content()
-        } label: {
-            HStack(spacing: PFSpacing.xs) {
-                Text(label)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.pfCaption.weight(.semibold))
-            }
-            .font(.pfCaptionBold)
-            .foregroundColor(isSelected ? .white : .pfNavy)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(isSelected ? Color.pfRoyal : Color.pfCard)
-            .clipShape(Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(isSelected ? Color.pfRoyal : Color.pfBorder, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 // MARK: - Browse by type list
 
 private struct SearchTypeListView: View {
@@ -1156,7 +1385,7 @@ private struct SearchTypeListView: View {
     @State private var sheetEntry: SearchEntry? = nil
 
     /// Entries shown at first: 20 per page, Load more adds 20.
-    /// A type like Lessons has 746 entries, so the full list is
+    /// A type can hold many entries, so the full list is
     /// never built at once. The view is created fresh per type,
     /// so the count starts at page 1 on every navigation.
     private static let typeListPageSize = 20
@@ -1172,27 +1401,72 @@ private struct SearchTypeListView: View {
         Array(entries.prefix(visibleCount))
     }
 
+    /// The full situations file as a lookup map, first item wins
+    /// for a repeated id (exactly as first(where:) behaved).
+    /// Read once per body evaluation and passed to the rows, so
+    /// no row scans the whole file on every render.
+    private var situationLookup: [String: FullSituationItem] {
+        var lookup: [String: FullSituationItem] = [:]
+        for item in contentService.fullSituations ?? [] {
+            if lookup[item.id] == nil {
+                lookup[item.id] = item
+            }
+        }
+        return lookup
+    }
+
     /// A Situation for a search entry. The full data file wins when it
     /// has loaded (full explain, visual and stage); the search index
-    /// entry is the fallback so the detail never goes empty.
-    private func situationFor(entry: SearchEntry) -> Situation {
-        if let full = contentService.fullSituations?.first(where: { $0.id == entry.id }) {
+    /// entry is the fallback so the detail never goes empty. The
+    /// lookup map is built once by the list, so this is one
+    /// dictionary lookup instead of a scan of the whole file.
+    private func situationFor(entry: SearchEntry, situationsByID: [String: FullSituationItem]) -> Situation {
+        if let full = situationsByID[entry.id] {
             return situation(fromFull: full)
         }
         return situation(from: entry)
     }
 
     var body: some View {
-        Group {
+        let situationsByID = situationLookup
+        return Group {
             if contentService.isLoadingIndex && contentService.searchIndex == nil {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: PFSpacing.lg) {
+                    ProgressView()
+                    Text("Loading the course catalogue...")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error = contentService.indexError, contentService.searchIndex == nil {
+                // The catalogue failed to load: a terminal failure
+                // state with Retry, not the "still loading" text.
+                VStack(spacing: PFSpacing.lg) {
+                    PFCard {
+                        VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                            Text("Could not load the catalogue")
+                                .font(.pfCardTitle)
+                                .foregroundColor(.pfNavy)
+                            Text(error)
+                                .font(.pfBody)
+                                .foregroundColor(.pfSecondaryText)
+                            PFPrimaryButton(title: "Retry") {
+                                Task { await contentService.loadSearchIndex() }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, PFSpacing.lg)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if entries.isEmpty {
+                // The catalogue loaded and this type genuinely has
+                // no entries: say so, instead of claiming it is
+                // still loading.
                 VStack(spacing: PFSpacing.md) {
                     Text("Nothing here yet")
                         .font(.pfCardTitle)
                         .foregroundColor(.pfNavy)
-                    Text("The catalogue is still loading. Please try again in a moment.")
+                    Text("There are no \(type.displayName.lowercased())s in the catalogue.")
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
                         .multilineTextAlignment(.center)
@@ -1202,7 +1476,7 @@ private struct SearchTypeListView: View {
             } else {
                 List {
                     ForEach(visibleEntries) { entry in
-                        row(for: entry)
+                        row(for: entry, situationsByID: situationsByID)
                     }
                     if entries.count > visibleCount {
                         Section {
@@ -1216,6 +1490,7 @@ private struct SearchTypeListView: View {
                                 .font(.pfBody.weight(.semibold))
                                 .foregroundColor(.pfRoyal)
                                 .frame(maxWidth: .infinity, alignment: .center)
+                                .pfMinimumTouchTarget()
                             }
                             .listRowBackground(Color.pfCard)
                         }
@@ -1226,9 +1501,7 @@ private struct SearchTypeListView: View {
                 // rows stay on the card colour so navy text stays visible.
                 .scrollContentBackground(.hidden)
                 .background(Color.pfBackground)
-                .safeAreaInset(edge: .bottom) {
-                    Color.clear.frame(height: PFSpacing.lg)
-                }
+                .pfTabBarClearance()
             }
         }
         .navigationTitle(type.displayName + "s")
@@ -1238,23 +1511,23 @@ private struct SearchTypeListView: View {
     }
 
     @ViewBuilder
-    private func row(for entry: SearchEntry) -> some View {
+    private func row(for entry: SearchEntry, situationsByID: [String: FullSituationItem]) -> some View {
         switch entry.type {
         case .lesson:
             NavigationLink(destination: LessonView(entry: entry)) {
-                SearchResultRow(entry: entry)
+                SearchResultRow(entry: entry, situationsByID: situationsByID)
             }
             .listRowBackground(Color.pfCard)
         case .situation:
-            NavigationLink(destination: SituationDetailView(situation: situationFor(entry: entry))) {
-                SearchResultRow(entry: entry)
+            NavigationLink(destination: SituationDetailView(situation: situationFor(entry: entry, situationsByID: situationsByID))) {
+                SearchResultRow(entry: entry, situationsByID: situationsByID)
             }
             .listRowBackground(Color.pfCard)
         case .guide, .lab, .test, .faq:
             Button {
                 sheetEntry = entry
             } label: {
-                SearchResultRow(entry: entry)
+                SearchResultRow(entry: entry, situationsByID: situationsByID)
             }
             .buttonStyle(.plain)
             .listRowBackground(Color.pfCard)
@@ -1278,9 +1551,7 @@ private struct SearchEntrySheet: View {
                     Text(entry.title)
                         .font(.pfSectionTitle)
                         .foregroundColor(.pfNavy)
-                    Text(entry.text)
-                        .font(.pfBody)
-                        .foregroundColor(.pfNavy)
+                    PFBodyText(text: entry.text)
                 }
                 .padding(PFSpacing.lg)
             }
@@ -1299,6 +1570,52 @@ private struct SearchEntrySheet: View {
                     Button("Done") { dismiss() }
                 }
             }
+        }
+    }
+}
+
+// MARK: - Wrapping tag layout
+//
+// Search result tags flow onto a second row instead of overflowing
+// on a narrow screen. A plain SwiftUI Layout (iOS 16+), the same
+// pattern as SituationsView's PillFlow, kept private to this file
+// because the row owns its own tag layout.
+
+private struct SearchTagFlow: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0 && x + size.width > width {
+                y += rowHeight + spacing
+                x = 0
+                rowHeight = 0
+            }
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
+        }
+        return CGSize(width: width, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX && x + size.width > bounds.maxX {
+                y += rowHeight + spacing
+                x = bounds.minX
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: .unspecified)
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
         }
     }
 }
@@ -1330,6 +1647,7 @@ private struct FlowChips: View {
                             .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                    .pfMinimumTouchTarget()
                 }
             }
             .padding(.vertical, 2)

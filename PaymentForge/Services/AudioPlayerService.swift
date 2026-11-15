@@ -27,13 +27,22 @@ final class AudioPlayerService: ObservableObject {
     @Published private(set) var isUsingFallback = false
     @Published private(set) var errorMessage: String? = nil
 
+    /// True while the item now playing came from a downloaded file
+    /// on this device rather than streaming. The lesson view shows
+    /// "Playing the downloaded copy" from this. Cleared on stop and
+    /// when playback falls back to streaming.
+    @Published private(set) var isPlayingDownloadedCopy = false
+
     /// Sleep timer, in minutes, nil when off. Fires once and stops playback.
     @Published private(set) var sleepTimerMinutes: Int? = nil
 
     /// Auto-advance to the next lesson when narration finishes.
     /// Default off. Persisted locally.
     @Published var autoAdvanceEnabled: Bool = false {
-        didSet { UserDefaults.standard.set(autoAdvanceEnabled, forKey: Keys.autoAdvance) }
+        didSet {
+            guard !isReloadingPrefs else { return }
+            UserDefaults.standard.set(autoAdvanceEnabled, forKey: AccountScopedStorage.currentKey(Keys.autoAdvance))
+        }
     }
 
     /// The position this lesson resumed from, when position persistence
@@ -87,12 +96,26 @@ final class AudioPlayerService: ObservableObject {
     /// the lock screen at most once a second.
     private var lastNowPlayingUpdate = Date.distantPast
 
-    /// Local persistence keys. Guest only, UserDefaults, no account.
+    /// Local persistence keys, as base keys. The stored keys are
+    /// namespaced per account through AccountScopedStorage:
+    /// playback rate, auto-advance and per-lesson positions are
+    /// personal to the learner.
     private enum Keys {
         static let playbackRate = "pf.audio.playbackRate.v1"
         static let autoAdvance = "pf.audio.autoAdvance.v1"
         static let positionPrefix = "pf.audio.position.v1."
     }
+
+    /// True while reloadForCurrentAccount is re-reading prefs, so
+    /// the auto-advance observer does not write the loaded value
+    /// back into a namespace that may not hold it yet.
+    private var isReloadingPrefs = false
+
+    /// The namespace captured when the current playback started.
+    /// Positions are written under it, so stopping playback after
+    /// an account switch cannot file the position under the new
+    /// account. Nil when nothing has been played yet.
+    private var positionNamespace: String?
 
     /// True while a play has been requested but the item is not ready yet.
     /// Playback starts the moment the item reports readyToPlay.
@@ -108,11 +131,14 @@ final class AudioPlayerService: ObservableObject {
     }
 
     init() {
-        let savedRate = Float(UserDefaults.standard.double(forKey: Keys.playbackRate))
+        AccountScopedStorage.adoptLegacyKey(Keys.playbackRate)
+        AccountScopedStorage.adoptLegacyKey(Keys.autoAdvance)
+        AccountScopedStorage.adoptLegacyKeys(withPrefix: Keys.positionPrefix)
+        let savedRate = Float(UserDefaults.standard.double(forKey: AccountScopedStorage.currentKey(Keys.playbackRate)))
         if Self.playbackSpeeds.contains(savedRate) {
             playbackRate = savedRate
         }
-        autoAdvanceEnabled = UserDefaults.standard.bool(forKey: Keys.autoAdvance)
+        autoAdvanceEnabled = UserDefaults.standard.bool(forKey: AccountScopedStorage.currentKey(Keys.autoAdvance))
         setupRemoteCommands()
         NotificationCenter.default.addObserver(
             self,
@@ -124,11 +150,42 @@ final class AudioPlayerService: ObservableObject {
 
     // MARK: - Position persistence
 
-    /// The saved playback position for a lesson, in seconds. Zero
-    /// when the lesson was never started or was finished.
+    /// The saved playback position for a lesson, in seconds, under
+    /// the current account namespace. Zero when the lesson was
+    /// never started or was finished.
     static func savedPosition(for lessonID: String) -> Double {
-        let saved = UserDefaults.standard.double(forKey: Keys.positionPrefix + lessonID)
+        let saved = UserDefaults.standard.double(forKey: AccountScopedStorage.currentKey(Keys.positionPrefix + lessonID))
         return saved.isFinite && saved > 0 ? saved : 0
+    }
+
+    /// The stored key for a lesson's saved position when writing.
+    /// Positions are written under the namespace captured when
+    /// playback started (see positionNamespace), never under a
+    /// namespace the learner switched into mid-lesson.
+    private func positionKey(for lessonID: String) -> String {
+        AccountScopedStorage.key(Keys.positionPrefix + lessonID, namespace: positionNamespace ?? AccountScopedStorage.currentNamespace)
+    }
+
+    /// Re-read playback rate and auto-advance for the current
+    /// account namespace. Playback itself is untouched: audio is
+    /// content, not account data, and a switch mid-lesson must not
+    /// stop the narration. Positions are read per lesson at play()
+    /// time, so the next lesson already uses the new namespace.
+    /// There is no shared instance (each LessonView owns one), so
+    /// AuthService cannot call this for live players; new lesson
+    /// views read the current namespace in init.
+    func reloadForCurrentAccount() {
+        isReloadingPrefs = true
+        defer { isReloadingPrefs = false }
+        if UserDefaults.standard.object(forKey: AccountScopedStorage.currentKey(Keys.playbackRate)) != nil {
+            let savedRate = Float(UserDefaults.standard.double(forKey: AccountScopedStorage.currentKey(Keys.playbackRate)))
+            if Self.playbackSpeeds.contains(savedRate) {
+                playbackRate = savedRate
+            }
+        } else {
+            playbackRate = 1.0
+        }
+        autoAdvanceEnabled = UserDefaults.standard.bool(forKey: AccountScopedStorage.currentKey(Keys.autoAdvance))
     }
 
     /// Save the current position for the lesson now playing, if any.
@@ -138,15 +195,15 @@ final class AudioPlayerService: ObservableObject {
     func savePosition() {
         guard let lessonID = currentLessonID else { return }
         if currentTime > 5 {
-            UserDefaults.standard.set(currentTime, forKey: Keys.positionPrefix + lessonID)
+            UserDefaults.standard.set(currentTime, forKey: positionKey(for: lessonID))
         } else {
-            UserDefaults.standard.removeObject(forKey: Keys.positionPrefix + lessonID)
+            UserDefaults.standard.removeObject(forKey: positionKey(for: lessonID))
         }
     }
 
     /// Drop the saved position for a lesson, for example when it finishes.
     func clearSavedPosition(for lessonID: String) {
-        UserDefaults.standard.removeObject(forKey: Keys.positionPrefix + lessonID)
+        UserDefaults.standard.removeObject(forKey: positionKey(for: lessonID))
     }
 
     // MARK: - Audio session
@@ -318,28 +375,40 @@ final class AudioPlayerService: ObservableObject {
     /// behaviour and start from the beginning. Title and chapterTitle
     /// feed the lock-screen Now Playing metadata; the lesson view
     /// refreshes them with updateLessonMetadata once the detail loads.
+    /// When a downloaded copy exists for the lesson, it plays from
+    /// this device instead of streaming; the remote primary to
+    /// fallback failover is unchanged when no download exists. A
+    /// downloaded copy can only be found when lessonID is given.
     func play(fileName: String, lessonID: String? = nil, title: String? = nil, chapterTitle: String? = nil) {
         stop()
         currentFileName = fileName
         currentLessonID = lessonID
+        positionNamespace = AccountScopedStorage.currentNamespace
         currentLessonTitle = title
         currentChapterTitle = chapterTitle
         failoverAttempted = false
         isUsingFallback = false
+        isPlayingDownloadedCopy = false
         errorMessage = nil
         isLoading = true
         resumePosition = 0
         resumedFromPosition = nil
         if let lessonID {
             let saved = Self.savedPosition(for: lessonID)
-            if saved > 5 {
+            if saved > 0 {
                 resumePosition = saved
                 resumedFromPosition = saved
             }
         }
         pendingPlay = true
         configureAudioSession()
-        startPlayback(url: ContentService.primaryAudioURL(fileName: fileName))
+        if let lessonID,
+           let downloadedURL = LessonDownloadStore.shared.downloadedAudioURL(for: lessonID, fileName: fileName) {
+            isPlayingDownloadedCopy = true
+            startPlayback(url: downloadedURL)
+        } else {
+            startPlayback(url: ContentService.primaryAudioURL(fileName: fileName))
+        }
     }
 
     private func startPlayback(url: URL) {
@@ -485,6 +554,15 @@ final class AudioPlayerService: ObservableObject {
             isLoading = false
             return
         }
+        if isPlayingDownloadedCopy {
+            // The downloaded file could not be played: fall back to
+            // streaming from the primary host, with the full
+            // primary to fallback chain still ahead of it.
+            isPlayingDownloadedCopy = false
+            resumePosition = currentTime
+            startPlayback(url: ContentService.primaryAudioURL(fileName: fileName))
+            return
+        }
         failoverAttempted = true
         isUsingFallback = true
         resumePosition = currentTime
@@ -542,7 +620,7 @@ final class AudioPlayerService: ObservableObject {
     func setSpeed(_ rate: Float) {
         guard Self.playbackSpeeds.contains(rate) else { return }
         playbackRate = rate
-        UserDefaults.standard.set(rate, forKey: Keys.playbackRate)
+        UserDefaults.standard.set(rate, forKey: AccountScopedStorage.currentKey(Keys.playbackRate))
         if isPlaying { player?.rate = rate }
         updateNowPlayingInfo()
     }
@@ -627,11 +705,13 @@ final class AudioPlayerService: ObservableObject {
         didFireFinished = false
         resumePosition = 0
         resumedFromPosition = nil
+        positionNamespace = nil
         currentLessonID = nil
         currentLessonTitle = nil
         currentChapterTitle = nil
         isPlaying = false
         isLoading = false
+        isPlayingDownloadedCopy = false
         currentTime = 0
         duration = 0
         errorMessage = nil

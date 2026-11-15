@@ -14,6 +14,13 @@
 // Design follows the second reference board's Case Resolution screen:
 // navy headings, royal blue primary actions, gold accents sparingly,
 // white cards, radio-style option rows, expandable sections.
+// Gating (v70): this view gates itself, so every entry (detail,
+// Home, Courses, drawer) respects the same rule. Entitled learners
+// see the case exactly as before. Everyone else sees practice only
+// for the free samples and this week's free case: the decision and
+// its distractors come from the gated pool in PracticeModeBuilder,
+// and a locked case shows only the locked gate, with no text from
+// the case itself.
 // No em dashes in any user-facing text.
 
 import SwiftUI
@@ -177,6 +184,8 @@ struct PracticeModeView: View {
     let situation: Situation
     let allSituations: [Situation]
 
+    @EnvironmentObject private var storeManager: StoreManager
+    @EnvironmentObject private var contentService: ContentService
     @ObservedObject private var practiceStore = PracticeStore.shared
 
     @State private var selectedOption: Int? = nil
@@ -184,17 +193,75 @@ struct PracticeModeView: View {
     @State private var quizSelection: Int? = nil
     @State private var quizAnswered = false
     @State private var assessmentRecorded = false
+    @State private var showCheckout = false
 
-    /// The decision for this situation, or nil when the situation
-    /// has no takeaway and is therefore not eligible.
-    private var decision: PracticeDecision? {
-        PracticeModeBuilder.decision(for: situation, in: allSituations)
+    /// This week's free case id, picked exactly the way
+    /// WeeklyFreeCaseView picks it: the dedicated 52-case
+    /// weekly list wins when it has loaded, otherwise the
+    /// catalogue order in allSituations is the fallback. The
+    /// same WeeklyFreeCaseSelector cycle rule, no second rule.
+    /// Nil only when both lists are empty.
+    private var weeklyCaseID: String? {
+        if let weekly = contentService.weeklyCases, !weekly.isEmpty {
+            return WeeklyFreeCaseSelector.situationID(from: weekly.map(\.id), on: Date())
+        }
+        return WeeklyFreeCaseSelector.situationID(from: allSituations.map(\.id), on: Date())
     }
 
-    /// The recall question reuses the same option pool in a
-    /// different deterministic order.
+    /// The v69 hard gate predicate, with the weekly case
+    /// identified by id: locked when the situation is not a
+    /// free sample, not this week's free case, and Payment
+    /// Situations is not unlocked.
+    private var isLocked: Bool {
+        PracticeModeBuilder.isLocked(
+            situation,
+            isSituationsUnlocked: storeManager.isSituationsUnlocked,
+            weeklyCaseID: weeklyCaseID
+        )
+    }
+
+    /// The situations practice may draw on for this learner:
+    /// the full list when entitled, only the free samples plus
+    /// this week's free case otherwise.
+    private var gatedPool: [Situation] {
+        PracticeModeBuilder.eligiblePool(
+            from: allSituations,
+            isSituationsUnlocked: storeManager.isSituationsUnlocked,
+            weeklyCaseID: weeklyCaseID
+        )
+    }
+
+    /// The first gated-pool situation a decision can be built
+    /// for, offered from the locked gate so a non-entitled
+    /// learner can still practise a free case. Nil when the
+    /// catalogue has not loaded or no free case is eligible.
+    private var firstFreePracticeSituation: Situation? {
+        gatedPool.first { PracticeModeBuilder.decision(for: $0, in: gatedPool) != nil }
+    }
+
+    /// The decision for this situation, built from the gated
+    /// pool only, or nil when the situation is locked for this
+    /// learner or has no takeaway and is therefore not
+    /// eligible.
+    private var decision: PracticeDecision? {
+        PracticeModeBuilder.decision(
+            for: situation,
+            in: allSituations,
+            isSituationsUnlocked: storeManager.isSituationsUnlocked,
+            weeklyCaseID: weeklyCaseID
+        )
+    }
+
+    /// The recall question reuses the same gated option pool in
+    /// a different deterministic order.
     private var recallDecision: PracticeDecision? {
-        PracticeModeBuilder.decision(for: situation, in: allSituations, seedSalt: 1000)
+        PracticeModeBuilder.decision(
+            for: situation,
+            in: allSituations,
+            isSituationsUnlocked: storeManager.isSituationsUnlocked,
+            weeklyCaseID: weeklyCaseID,
+            seedSalt: 1000
+        )
     }
 
     private var parsed: PracticeExplain {
@@ -245,6 +312,31 @@ struct PracticeModeView: View {
     }
 
     var body: some View {
+        Group {
+            if isLocked {
+                lockedPracticeView
+            } else {
+                practiceContentView
+            }
+        }
+        .background(Color.pfBackground)
+        .pfTabBarClearance()
+        .navigationTitle("Practice Mode")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showCheckout) {
+            CheckoutView()
+        }
+        .task {
+            await practiceStore.syncPendingAttempts()
+            await contentService.loadWeeklyCases()
+        }
+    }
+
+    /// The full practice screen, shown only when this case is
+    /// open to this learner. Every section here renders the
+    /// case's own explain, takeaway or visual, so it must
+    /// never render while locked.
+    private var practiceContentView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PFSpacing.xl) {
                 headerSection
@@ -277,14 +369,70 @@ struct PracticeModeView: View {
         // identity watermark sits over the content, and recording
         // blurs it out.
         .pfProtectedContent()
-        .background(Color.pfBackground)
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: PFSpacing.xl)
-        }
-        .navigationTitle("Practice Mode")
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            await practiceStore.syncPendingAttempts()
+    }
+
+    // MARK: - Locked gate
+
+    /// The locked state for a case this learner may not
+    /// practise. It carries no text from the case itself: no
+    /// title, id, stage, level, explain, takeaway, visual or
+    /// scheme, and no attempt history. Only generic copy, the
+    /// checkout entry, and, when a free case is ready to
+    /// practise, a link into Practice Mode for that case. The
+    /// link presents this same view, which gates itself again,
+    /// so the free case renders with the gated pool.
+    private var lockedPracticeView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: PFSpacing.lg) {
+                PFCard {
+                    VStack(alignment: .leading, spacing: PFSpacing.md) {
+                        HStack(spacing: PFSpacing.sm) {
+                            PFIconTile(systemImage: "lock.fill", size: 44)
+                            Text("Practice Mode is locked for this case")
+                                .font(.pfCardTitle)
+                                .foregroundColor(.pfNavy)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        PFBodyText(text: "This case is part of the full Payment Situations set. Unlock all \(ContentManifest.situationCount)\(storeManager.isPriceAvailable(for: ProductCatalogue.situationsProductID) ? " for \(storeManager.priceText)" : ""). The 6 free samples stay free, and you can practise them now. The Integrated Course includes all situations too.", textColor: .pfSecondaryText)
+                        PFPrimaryButton(title: "Go to checkout") {
+                            showCheckout = true
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .accessibilityIdentifier("practiceLockedGate")
+
+                if let freeSituation = firstFreePracticeSituation {
+                    NavigationLink(destination: PracticeModeView(situation: freeSituation, allSituations: allSituations)) {
+                        HStack {
+                            Text("Practise a free case instead")
+                                .font(.pfBody.weight(.semibold))
+                                .foregroundColor(.white)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.pfBody.weight(.semibold))
+                                .foregroundColor(.white)
+                        }
+                        .padding(.vertical, 14)
+                        .padding(.horizontal, PFSpacing.lg)
+                        .background(Color.pfRoyal)
+                        .cornerRadius(PFSpacing.cornerRadius)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Practise a free case instead")
+                } else if allSituations.isEmpty {
+                    Text("The free cases will appear here once the course list has loaded.")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("No free case is ready to practise yet.")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(PFSpacing.lg)
         }
     }
 
@@ -297,7 +445,7 @@ struct PracticeModeView: View {
                 PFPill(
                     text: situation.level.displayName,
                     background: Color.pfGoldSoft,
-                    foreground: Color(red: 0.55, green: 0.44, blue: 0.08)
+                    foreground: Color.pfGoldText
                 )
                 if let schemeName = scheme(for: situation) {
                     PFPill(text: schemeName)
@@ -343,13 +491,12 @@ struct PracticeModeView: View {
         .accessibilityLabel("\(step). \(title)")
     }
 
+    /// One body-text paragraph. Rendered through the shared
+    /// paragraph renderer, so a long paragraph still reads as
+    /// logical paragraphs; short titles, options and controls
+    /// render unchanged.
     private func bodyText(_ text: String) -> some View {
-        Text(text)
-            .font(.pfBody)
-            .foregroundColor(.pfNavy)
-            .lineSpacing(4)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        PFBodyText(text: text)
     }
 
     private func notStatedText(_ what: String) -> some View {
@@ -583,10 +730,7 @@ struct PracticeModeView: View {
                 Text("One thing to remember")
                     .font(.pfCaptionBold)
                     .foregroundColor(.pfNavy)
-                Text(decision.explanation)
-                    .font(.pfBody)
-                    .foregroundColor(.pfNavy)
-                    .fixedSize(horizontal: false, vertical: true)
+                PFBodyText(text: decision.explanation)
             }
             .padding(PFSpacing.lg)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -706,7 +850,7 @@ struct PracticeModeView: View {
                                         if isDecision {
                                             Text("DECISION")
                                                 .font(.pfCaptionBold)
-                                                .foregroundColor(Color(red: 0.55, green: 0.44, blue: 0.08))
+                                                .foregroundColor(Color.pfGoldText)
                                         }
                                         Text(step.title)
                                             .font(.pfCardTitle)

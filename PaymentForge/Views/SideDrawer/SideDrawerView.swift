@@ -1,12 +1,21 @@
 // SideDrawerView.swift
-// PaymentForge iOS - Side drawer menu, modelled on the Paytm Settings
-// drawer the owner shared: a panel that slides in over the main content,
+// PaymentForge iOS - Side drawer menu, modelled on a settings drawer
+// design: a panel that slides in over the main content,
 // with a title, option rows (icon, bold title, grey subtitle, chevron),
 // a highlighted card at the bottom and the brand name below it.
 // Uses the app design language: royal blue primary, gold sparingly,
 // deep executive navy. No em dashes in any user-facing text.
 
 import SwiftUI
+import UIKit
+
+/// Opens the mail app addressed to support. Used by Help and Support
+/// and by About, so the address lives in one place.
+private func openSupportEmail() {
+    if let url = URL(string: "mailto:support@paymentstraininghub.com") {
+        UIApplication.shared.open(url)
+    }
+}
 
 // MARK: - Destinations
 
@@ -14,23 +23,59 @@ import SwiftUI
 // sheets present over the app. Tab destinations (home, learn, search,
 // paymentCases, myProgress) switch tabs only. Profile is a sheet
 // destination, separate from My Progress: opening Profile never
-// lands on My Progress and vice versa. myLearning is kept for the
-// Keep Learning card at the bottom, and also switches to Learn.
+// lands on My Progress and vice versa. Practice is a sheet
+// destination too: it opens Practice Mode for the first
+// practice-eligible situation. The four practice experiences
+// (simulator, isoExplorer, exceptionLab, baStudio) are sheet
+// destinations as well: they never become tabs. weeklyFreeCase
+// is a sheet destination too: it opens the Free Case of the
+// Week, one free payment case a week, never a tab.
+// communityChallenge is a sheet destination too: it opens the
+// weekly community challenge, never a tab. myLearning is kept
+// for the Keep Learning card at the bottom, and also switches to Learn.
 enum DrawerDestination: String, Identifiable, Hashable {
     case home
     case learn
     case search
     case paymentCases
+    case practice
+    case weeklyFreeCase
+    case communityChallenge
     case myProgress
-    case chatAssistant
+    case simulator
+    case isoExplorer
+    case exceptionLab
+    case baStudio
     case myLearning
     case myPurchases
     case profile
     case appearance
     case helpAndSupport
     case about
+    case startTour
 
     var id: String { rawValue }
+
+    /// The tab index this destination switches to, if it is a tab
+    /// destination. Home 0, Learn 1, Search 2, Payment Cases 3,
+    /// My Progress 4. Sheet destinations return nil: they are never
+    /// the current tab, so they never show the active row state.
+    var tabIndex: Int? {
+        switch self {
+        case .home:
+            return 0
+        case .learn, .myLearning:
+            return 1
+        case .search:
+            return 2
+        case .paymentCases:
+            return 3
+        case .myProgress:
+            return 4
+        case .practice, .weeklyFreeCase, .communityChallenge, .simulator, .isoExplorer, .exceptionLab, .baStudio, .myPurchases, .profile, .appearance, .helpAndSupport, .about, .startTour:
+            return nil
+        }
+    }
 }
 
 // MARK: - Drawer row model
@@ -54,21 +99,63 @@ struct SideDrawerView: View {
     /// then performs the navigation.
     var onSelect: (DrawerDestination) -> Void
 
+    /// The currently selected tab, when the container knows it. The
+    /// row for the current tab shows the active state, so the drawer
+    /// says where the learner already is. Nil means no row is active.
+    var selectedTab: Int? = nil
+
+    /// The drawer row the guided tour wants scrolled into view,
+    /// if any. Nil when the tour is not running or is on a tab
+    /// step: the list never scrolls on its own outside the
+    /// tour, and the tour's drawer steps only ever bring the
+    /// highlighted row into view, with no showcase scroll.
+    var tourScrollTarget: DrawerDestination? = nil
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Scrolls the drawer list to a row, animated at a medium
+    /// human pace unless Reduce Motion is on, so the scroll
+    /// itself is visible rather than a jump.
+    private func scrollToRow(_ target: DrawerDestination, proxy: ScrollViewProxy, animated: Bool) {
+        if animated {
+            withAnimation(.easeInOut(duration: 0.6)) {
+                proxy.scrollTo(target, anchor: .center)
+            }
+        } else {
+            proxy.scrollTo(target, anchor: .center)
+        }
+    }
+
     /// The rows in the drawer, in display order: first the five tab
-    /// destinations, then Profile as its own account destination,
-    /// then purchases, appearance, help and about. Profile is listed
-    /// explicitly so it is always one tap away, and it routes to the
-    /// Profile sheet, never to the My Progress tab.
+    /// destinations, Practice, the Free Case of the Week and the
+    /// Weekly Challenge, then the four
+    /// practice experiences (Payment Simulator, ISO 20022 Explorer,
+    /// Exception Lab, BA/PO Studio),
+    /// then Profile as its own account destination, then purchases,
+    /// appearance, help and about, and Start Tour last. Practice sits directly after
+    /// Payment Cases, the cases it practises, and before My
+    /// Progress. The Free Case of the Week sits after Practice: it
+    /// is one free case a week, and it opens as a sheet, never a
+    /// tab. The guided tour addresses drawer rows by
+    /// destination through their anchors and scrolls by row id, so
+    /// the extra rows move no tour spotlight: each tour step still
+    /// resolves its own row, and the new rows have no tour step.
+    /// Profile is listed explicitly so
+    /// it is always one tap away, and it routes to the Profile
+    /// sheet, never to the My Progress tab.
     /// Refer and Win is deliberately not listed: there is no referral
     /// offer for PaymentForge, and the brief says to leave the row out
-    /// rather than invent one.
+    /// rather than invent one. Referral invites (ReferralInvite)
+    /// are local-only text and links with no reward, shared from
+    /// the weekly free case screen and the share sheets, and they
+    /// get no drawer row either.
     private var rows: [DrawerRowModel] {
         [
             DrawerRowModel(
                 id: .home,
                 icon: "house.fill",
                 title: "Home",
-                subtitle: "Your personalised home and continue learning"
+                subtitle: "Your personalised home for continuing to learn"
             ),
             DrawerRowModel(
                 id: .learn,
@@ -89,22 +176,58 @@ struct SideDrawerView: View {
                 subtitle: "Real-world payment situations to practise"
             ),
             DrawerRowModel(
+                id: .practice,
+                icon: "flask.fill",
+                title: "Practice",
+                subtitle: "Test yourself on real payment scenarios"
+            ),
+            DrawerRowModel(
+                id: .weeklyFreeCase,
+                icon: "calendar.badge.clock",
+                title: "Free Case of the Week",
+                subtitle: "One real payment case, free every week"
+            ),
+            DrawerRowModel(
+                id: .communityChallenge,
+                icon: "trophy.fill",
+                title: "Weekly Challenge",
+                subtitle: "One case a week, scored on investigation quality"
+            ),
+            DrawerRowModel(
                 id: .myProgress,
                 icon: "chart.bar.fill",
                 title: "My Progress",
                 subtitle: "Your learning analytics, streak and quiz scores"
             ),
             DrawerRowModel(
-                id: .chatAssistant,
-                icon: "bubble.left.and.bubble.right.fill",
-                title: "Chat Assistant",
-                subtitle: "Ask the assistant anything about payments"
+                id: .simulator,
+                icon: "arrow.triangle.2.circlepath",
+                title: "Payment Simulator",
+                subtitle: "Follow a payment through its lifecycle"
+            ),
+            DrawerRowModel(
+                id: .isoExplorer,
+                icon: "doc.text.magnifyingglass",
+                title: "ISO 20022 Explorer",
+                subtitle: "Look up ISO 20022 messages and fields"
+            ),
+            DrawerRowModel(
+                id: .exceptionLab,
+                icon: "exclamationmark.triangle.fill",
+                title: "Exception Lab",
+                subtitle: "Investigate payment exceptions"
+            ),
+            DrawerRowModel(
+                id: .baStudio,
+                icon: "square.and.pencil",
+                title: "BA/PO Studio",
+                subtitle: "Draft BA and PO deliverables"
             ),
             DrawerRowModel(
                 id: .profile,
                 icon: "person.fill",
                 title: "Profile",
-                subtitle: "Your name, privacy, notifications and language"
+                subtitle: "Your name, privacy and account settings"
             ),
             DrawerRowModel(
                 id: .myPurchases,
@@ -129,13 +252,19 @@ struct SideDrawerView: View {
                 icon: "info.circle.fill",
                 title: "About",
                 subtitle: "About Payments Training Hub, the operator and the curriculum"
+            ),
+            DrawerRowModel(
+                id: .startTour,
+                icon: "play.circle.fill",
+                title: "Start Tour",
+                subtitle: "A quick guided tour of the key areas of the app"
             )
         ]
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Deep navy gradient header with the PaymentForge logo:
+            // Deep navy gradient header with the brand mark:
             // a gold PF monogram tile, the white brand name and the
             // tagline. The panel ignores the safe area so it runs full
             // height, so the header is pushed below the status bar with
@@ -146,7 +275,7 @@ struct SideDrawerView: View {
                     .foregroundColor(.pfNavy)
                     .frame(width: 48, height: 48)
                     .background(Color.pfGold)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .clipShape(RoundedRectangle(cornerRadius: PFSpacing.smallRadius))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Payments Training Hub")
                         .font(.pfSectionTitle.weight(.bold))
@@ -162,20 +291,80 @@ struct SideDrawerView: View {
             .padding(.bottom, 20)
             .background(Color.pfHeroGradient)
 
-            // Option rows.
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(rows) { row in
-                        DrawerRow(model: row) {
-                            onSelect(row.id)
-                        }
-                        if row.id != rows.last?.id {
-                            Divider()
-                                .padding(.leading, 76)
+            // Option rows. The scroll indicators stay visible: the
+            // list is taller than most screens, and the indicator is
+            // the cue that more rows sit below the fold.
+            ScrollViewReader { scrollProxy in
+                ScrollView(showsIndicators: true) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(rows) { row in
+                            // Account and settings rows sit under their own
+                            // heading, so a settings row does not read as
+                            // just another navigation destination.
+                            if row.id == .profile {
+                                Text("Account and settings")
+                                    .font(.pfCaptionBold)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .padding(.leading, PFSpacing.xl)
+                                    .padding(.top, PFSpacing.md)
+                                    .padding(.bottom, PFSpacing.xs)
+                                    .accessibilityAddTraits(.isHeader)
+                            }
+                            DrawerRow(model: row, isActive: row.id.tabIndex != nil && row.id.tabIndex == selectedTab) {
+                                onSelect(row.id)
+                            }
+                            .id(row.id)
+                            // Reports the row frame for the tour
+                            // spotlight, two ways. The anchor is
+                            // resolved by the overlay as a
+                            // fallback. The frame below is the
+                            // primary source: a concrete rect in
+                            // the tour coordinate space, pushed
+                            // up on every move, so the overlay
+                            // tracks the row while the list
+                            // scrolls and the drawer slides. The
+                            // rows themselves do not change
+                            // appearance or behaviour.
+                            .anchorPreference(key: DrawerRowAnchorKey.self, value: .bounds) { [row.id: $0] }
+                            .background(
+                                GeometryReader { rowProxy in
+                                    Color.clear.preference(
+                                        key: DrawerRowFrameKey.self,
+                                        value: [row.id: rowProxy.frame(in: .named(TourCoordinateSpace.name))]
+                                    )
+                                }
+                            )
+                            if row.id != rows.last?.id {
+                                Divider()
+                                    .padding(.leading, 80)
+                            }
                         }
                     }
+                    .padding(.top, PFSpacing.sm)
                 }
-                .padding(.top, PFSpacing.sm)
+                .task(id: tourScrollTarget) {
+                    // The tour asked for a row: bring it into
+                    // view so the spotlight has a visible
+                    // target. Nothing else scrolls: no
+                    // showcase scroll through the list, no
+                    // glide back to the top. Scroll at once,
+                    // then three more passes spread over the
+                    // drawer slide and the first scrolls: a
+                    // scroll issued while the drawer is still
+                    // closed or still sliding can be dropped,
+                    // and the later passes land the row for
+                    // certain. The task cancels when the
+                    // target changes, so a stale re-scroll
+                    // never fights the next step.
+                    let animated = !reduceMotion
+                    guard let target = tourScrollTarget else { return }
+                    scrollToRow(target, proxy: scrollProxy, animated: animated)
+                    for delay: UInt64 in [450_000_000, 450_000_000, 500_000_000] {
+                        try? await Task.sleep(nanoseconds: delay)
+                        guard !Task.isCancelled else { return }
+                        scrollToRow(target, proxy: scrollProxy, animated: animated)
+                    }
+                }
             }
 
             Spacer(minLength: PFSpacing.lg)
@@ -185,6 +374,21 @@ struct SideDrawerView: View {
             KeepLearningCard {
                 onSelect(.myLearning)
             }
+            // Reports the card frame for the tour spotlight,
+            // two ways: the anchor as fallback, and the live
+            // frame below as the primary source, a concrete
+            // rect in the tour coordinate space. The parent
+            // passes both to the tour overlay; the card itself
+            // does not change appearance or behaviour.
+            .anchorPreference(key: KeepLearningAnchorKey.self, value: .bounds) { $0 }
+            .background(
+                GeometryReader { cardProxy in
+                    Color.clear.preference(
+                        key: KeepLearningFrameKey.self,
+                        value: cardProxy.frame(in: .named(TourCoordinateSpace.name))
+                    )
+                }
+            )
             .padding(.horizontal, PFSpacing.lg)
             .padding(.bottom, PFSpacing.lg)
 
@@ -194,7 +398,7 @@ struct SideDrawerView: View {
                 Text("Payments Training Hub")
                     .font(.pfSectionTitle.weight(.bold))
                     .foregroundColor(.pfNavy)
-                Text("Payments, taught the way banks actually run them.")
+                Text("Payments, taught the way banks actually process them.")
                     .font(.pfCaption)
                     .foregroundColor(.pfSecondaryText)
                     .multilineTextAlignment(.center)
@@ -210,9 +414,12 @@ struct SideDrawerView: View {
 // MARK: - One option row
 
 /// One drawer row: icon on the left, bold title, grey subtitle, chevron.
-/// Matches the Paytm row format exactly.
+/// Matches the Paytm row format exactly. The row is tappable across
+/// its full width, and the row for the current tab shows the active
+/// state: royal icon and title over a light royal background.
 private struct DrawerRow: View {
     let model: DrawerRowModel
+    var isActive: Bool = false
     let action: () -> Void
 
     var body: some View {
@@ -220,13 +427,14 @@ private struct DrawerRow: View {
             HStack(alignment: .center, spacing: PFSpacing.lg) {
                 Image(systemName: model.icon)
                     .font(.pfCardTitle.weight(.regular))
-                    .foregroundColor(.pfNavy)
-                    .frame(width: 36, height: 36, alignment: .center)
+                    .foregroundColor(isActive ? .pfRoyal : .pfNavy)
+                    .frame(width: 40, height: 40, alignment: .center)
+                    .pfDecorative()
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(model.title)
                         .font(.pfBody.weight(.semibold))
-                        .foregroundColor(.pfNavy)
+                        .foregroundColor(isActive ? .pfRoyal : .pfNavy)
                         .multilineTextAlignment(.leading)
                     Text(model.subtitle)
                         .font(.pfCaption.weight(.regular))
@@ -239,31 +447,77 @@ private struct DrawerRow: View {
 
                 Image(systemName: "chevron.right")
                     .font(.pfBody.weight(.semibold))
-                    .foregroundColor(.pfNavy.opacity(0.55))
+                    .foregroundColor(isActive ? .pfRoyal.opacity(0.8) : .pfNavy.opacity(0.55))
+                    .pfDecorative()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, PFSpacing.xl)
             .padding(.vertical, 15)
             .contentShape(Rectangle())
         }
-        .buttonStyle(PFDrawerRowStyle())
-        .accessibilityLabel("\(model.title). \(model.subtitle)")
-        .accessibilityAddTraits(.isButton)
+        .buttonStyle(PFDrawerRowStyle(isActive: isActive))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityHint(accessibilityHintText)
+        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : [.isButton])
+    }
+
+    /// One spoken item: title, subtitle, and the current-section
+    /// note when this row is the tab the learner is already on.
+    private var accessibilityText: String {
+        if isActive {
+            return "\(model.title). \(model.subtitle). Current section."
+        }
+        return "\(model.title). \(model.subtitle)"
+    }
+
+    /// What tapping the row does. The row for the current tab says
+    /// so instead of promising a move that does not happen.
+    private var accessibilityHintText: String {
+        if isActive {
+            return "You are already in this section."
+        }
+        return "Opens \(model.title)."
     }
 }
 
 /// A drawer row press style: a light-blue rounded background while
-/// pressed, so the tapped row reads as the active one.
+/// pressed, so the tapped row reads as the active one. The row for
+/// the current tab keeps a lighter tint when it is not pressed.
 private struct PFDrawerRowStyle: ButtonStyle {
+    var isActive: Bool = false
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background(
-                configuration.isPressed
-                    ? Color.pfRoyal.opacity(0.08)
-                    : Color.clear
+                DrawerRowPressBackground(isPressed: configuration.isPressed, isActive: isActive)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .clipShape(RoundedRectangle(cornerRadius: PFSpacing.smallRadius))
             .padding(.horizontal, PFSpacing.sm)
-            .animation(.easeInOut(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
+/// The row background, as a view so it can read the Reduce Motion
+/// setting, which a button style cannot read directly. The tint
+/// change is instant when Reduce Motion is on.
+private struct DrawerRowPressBackground: View {
+    let isPressed: Bool
+    let isActive: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        backgroundColor
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isPressed)
+    }
+
+    private var backgroundColor: Color {
+        if isPressed {
+            return Color.pfRoyal.opacity(0.16)
+        }
+        if isActive {
+            return Color.pfRoyal.opacity(0.08)
+        }
+        return Color.clear
     }
 }
 
@@ -271,10 +525,17 @@ private struct PFDrawerRowStyle: ButtonStyle {
 
 /// The highlighted card at the bottom of the drawer, in the style of the
 /// Paytm Security Shield card. Shows the learner's streak and weekly
-/// goal progress, with a button to continue learning.
+/// goal progress, with a button to continue learning. A learner who
+/// has not completed a lesson yet sees "Start learning" instead of
+/// "Keep learning": there is nothing to resume yet.
 private struct KeepLearningCard: View {
     @EnvironmentObject private var progressStore: ProgressStore
     let onContinue: () -> Void
+
+    /// True once the learner has completed at least one lesson.
+    private var hasCompletedLesson: Bool {
+        !progressStore.completedLessonIDs.isEmpty
+    }
 
     var body: some View {
         HStack(spacing: PFSpacing.md) {
@@ -285,10 +546,11 @@ private struct KeepLearningCard: View {
                 Image(systemName: "flame.fill")
                     .font(.pfSectionTitle.weight(.regular))
                     .foregroundColor(.pfGold)
+                    .pfDecorative()
             }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("Keep learning")
+                Text(hasCompletedLesson ? "Keep learning" : "Start learning")
                     .font(.pfBody.weight(.bold))
                     .foregroundColor(.pfNavy)
                     .fixedSize(horizontal: false, vertical: true)
@@ -298,17 +560,25 @@ private struct KeepLearningCard: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 PFProgressBar(progress: progressStore.weeklyProgress, height: 6)
+                    // The progress line above already states the streak
+                    // and the weekly count, so the bar itself stays
+                    // silent for VoiceOver instead of announcing the
+                    // same progress a second time.
+                    .accessibilityHidden(true)
                     .padding(.top, 4)
             }
 
             Spacer(minLength: PFSpacing.sm)
 
             Button(action: onContinue) {
-                Text("Continue")
+                // Short button label on purpose: the drawer is narrow,
+                // and the card title already says "Start learning".
+                Text(hasCompletedLesson ? "Continue" : "Start")
                     .font(.pfBody.weight(.semibold))
                     .foregroundColor(.pfRoyal)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
+                    .frame(minHeight: 44)
                     .background(Color.pfRoyal.opacity(0.10))
                     .clipShape(Capsule())
                     .overlay(
@@ -356,7 +626,7 @@ struct AppearanceSettingsView: View {
                 } header: {
                     Text("Display")
                 } footer: {
-                    Text("Dark mode applies across the whole app. Larger text increases the text size across the app. It takes effect when a screen is next opened.")
+                    Text("Dark mode changes the system appearance. Cards and lesson pages stay light so text stays readable. Larger text increases the text size across the app. It takes effect when a screen is next opened.")
                 }
                 .listRowBackground(Color.pfCard)
 
@@ -398,13 +668,31 @@ struct AppearanceSettingsView: View {
 // MARK: - Help and support
 
 /// Help and support presented from the drawer: FAQs from the live
-/// search index and the support contact.
+/// search index and the support contact. Tapping a question expands
+/// it to the full answer; tapping it again collapses it. The email
+/// row opens the mail app, and the Copy button puts the address on
+/// the clipboard.
 struct HelpSupportView: View {
     @EnvironmentObject private var contentService: ContentService
     @Environment(\.dismiss) private var dismiss
 
+    /// Called when the learner taps Replay tour. The parent
+    /// dismisses this sheet and presents the tour.
+    var onReplayTour: (() -> Void)? = nil
+
+    /// The FAQ currently expanded to its full answer, if any.
+    @State private var expandedFAQID: String? = nil
+    /// False shows the first 20 FAQs; true shows every FAQ.
+    @State private var showAllFAQs = false
+    /// True after the support address has been copied.
+    @State private var emailCopied = false
+
     private var faqs: [SearchEntry] {
         contentService.searchIndex?.entries.filter { $0.type == .faq } ?? []
+    }
+
+    private var displayedFAQs: [SearchEntry] {
+        showAllFAQs ? faqs : Array(faqs.prefix(20))
     }
 
     var body: some View {
@@ -412,17 +700,42 @@ struct HelpSupportView: View {
             List {
                 Section {
                     HStack(spacing: PFSpacing.md) {
-                        Image(systemName: "envelope.fill")
-                            .foregroundColor(.pfRoyal)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Email support")
-                                .font(.pfCardTitle)
-                                .foregroundColor(.pfNavy)
-                            Text("support@paymentstraininghub.com")
-                                .font(.pfCallout)
-                                .foregroundColor(.pfSecondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
+                        Button(action: openSupportEmail) {
+                            HStack(spacing: PFSpacing.md) {
+                                Image(systemName: "envelope.fill")
+                                    .foregroundColor(.pfRoyal)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Email support")
+                                        .font(.pfCardTitle)
+                                        .foregroundColor(.pfNavy)
+                                    Text("support@paymentstraininghub.com")
+                                        .font(.pfCallout)
+                                        .foregroundColor(.pfSecondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Email support, support@paymentstraininghub.com")
+                        .accessibilityHint("Opens your mail app to write to support.")
+
+                        Spacer()
+
+                        Button {
+                            UIPasteboard.general.string = "support@paymentstraininghub.com"
+                            emailCopied = true
+                        } label: {
+                            Text(emailCopied ? "Copied" : "Copy")
+                                .font(.pfCallout.weight(.semibold))
+                                .foregroundColor(.pfRoyal)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .frame(minHeight: 44)
+                                .background(Color.pfRoyal.opacity(0.10))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(emailCopied ? "Support email address copied" : "Copy support email address")
                     }
                     .padding(.vertical, 4)
                     .listRowBackground(Color.pfCard)
@@ -431,29 +744,91 @@ struct HelpSupportView: View {
                 }
 
                 Section {
+                    Button(action: { onReplayTour?() }) {
+                        HStack(spacing: PFSpacing.md) {
+                            Image(systemName: "play.circle.fill")
+                                .foregroundColor(.pfRoyal)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Replay tour")
+                                    .font(.pfCardTitle)
+                                    .foregroundColor(.pfNavy)
+                                Text("See the guided tour of the app again.")
+                                    .font(.pfCallout)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.pfCallout.weight(.semibold))
+                                .foregroundColor(.pfSecondaryText)
+                                .accessibilityHidden(true)
+                        }
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Replay tour")
+                    .accessibilityHint("Shows the guided tour of the app again.")
+                    .listRowBackground(Color.pfCard)
+                } header: {
+                    Text("Guided tour")
+                }
+
+                Section {
                     if faqs.isEmpty {
                         Text("FAQs are loading. Check your connection and try again.")
                             .foregroundColor(.pfSecondaryText)
                             .listRowBackground(Color.pfCard)
                     } else {
-                        ForEach(faqs.prefix(20)) { faq in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(faq.title)
-                                    .font(.pfCardTitle)
-                                    .foregroundColor(.pfNavy)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                Text(faq.preview)
-                                    .font(.pfCallout)
-                                    .foregroundColor(.pfSecondaryText)
-                                    .lineLimit(3)
-                                    .fixedSize(horizontal: false, vertical: true)
+                        ForEach(displayedFAQs) { faq in
+                            let isExpanded = expandedFAQID == faq.id
+                            Button {
+                                expandedFAQID = isExpanded ? nil : faq.id
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(alignment: .top, spacing: PFSpacing.sm) {
+                                        Text(faq.title)
+                                            .font(.pfCardTitle)
+                                            .foregroundColor(.pfNavy)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        Spacer()
+                                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                            .font(.pfCallout.weight(.semibold))
+                                            .foregroundColor(.pfSecondaryText)
+                                            .accessibilityHidden(true)
+                                    }
+                                    if isExpanded {
+                                        PFBodyText(text: faq.text, font: .pfCallout, textColor: .pfSecondaryText)
+                                    } else {
+                                        Text(faq.preview)
+                                            .font(.pfCallout)
+                                            .foregroundColor(.pfSecondaryText)
+                                            .lineLimit(3)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
                             }
+                            .buttonStyle(.plain)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("\(faq.title). \(isExpanded ? faq.text : faq.preview)")
+                            .accessibilityHint(isExpanded ? "Tap to collapse this answer." : "Tap to read the full answer.")
                             .padding(.vertical, 4)
+                            .listRowBackground(Color.pfCard)
+                        }
+                        if faqs.count > 20 {
+                            Button(showAllFAQs ? "Show fewer questions" : "Show all \(faqs.count) questions") {
+                                showAllFAQs.toggle()
+                            }
+                            .font(.pfBody.weight(.semibold))
+                            .foregroundColor(.pfRoyal)
+                            .frame(maxWidth: .infinity, alignment: .center)
                             .listRowBackground(Color.pfCard)
                         }
                     }
                 } header: {
                     Text("Frequently asked questions")
+                } footer: {
+                    Text("For more answers, search the Search tab. It searches the full FAQ list.")
                 }
             }
             // Rows stay on the card colour in both light and dark mode:
@@ -474,9 +849,38 @@ struct HelpSupportView: View {
 
 // MARK: - About
 
-/// About PaymentForge, the operator and the curriculum.
+/// About Payments Training Hub, the operator and the curriculum.
 struct AboutPaymentForgeView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var contentService: ContentService
+
+    /// The app version from the bundle, for example "Version 1.0 (3)".
+    /// Nil when the bundle carries no version, in which case the
+    /// version line is not shown.
+    private var appVersionText: String? {
+        guard let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+              !version.isEmpty else {
+            return nil
+        }
+        if let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+           !build.isEmpty {
+            return "Version \(version) (\(build))"
+        }
+        return "Version \(version)"
+    }
+
+    /// Curriculum numbers from the loaded search index and the
+    /// bundled question bank, with the verified catalogue counts as
+    /// fallback while the index loads. Never a stale hardcoded
+    /// number, and never simulators: the app has no simulators.
+    private var curriculumText: String {
+        let counts = contentService.searchIndex?.counts
+        let lessons = counts?.lesson ?? ContentManifest.lessonCount
+        let guides = counts?.guide ?? ContentManifest.guideCount
+        let situations = counts?.situation ?? ContentManifest.situationCount
+        let questions = InterviewQuestionStore.totalCount
+        return "\(ContentManifest.chapterCount) chapters and \(lessons) narrated lessons across \(ContentManifest.domainCount) domains, with \(guides) long-form guides, \(questions) interview questions and \(situations) Payment Situations. Every lesson is built for working payments professionals, with real examples and field-level detail."
+    }
 
     var body: some View {
         NavigationStack {
@@ -486,7 +890,7 @@ struct AboutPaymentForgeView: View {
                         Text("Payments Training Hub")
                             .font(.pfHeroTitle)
                             .foregroundColor(.pfNavy)
-                        Text("Payments, taught the way banks actually run them.")
+                        Text("Payments, taught the way banks actually process them.")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                     }
@@ -495,27 +899,40 @@ struct AboutPaymentForgeView: View {
                         Text("The curriculum")
                             .font(.pfSectionTitle)
                             .foregroundColor(.pfNavy)
-                        Text("100 chapters and 746 narrated lessons across 15 domains, with 45 long-form guides, 320 interview questions, 10 simulators, 124 scenarios and 564 Payment Situations. Every lesson is built for working payments professionals, with real examples and field-level detail.")
-                            .font(.pfBody)
-                            .foregroundColor(.pfNavy)
+                        PFBodyText(text: curriculumText)
                     }
 
                     VStack(alignment: .leading, spacing: PFSpacing.sm) {
                         Text("The operator")
                             .font(.pfSectionTitle)
                             .foregroundColor(.pfNavy)
-                        Text("Payments Training Hub is built and run by Debarghya Mondal, a Senior Business Analyst who has run payments transformation at NatWest in the UK since 2021, deployed through Capco in Bangalore.")
-                            .font(.pfBody)
-                            .foregroundColor(.pfNavy)
+                        PFBodyText(text: "Payments Training Hub is built and run by Debarghya Mondal, a Senior Business Analyst who has run payments transformation at NatWest in the UK since 2021, deployed through Capco in Bangalore.")
                     }
 
                     VStack(alignment: .leading, spacing: PFSpacing.sm) {
                         Text("How it works")
                             .font(.pfSectionTitle)
                             .foregroundColor(.pfNavy)
-                        Text("Browse the catalogue freely, with no sign-in. Lessons unlock when you buy their course: 11 courses from Rs. 999 to Rs. 2,999, or the Integrated Course for Rs. 9,999, which unlocks everything. Payment Situations is a separate product, priced at Rs. 4,999, paid by UPI with manual verification. Progress is stored only on your device.")
-                            .font(.pfBody)
+                        PFBodyText(text: "Browse the catalogue freely, with no sign-in. The first lesson of every chapter is free. Courses unlock when you buy them, or buy the Integrated Course to unlock all chapters, lessons and Payment Situations. Payment Situations is also available on its own, paid by In-App Purchase. Progress syncs to your account when you sign in, and stays on your device when you do not.")
+                    }
+
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text("About this app")
+                            .font(.pfSectionTitle)
                             .foregroundColor(.pfNavy)
+                        if let appVersionText {
+                            Text(appVersionText)
+                                .font(.pfBody)
+                                .foregroundColor(.pfSecondaryText)
+                        }
+                        Button(action: openSupportEmail) {
+                            Text("Contact support: support@paymentstraininghub.com")
+                                .font(.pfBody)
+                                .foregroundColor(.pfRoyal)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .accessibilityLabel("Contact support by email")
+                        .accessibilityHint("Opens your mail app to write to support.")
                     }
                 }
                 .padding(PFSpacing.xl)

@@ -50,7 +50,13 @@ struct CertificateView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PFSpacing.lg) {
                 if let certificate {
+                    // Backfill the server verification copy once per
+                    // appearance. Silent on failure; the local
+                    // certificate is unaffected. No display change.
                     certificateCard(certificate)
+                        .task {
+                            await PFCertificateStore.syncCertificateToServer(certificate)
+                        }
                     verificationSection(certificate)
                     ShareLink(item: certificate.shareText) {
                         Label("Share certificate", systemImage: "square.and.arrow.up")
@@ -61,6 +67,10 @@ struct CertificateView: View {
                             .background(Color.pfRoyal)
                             .cornerRadius(PFSpacing.cornerRadius)
                     }
+                    // Shareable achievement card (image, text and
+                    // LinkedIn), built only from this earned
+                    // certificate's own data.
+                    AchievementShareActions(content: .pathCertificate(certificate))
                 } else {
                     notEarnedView
                 }
@@ -68,9 +78,7 @@ struct CertificateView: View {
             .padding(PFSpacing.lg)
         }
         .background(Color.pfBackground)
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: PFSpacing.xl)
-        }
+        .pfTabBarClearance()
         .navigationTitle("Certificate")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -123,7 +131,7 @@ struct CertificateView: View {
                             .font(.pfBody)
                             .foregroundColor(.pfNavy)
                     } else {
-                        Text("—")
+                        Text("-")
                             .font(.pfBody)
                             .foregroundColor(.pfNavy)
                             .accessibilityLabel("No assessment taken yet, so no score")
@@ -162,10 +170,17 @@ struct CertificateView: View {
                     .font(.pfBody)
                     .foregroundColor(.pfRoyal)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Anyone can check this certificate at the address above.")
-                    .font(.pfCaption)
-                    .foregroundColor(.pfSecondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                if authService.currentUser == nil {
+                    Text("This certificate is stored on this device. The website verification copy is only written for signed-in learners.")
+                        .font(.pfCaption)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Anyone can check this certificate at the address above.")
+                        .font(.pfCaption)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Text("Certificate of Completion. This certifies completion of the named learning path. It is not an accredited qualification.")
                     .font(.pfBody)
                     .foregroundColor(.pfNavy)
@@ -254,9 +269,7 @@ struct CertificatesListView: View {
             .padding(PFSpacing.lg)
         }
         .background(Color.pfBackground)
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: PFSpacing.xl)
-        }
+        .pfTabBarClearance()
         .navigationTitle("Certificates")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -324,7 +337,7 @@ struct CertificatesListView: View {
     private var courseCertificatesSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
             PFSectionHeader(title: "Course certificates")
-            Text("Pass a course Final Assessment with more than 70 percent to earn its certificate. Each course allows 3 attempts.")
+            Text("Pass a course Final Assessment with more than 70 percent to earn its certificate. Each course allows 3 attempts. Only four courses also carry a Certifier digital credential: The Integrated Course, ISO 20022 and SWIFT Messaging, AI Product Owner and Product Manager for Payments, and Global Payment Rails.")
                 .font(.pfBody)
                 .foregroundColor(.pfSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)

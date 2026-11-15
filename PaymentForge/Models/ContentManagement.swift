@@ -1,5 +1,5 @@
 // ContentManagement.swift
-// PaymentForge iOS - Content management architecture (Phase 6, incremental).
+// PaymentForge iOS - Content management architecture (incremental).
 //
 // INCREMENTAL ARCHITECTURE, NOT A MIGRATION. The live website remains
 // the source of truth for all content: ContentService keeps loading the
@@ -10,7 +10,11 @@
 // item the app has seen, so a future server-driven update can be
 // applied incrementally, one item at a time. Until that server side
 // exists and is validated, the website is the operational source and
-// this layer only annotates what the website already serves.
+// this layer only annotates what the website already serves. The
+// admin UI over this layer is an internal diagnostic tool, reachable
+// only in DEBUG builds; it is not a central content management
+// system, and a local preference is never proof of admin permission:
+// there is no role check anywhere in this layer.
 // No em dashes in any user-facing text.
 
 import Foundation
@@ -61,9 +65,11 @@ enum PFContentType: String, CaseIterable, Codable {
 
 // MARK: - Publication status
 
-/// Whether a content item may be shown to learners.
-/// Draft items are never shown to learners; only published items
-/// appear. Archived items are kept in the registry but hidden.
+/// Whether a content item may be shown to learners, in the intended
+/// design. No learner view reads this status yet (see shouldShow in
+/// ContentManagementService), so Draft and Archived are recorded but
+/// do not currently hide an item from learners. Archived items are
+/// kept in the registry.
 enum ContentPublicationStatus: String, Codable, CaseIterable {
     case draft
     case published
@@ -121,8 +127,9 @@ struct ContentVersion: Identifiable, Codable, Hashable {
     /// (see ContentManagementService).
     var accessClassification: ContentAccessClassification?
     /// True when an admin has marked this item as a preview. A
-    /// preview item is shown with a Preview badge; it is not a
-    /// separate copy of the content.
+    /// preview item is shown with a Preview badge in the admin list;
+    /// it is not a separate copy of the content, and no learner view
+    /// reads this flag yet.
     var isPreview: Bool
     var updatedAt: Date
     var updatedBy: String

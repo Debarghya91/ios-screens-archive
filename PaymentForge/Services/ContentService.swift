@@ -1,10 +1,21 @@
 // ContentService.swift
-// PaymentForge iOS - Loads content from the live website so it stays current.
+// Payments Training Hub iOS - Loads content from the live website so it stays current.
 // No backend of its own. If a live fetch fails, the caller shows a clear
 // error with Retry, never a silent failure.
 
 import Foundation
 import Combine
+
+/// Where a loaded lesson detail came from. `live` means the lesson
+/// page was fetched from the website (or, for supplemental lessons,
+/// built locally with no network, which is never stale). `cached`
+/// means the live fetch failed and a page saved on this device from
+/// a previous open was used instead. Views show an honest banner
+/// for cached detail, never presenting it as live.
+enum LessonDetailSource: Equatable {
+    case live
+    case cached
+}
 
 /// Fetches the catalogue and lesson content from paymentstraininghub.com.
 final class ContentService: ObservableObject {
@@ -15,26 +26,34 @@ final class ContentService: ObservableObject {
     static let siteBase = URL(string: "https://www.paymentstraininghub.com")!
     static let searchIndexURL = URL(string: "https://www.paymentstraininghub.com/assets/search-index.json")!
     static let situationsDataURL = URL(string: "https://www.paymentstraininghub.com/assets/situations-data.js")!
+    static let weeklyCasesDataURL = URL(string: "https://www.paymentstraininghub.com/assets/weekly-cases-data.js")!
     static let primaryAudioBase = "https://paymentforge-audio.pages.dev/audio/"
     static let fallbackAudioBase = "https://paymentforge-audio-backup.pages.dev/audio/"
 
-    /// The 10 free Payment Situations samples, ungated on the website.
+    /// The 6 free Payment Situations samples, one per learning stage, ungated on the website.
     static let freeSampleIDs: [String] = [
-        "ABH-01", "ABH-04", "JEB-C01", "ABH-10", "INS-086",
-        "ABH-03", "INS-033", "INS-135", "SCN-26", "SCN-28"
+        "ABH-01", "JEB-C01", "ABH-03", "SCN-21", "RUN4-008", "INS-099"
     ]
 
     /// The 8-session guided path. Session titles and descriptions are the
     /// site's own guided path, chapters are resolved from the search index.
+    /// Within each session, chapters run from scratch to depth: a hook
+    /// chapter first, fundamentals before the deep dives that assume them,
+    /// and the payoff chapter last. Session 7 keeps its original order; it
+    /// already climbed cleanly. Every chapter that teaches those topics is
+    /// in a session; chapters outside the core flow (bank profiles, hub
+    /// architecture, AI product chapters) stay in the app under Learn,
+    /// reachable but not in the main path. Nothing is deleted: leaving a
+    /// chapter out of the path never removes its lessons from the app.
     static let guidedSessions: [GuidedSession] = [
-        GuidedSession(id: 1, title: "What a payment is", description: "Foundations, parties, accounts and the payment lifecycle.", chapterIDs: ["ch1", "ch2"]),
-        GuidedSession(id: 2, title: "How money moves", description: "Rails, clearing and settlement, correspondent banking.", chapterIDs: ["ch3", "ch4"]),
-        GuidedSession(id: 3, title: "SWIFT and messages", description: "MT and MX messages, field-level reading, UETR tracking.", chapterIDs: ["ch5", "ch6"]),
-        GuidedSession(id: 4, title: "ISO 20022 in depth", description: "pain, pacs and camt messages, migration and mapping.", chapterIDs: ["ch7", "ch8"]),
-        GuidedSession(id: 5, title: "Schemes and rails", description: "SEPA, Faster Payments, CHAPS, BACS, Fedwire and CHIPS.", chapterIDs: ["ch9", "ch10"]),
-        GuidedSession(id: 6, title: "Exceptions and repair", description: "Returns, recalls, investigations and payment repair.", chapterIDs: ["ch11", "ch12"]),
-        GuidedSession(id: 7, title: "Cards and clearing", description: "Card payments, authorisation, clearing and chargebacks.", chapterIDs: ["ch13", "ch14"]),
-        GuidedSession(id: 8, title: "Practice and interview", description: "Scenarios, interview questions and the placement test.", chapterIDs: ["ch15", "ch16"])
+        GuidedSession(id: 1, title: "What a payment is", description: "Foundations, parties, accounts and the payment lifecycle.", chapterIDs: ["ch69", "ch1", "ch2", "ch64", "ch3", "ch70", "ch4", "ch71", "ch90"]),
+        GuidedSession(id: 2, title: "How money moves", description: "Rails, clearing and settlement, correspondent banking.", chapterIDs: ["ch13", "ch17", "ch18", "ch72", "ch19", "ch20", "ch46", "ch74", "ch94", "ch77", "ch88", "ch89", "ch27"]),
+        GuidedSession(id: 3, title: "SWIFT and messages", description: "MT and MX messages, field-level reading, UETR tracking.", chapterIDs: ["ch54", "ch5", "ch14", "ch6", "ch53", "ch50", "ch52", "ch75"]),
+        GuidedSession(id: 4, title: "ISO 20022 in depth", description: "pain, pacs and camt messages, migration and mapping.", chapterIDs: ["ch8", "ch7", "ch60", "ch76", "ch39", "ch67", "ch73", "ch55"]),
+        GuidedSession(id: 5, title: "Schemes and rails", description: "SEPA, Faster Payments, CHAPS, BACS, Fedwire and CHIPS.", chapterIDs: ["ch9", "ch33", "ch10", "ch92", "ch11", "ch93", "ch61", "ch62", "ch56", "ch57", "ch59", "ch12", "ch91", "ch30", "ch34", "ch83"]),
+        GuidedSession(id: 6, title: "Exceptions, risk and compliance", description: "Returns, recalls, investigations, risk and AML.", chapterIDs: ["ch41", "ch16", "ch58", "ch40", "ch23", "ch95", "ch24", "ch81", "ch86", "ch65", "ch87"]),
+        GuidedSession(id: 7, title: "Cards", description: "Card payments, authorisation, clearing and chargebacks.", chapterIDs: ["ch21", "ch22", "ch31", "ch63", "ch78"]),
+        GuidedSession(id: 8, title: "Practice and interview", description: "Scenarios and interview questions to practise what you have learned.", chapterIDs: ["ch15", "ch28", "ch38", "ch42", "ch44", "ch84", "ch29"])
     ]
 
     // MARK: - Published state
@@ -53,6 +72,43 @@ final class ContentService: ObservableObject {
     /// no downloads, no audio, no user data.
     static let searchIndexCacheFile = "pf-search-index.json"
     static let situationsCacheFile = "pf-situations-data.js"
+    static let weeklyCasesCacheFile = "pf-weekly-cases-data.js"
+
+    /// Authenticated situations delivery, OFF by default. While
+    /// false, loadFullSituations behaves exactly as before: the
+    /// public situations file plus the public cache file, for every
+    /// caller. Keep this false until the owner approves enforcement
+    /// and the situations-content endpoint is deployed and verified.
+    /// Flipping it on without a deployed endpoint degrades
+    /// gracefully per the matrix on loadFullSituations: signed-in
+    /// users fall back to the endpoint cache or to search-index
+    /// entries, and guests keep the public-file path. Never flip
+    /// this on as part of any other change.
+    static let authenticatedSituationsDeliveryEnabled = false
+
+    /// Disk-cache file for responses from the authenticated
+    /// situations-content endpoint. Separate from situationsCacheFile
+    /// on purpose: the two caches hold different payloads (the
+    /// endpoint JSON envelope versus the public JS assignment file)
+    /// and must never be read in place of each other. Only the
+    /// flag-on, signed-in path reads or writes this file.
+    ///
+    /// Cache note: the pre-existing public cache file may hold full
+    /// content fetched while the flag was off. The flag-on path
+    /// deliberately never reads that file for signed-in users, but
+    /// the bytes already on a device stay there until the cache is
+    /// purged or the app is removed. True enforcement is a future
+    /// stage and requires the public file itself to stop serving
+    /// full content; this client change alone does not enforce it.
+    static let authenticatedSituationsCacheFile = "pf-situations-data-auth.js"
+
+    /// The situations-content Edge Function URL, nil when Supabase
+    /// is not configured. The function name is part of the shared
+    /// contract with the server build; do not rename it here alone.
+    private static var situationsContentURL: URL? {
+        guard let base = SupabaseConfig.functionsBaseURL else { return nil }
+        return base.appendingPathComponent("situations-content")
+    }
 
     /// The caches-directory URL for one cache file.
     static func cacheFileURL(fileName: String) -> URL {
@@ -71,11 +127,20 @@ final class ContentService: ObservableObject {
         try? Data(contentsOf: cacheFileURL(fileName: fileName))
     }
 
-    /// The full situations data (564 items), when it has loaded.
+    /// The full situations data (ContentManifest.situationCount items), when it has loaded.
     /// Nil until the fetch succeeds; the list falls back to the
     /// search index entries so it never goes empty.
     @Published private(set) var fullSituations: [FullSituationItem]? = nil
     @Published private(set) var isLoadingSituations = false
+
+    /// The dedicated weekly-case list (52 items, in week order),
+    /// when it has loaded. Nil until the fetch succeeds; the
+    /// weekly view falls back to the catalogue pick while it is
+    /// nil, so the feature never breaks before the asset is
+    /// deployed. The items share the FullSituationItem shape; the
+    /// extra `week` field in the file is ignored by the decoder.
+    @Published private(set) var weeklyCases: [FullSituationItem]? = nil
+    @Published private(set) var isLoadingWeeklyCases = false
 
     private init() {}
 
@@ -86,7 +151,14 @@ final class ContentService: ObservableObject {
     /// attempt fails, the last cached catalogue is used instead, so
     /// the app shows saved content with an offline note rather than
     /// a blank screen; only when there is no cache at all does the
-    /// caller see indexError with a Retry action.
+    /// caller see indexError with a Retry action. Fetch once, parse
+    /// once: the guard below means a loaded index is never fetched
+    /// or decoded again. Decoding, the supplemental merge and the
+    /// cache read and write all run off the main thread: this
+    /// function is MainActor, and decoding 1,625 entries inline
+    /// used to freeze the interface at launch and on every Retry.
+    /// Only the published-state assignments happen on the main
+    /// actor, after each background step suspends back here.
     @MainActor
     func loadSearchIndex() async {
         if searchIndex != nil || isLoadingIndex { return }
@@ -98,9 +170,9 @@ final class ContentService: ObservableObject {
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                     throw ContentError.badResponse
                 }
-                let decoded = try JSONDecoder().decode(SearchIndex.self, from: data)
+                let decoded = try await Self.decodeSearchIndexOffMainThread(data)
                 searchIndex = decoded
-                Self.saveCache(data, fileName: Self.searchIndexCacheFile)
+                await Self.saveCacheOffMainThread(data, fileName: Self.searchIndexCacheFile)
                 isShowingCachedContent = false
                 isLoadingIndex = false
                 return
@@ -110,8 +182,8 @@ final class ContentService: ObservableObject {
                 }
             }
         }
-        if let cached = Self.loadCache(fileName: Self.searchIndexCacheFile),
-           let decoded = try? JSONDecoder().decode(SearchIndex.self, from: cached) {
+        if let cached = await Self.loadCacheOffMainThread(fileName: Self.searchIndexCacheFile),
+           let decoded = try? await Self.decodeSearchIndexOffMainThread(cached) {
             searchIndex = decoded
             isShowingCachedContent = true
             indexError = nil
@@ -122,31 +194,320 @@ final class ContentService: ObservableObject {
         isLoadingIndex = false
     }
 
-    /// Search the loaded index by title and text, title matches first.
-    /// Single pass over the entries (the old version scanned the whole
-    /// index twice and re-lowercased every title and body twice).
-    func search(query: String, limit: Int = 30) -> [SearchEntry] {
-        guard let index = searchIndex else { return [] }
-        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !needle.isEmpty else { return [] }
-        var titleMatches: [SearchEntry] = []
-        var textMatches: [SearchEntry] = []
-        titleMatches.reserveCapacity(32)
-        textMatches.reserveCapacity(32)
-        for entry in index.entries {
-            let title = entry.title.lowercased()
-            if title.contains(needle) {
-                titleMatches.append(entry)
-            } else if entry.text.lowercased().contains(needle) {
-                textMatches.append(entry)
+    /// Decode fetched index bytes and merge the supplemental
+    /// lessons, off the main thread. Pure: no published state is
+    /// touched here, so the detached task never races the UI.
+    private static func decodeSearchIndexOffMainThread(_ data: Data) async throws -> SearchIndex {
+        try await Task.detached(priority: .userInitiated) {
+            try decodeSearchIndex(from: data)
+        }.value
+    }
+
+    /// Decode one index document and merge the supplemental
+    /// lessons in. Nonisolated and synchronous, so it can run on
+    /// a detached task; the only caller is the helper above.
+    private static func decodeSearchIndex(from data: Data) throws -> SearchIndex {
+        let decoded = try JSONDecoder().decode(SearchIndex.self, from: data)
+        return indexWithSupplemental(decoded)
+    }
+
+    /// Save raw fetched bytes to the disk cache, off the main
+    /// thread. The write itself is the existing saveCache; only
+    /// the thread it runs on changes.
+    private static func saveCacheOffMainThread(_ data: Data, fileName: String) async {
+        await Task.detached(priority: .utility) {
+            saveCache(data, fileName: fileName)
+        }.value
+    }
+
+    /// Read cached bytes, off the main thread. The read itself is
+    /// the existing loadCache; only the thread it runs on changes.
+    private static func loadCacheOffMainThread(fileName: String) async -> Data? {
+        await Task.detached(priority: .userInitiated) {
+            loadCache(fileName: fileName)
+        }.value
+    }
+
+    // MARK: - Supplemental lessons (v34)
+
+    /// Supplemental lessons written for v34 to cover CIPSP and
+    /// Payment Guru syllabus topics the website catalogue does not
+    /// teach in depth. Bundled with the app as
+    /// supplemental-lessons.json, so they work offline too. Nil when
+    /// the file is missing; the app never fails to load without them.
+    /// Read from the bundle once and cached: the old version read
+    /// and decoded the file on every merge. The static cache
+    /// initialises lazily and thread-safely on first access, which
+    /// happens on the detached decode task, never on the main thread.
+    static func supplementalEntries() -> [SearchEntry] {
+        cachedSupplementalEntries
+    }
+
+    private static let cachedSupplementalEntries: [SearchEntry] = {
+        guard let url = Bundle.main.url(forResource: "supplemental-lessons", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let entries = try? JSONDecoder().decode([SearchEntry].self, from: data) else {
+            return []
+        }
+        return entries
+    }()
+
+    // MARK: - Supplemental flow descriptors (v82)
+
+    /// One entry of supplemental-lessons.json as read for its flow
+    /// descriptor. Every field is optional: a missing or malformed
+    /// flow degrades to the old empty-beats detail, never a crash.
+    /// The `text`, `title`, `type` and `url` keys are deliberately
+    /// not decoded here; SearchEntry already carries them.
+    private struct SupplementalFlowDocument: Decodable {
+        let id: String?
+        let flow: SupplementalFlow?
+    }
+
+    /// The flow/diagram descriptor for one supplemental lesson,
+    /// authored from the lesson's own text. `kind` is "flow" for
+    /// lessons whose text describes an ordered sequence (shown
+    /// with arrows) and "diagram" for lessons structured as parts,
+    /// aspects, or comparisons (shown with a plain rail). Any
+    /// other value behaves like "diagram": no arrows, no crash.
+    private struct SupplementalFlow: Decodable {
+        let kind: String?
+        let steps: [SupplementalFlowStep]?
+    }
+
+    private struct SupplementalFlowStep: Decodable {
+        let title: String?
+        let note: String?
+    }
+
+    /// The flow descriptor for each supplemental lesson id, read
+    /// from the bundle once and cached, like the entries above.
+    /// Empty when the file is missing or undecodable; the lesson
+    /// detail then falls back to no beats, exactly as before.
+    private static let supplementalFlowsByID: [String: SupplementalFlow] = {
+        guard let url = Bundle.main.url(forResource: "supplemental-lessons", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let documents = try? JSONDecoder().decode([SupplementalFlowDocument].self, from: data) else {
+            return [:]
+        }
+        var flows: [String: SupplementalFlow] = [:]
+        for document in documents {
+            guard let id = document.id, let flow = document.flow else { continue }
+            flows[id] = flow
+        }
+        return flows
+    }()
+
+    /// The untimed beats for a supplemental lesson, from its flow
+    /// descriptor steps, in order. Beat times are all zero: no
+    /// per-beat timings exist for supplemental lessons, and none
+    /// are invented. LessonView treats supplemental beats as
+    /// untimed and never highlights or seeks from them. Steps
+    /// with an empty title are skipped; a missing descriptor
+    /// yields no beats.
+    private static func supplementalBeats(for entry: SearchEntry) -> [LessonBeat] {
+        guard let flow = supplementalFlowsByID[entry.id],
+              let steps = flow.steps else { return [] }
+        var beats: [LessonBeat] = []
+        for (index, step) in steps.enumerated() {
+            let title = (step.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { continue }
+            beats.append(LessonBeat(
+                id: "\(entry.id)-beat-\(index)",
+                startTime: 0,
+                endTime: 0,
+                title: title,
+                note: (step.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            ))
+        }
+        return beats
+    }
+
+    /// The flow diagram SVG for a supplemental flow lesson, built
+    /// from its flow steps. Only "flow" lessons get one: the
+    /// diagram's presence is what makes LessonView draw arrows
+    /// between the flow points, matching website flow lessons.
+    /// "diagram" lessons return nil and render with a plain rail,
+    /// matching website lessons without a flow diagram. Colours
+    /// are the design tokens (pfNavy, pfRoyal) as hex values.
+    /// Titles are XML-escaped and wrapped, so no lesson text can
+    /// break the markup. The SVG itself is only shown by the
+    /// dormant full-screen visual; the inline lesson view renders
+    /// the native flow from the beats.
+    private static func supplementalFlowSVG(for entry: SearchEntry) -> String? {
+        guard let flow = supplementalFlowsByID[entry.id],
+              flow.kind == "flow",
+              let steps = flow.steps else { return nil }
+        let titles = steps
+            .map { ($0.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !titles.isEmpty else { return nil }
+        let width = 360.0
+        let boxX = 16.0
+        let boxWidth = width - 2 * boxX
+        let centreX = width / 2
+        let gap = 26.0
+        var parts: [String] = []
+        var totalHeight = 0.0
+        var boxes: [(top: Double, height: Double, lines: [String], index: Int)] = []
+        for (index, title) in titles.enumerated() {
+            let lines = wrappedLines(title, maxLength: 34)
+            let height = 24.0 + Double(lines.count) * 20.0
+            let top = totalHeight
+            boxes.append((top: top, height: height, lines: lines, index: index))
+            totalHeight += height
+            if index < titles.count - 1 { totalHeight += gap }
+        }
+        for box in boxes {
+            var textLines = ""
+            for (lineIndex, line) in box.lines.enumerated() {
+                let baseline = box.top + 28.0 + Double(lineIndex) * 20.0
+                textLines += "<text x=\"\(centreX)\" y=\"\(baseline)\" text-anchor=\"middle\" font-family=\"-apple-system, Helvetica, Arial, sans-serif\" font-size=\"15\" font-weight=\"600\" fill=\"#0D1C38\">\(escapeXML(line))</text>"
+            }
+            parts.append("<g data-beat=\"\(box.index)\"><rect x=\"\(boxX)\" y=\"\(box.top)\" width=\"\(boxWidth)\" height=\"\(box.height)\" rx=\"10\" fill=\"#FFFFFF\" stroke=\"#17408C\" stroke-width=\"1.5\"/>\(textLines)</g>")
+            if box.index < boxes.count - 1 {
+                let gapTop = box.top + box.height
+                let gapBottom = gapTop + gap
+                parts.append("<line x1=\"\(centreX)\" y1=\"\(gapTop + 2)\" x2=\"\(centreX)\" y2=\"\(gapBottom - 8)\" stroke=\"#17408C\" stroke-width=\"2\"/>")
+                parts.append("<polygon points=\"\(centreX),\(gapBottom - 2) \(centreX - 7),\(gapBottom - 11) \(centreX + 7),\(gapBottom - 11)\" fill=\"#17408C\"/>")
             }
         }
-        return Array((titleMatches + textMatches).prefix(limit))
+        return "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 \(Int(width)) \(Int(totalHeight))\" width=\"100%\" role=\"img\"><title>Lesson flow diagram</title>\(parts.joined())</svg>"
+    }
+
+    /// Wrap text into lines of at most `maxLength` characters,
+    /// breaking only at spaces. A single over-long word stays on
+    /// its own line rather than being split mid-word.
+    private static func wrappedLines(_ text: String, maxLength: Int) -> [String] {
+        var lines: [String] = []
+        var current = ""
+        for word in text.split(separator: " ") {
+            if current.isEmpty {
+                current = String(word)
+            } else if current.count + 1 + word.count <= maxLength {
+                current += " " + word
+            } else {
+                lines.append(current)
+                current = String(word)
+            }
+        }
+        if !current.isEmpty { lines.append(current) }
+        return lines.isEmpty ? [text] : lines
+    }
+
+    /// Escape text for inclusion in generated SVG markup.
+    private static func escapeXML(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    /// The search index with the supplemental lessons merged in, so
+    /// they appear in lessons, chapters, sessions and search
+    /// exactly like catalogue lessons. Counts are updated, so
+    /// the About numbers stay honest.
+    private static func indexWithSupplemental(_ index: SearchIndex) -> SearchIndex {
+        let extra = supplementalEntries()
+        guard !extra.isEmpty else { return index }
+        let lessons = extra.filter { $0.type == .lesson }.count
+        let guides = extra.filter { $0.type == .guide }.count
+        let situations = extra.filter { $0.type == .situation }.count
+        let labs = extra.filter { $0.type == .lab }.count
+        let tests = extra.filter { $0.type == .test }.count
+        let faqs = extra.filter { $0.type == .faq }.count
+        let counts = SearchCounts(
+            lesson: index.counts.lesson + lessons,
+            guide: index.counts.guide + guides,
+            situation: index.counts.situation + situations,
+            lab: index.counts.lab + labs,
+            test: index.counts.test + tests,
+            faq: index.counts.faq + faqs,
+            total: index.counts.total + extra.count
+        )
+        return SearchIndex(counts: counts, entries: index.entries + extra)
     }
 
     /// All lessons, in catalogue order.
     var allLessons: [SearchEntry] {
         searchIndex?.entries.filter { $0.type == .lesson } ?? []
+    }
+
+    /// All lessons in book reading order: chapters in the order
+    /// learners read them, catalogue lessons before supplemental
+    /// lessons within a chapter. The order for prev/next lesson
+    /// navigation and for "continue reading". Catalogue order
+    /// (allLessons) is unchanged: it feeds position and gating
+    /// logic that must not move.
+    var readingOrderLessons: [SearchEntry] {
+        PFBookModeReadingOrder.sortedForReading(allLessons)
+    }
+
+    /// True once the reading-order refresh has been attempted
+    /// this launch, so the website copy is fetched at most once.
+    private var didAttemptReadingOrderRefresh = false
+
+    /// Refresh the reading-order map from the website copy, once
+    /// per launch. Silent on every failure: the bundled copy (or
+    /// the cached copy) stays in use. The refreshed copy takes
+    /// effect on the next launch; see PFBookModeReadingOrder.
+    @MainActor
+    func refreshReadingOrderIfNeeded() async {
+        guard !didAttemptReadingOrderRefresh else { return }
+        didAttemptReadingOrderRefresh = true
+        await PFBookModeReadingOrder.refreshFromWebsite()
+    }
+
+    /// The book position of a lesson: its 1-based index among the
+    /// in-book lessons in reading order, and the in-book total.
+    /// Nil for held-out lessons and for lessons not in the loaded
+    /// catalogue. Supplemental lessons count: they sit inside
+    /// their chapter in reading order.
+    func bookPosition(for entry: SearchEntry) -> (position: Int, total: Int)? {
+        guard let number = entry.chapterNumber,
+              !PFBookModeReadingOrder.isHeldOut(internalNumber: number) else { return nil }
+        let sequence = readingOrderLessons.filter {
+            guard let chapter = $0.chapterNumber else { return false }
+            return !PFBookModeReadingOrder.isHeldOut(internalNumber: chapter)
+        }
+        guard let index = sequence.firstIndex(where: { $0.id == entry.id }) else { return nil }
+        return (index + 1, sequence.count)
+    }
+
+    /// The sequential position (1-based) of a regular lesson
+    /// within its chapter, in catalogue order, counting catalogue
+    /// lessons only. Supplemental lessons return nil: they sit
+    /// after the chapter's catalogue lessons and have no lesson
+    /// number. Returns nil when the entry is not a lesson, when
+    /// the chapter cannot be parsed, or when the entry is not in
+    /// the loaded index.
+    func lessonPositionInChapter(for entry: SearchEntry) -> Int? {
+        guard entry.type == .lesson, !entry.isSupplemental,
+              let number = entry.chapterNumber else { return nil }
+        let chapterLessons = allLessons.filter {
+            $0.chapterNumber == number && !$0.isSupplemental
+        }
+        guard let index = chapterLessons.firstIndex(where: { $0.id == entry.id }) else { return nil }
+        return index + 1
+    }
+
+    /// The citation for an entry, numbering regular lessons by
+    /// sequential position within the chapter in catalogue order
+    /// instead of the raw number parsed from the id, with the
+    /// chapter shown as its book number from
+    /// PFBookModeReadingOrder. Supplemental lessons show the
+    /// chapter only, with no misleading number. Falls back to the
+    /// entry's own citation when the position cannot be computed,
+    /// so a citation is always produced.
+    func citation(for entry: SearchEntry) -> String {
+        if entry.type == .lesson, !entry.isSupplemental,
+           let chapter = entry.chapterNumber,
+           let book = PFBookModeReadingOrder.bookNumber(forInternalNumber: chapter),
+           let position = lessonPositionInChapter(for: entry) {
+            return "Chapter \(book), Lesson \(position): \(entry.title)"
+        }
+        return entry.citation
     }
 
     /// All guides, in catalogue order.
@@ -161,7 +522,43 @@ final class ContentService: ObservableObject {
 
     // MARK: - Full situations data
 
-    /// Load the full situations data file (564 items with the full
+    /// Load the full situations data, either from the public file or
+    /// from the authenticated endpoint, depending on the flag and on
+    /// whether a signed-in JWT is available. The flag-on path never
+    /// changes entitlement logic: the server decides which items to
+    /// return, the SituationsView hard-gate still decides what is
+    /// shown, and StoreManager semantics are untouched.
+    ///
+    /// Fallback matrix:
+    /// Flag off, guest or signed-in: public file, 3 attempts, then
+    /// the public cache file, else fullSituations stays nil and
+    /// callers fall back to search-index entries. Exactly as before.
+    /// Flag on, guest (no JWT): the same public-file path, unchanged.
+    /// Flag on, signed-in, endpoint succeeds: the returned items are
+    /// stored as-is (all items when entitled is true, only the free
+    /// samples when entitled is false) and the response is cached in
+    /// the separate endpoint cache file.
+    /// Flag on, signed-in, endpoint down or undecodable: the endpoint
+    /// cache is used when present, else fullSituations stays nil and
+    /// callers fall back to search-index entries. The public file and
+    /// the public cache file are never read on this path.
+    /// Weekly cases are untouched by every row: they always load
+    /// from their own public asset in loadWeeklyCases.
+    @MainActor
+    func loadFullSituations() async {
+        if fullSituations != nil || isLoadingSituations { return }
+        if Self.authenticatedSituationsDeliveryEnabled,
+           let accessToken = await AuthService.shared.validAccessToken() {
+            await loadFullSituationsViaAuthenticatedEndpoint(accessToken: accessToken)
+            return
+        }
+        await loadFullSituationsFromPublicFile()
+    }
+
+    /// The original public-file path for loadFullSituations, moved
+    /// here unchanged in behavior so the dispatcher above can choose
+    /// between it and the endpoint path. Load the full situations
+    /// data file (ContentManifest.situationCount items with the full
     /// explain text and visual). The file is a JS assignment
     /// (window.PA_SITUATIONS = [...];) so the prefix and trailing
     /// semicolon are stripped before JSON decoding. Bounded retry
@@ -170,8 +567,7 @@ final class ContentService: ObservableObject {
     /// otherwise so callers fall back to the search index entries
     /// and the list never goes empty.
     @MainActor
-    func loadFullSituations() async {
-        if fullSituations != nil || isLoadingSituations { return }
+    private func loadFullSituationsFromPublicFile() async {
         isLoadingSituations = true
         for attempt in 0..<3 {
             do {
@@ -215,6 +611,116 @@ final class ContentService: ObservableObject {
         isLoadingSituations = false
     }
 
+    /// One response from the situations-content endpoint. The server
+    /// returns every item for an entitled caller and only the free
+    /// samples otherwise; the client stores `items` as returned and
+    /// never re-filters it. `entitled` is decoded so a malformed
+    /// envelope fails the decode instead of being silently trusted.
+    private struct AuthenticatedSituationsResponse: Decodable {
+        let entitled: Bool
+        let items: [FullSituationItem]
+    }
+
+    /// Load the full situations data from the authenticated
+    /// situations-content endpoint for a signed-in user. The request
+    /// is GET with Authorization Bearer <user JWT>, sent through
+    /// SupabaseClient.request, which also sends the apikey header
+    /// the Supabase gateway expects and retries transient failures
+    /// internally, so no extra retry loop is added here. The JWT
+    /// comes from AuthService.validAccessToken, which refreshes an
+    /// expiring token first; no new auth mechanism is added.
+    /// On success the returned items are stored as-is and the raw
+    /// response is cached in the separate endpoint cache file. On
+    /// any failure (no endpoint URL, network or server error, or an
+    /// undecodable reply) the endpoint cache is used when present,
+    /// else fullSituations stays nil so existing callers fall back
+    /// to search-index entries. This path never reads the public
+    /// file or the public cache file, and never falls back to them.
+    /// See the cache note on authenticatedSituationsCacheFile for
+    /// why the pre-existing public cache file is out of scope here.
+    @MainActor
+    private func loadFullSituationsViaAuthenticatedEndpoint(accessToken: String) async {
+        isLoadingSituations = true
+        defer { isLoadingSituations = false }
+        if let url = Self.situationsContentURL {
+            do {
+                let data = try await SupabaseClient.shared.request(url: url, method: "GET", accessToken: accessToken)
+                let decoded = try JSONDecoder().decode(AuthenticatedSituationsResponse.self, from: data)
+                fullSituations = decoded.items
+                Self.saveCache(data, fileName: Self.authenticatedSituationsCacheFile)
+                // Do not clear isShowingCachedContent here: the flag
+                // belongs to the catalogue load, which may have fallen
+                // back to cache even when this fetch loads live.
+                return
+            } catch {
+                // Fall through to the endpoint cache below.
+            }
+        }
+        if let cached = Self.loadCache(fileName: Self.authenticatedSituationsCacheFile),
+           let decoded = try? JSONDecoder().decode(AuthenticatedSituationsResponse.self, from: cached) {
+            fullSituations = decoded.items
+            isShowingCachedContent = true
+        }
+        // Otherwise fullSituations stays nil and callers fall back
+        // to the search-index entries, as in the public-file path.
+    }
+
+    /// Load the dedicated weekly-case list (52 items in week
+    /// order, with the full explain text and visual). Mirrors
+    /// loadFullSituations: the file is a JS assignment
+    /// (window.PA_WEEKLY_CASES = [...];) so the prefix and
+    /// trailing semicolon are stripped before JSON decoding, with
+    /// the same bounded retry (3 attempts, exponential backoff)
+    /// and the same cache fallback. The asset is free public
+    /// content, no purchase and no sign-in. On failure weeklyCases
+    /// stays nil and callers keep the catalogue pick, so the
+    /// weekly case never goes empty.
+    @MainActor
+    func loadWeeklyCases() async {
+        if weeklyCases != nil || isLoadingWeeklyCases { return }
+        isLoadingWeeklyCases = true
+        for attempt in 0..<3 {
+            do {
+                let (data, response) = try await URLSession.shared.data(from: Self.weeklyCasesDataURL)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                      var text = String(data: data, encoding: .utf8) else {
+                    throw ContentError.badResponse
+                }
+                let prefix = "window.PA_WEEKLY_CASES = "
+                guard text.hasPrefix(prefix) else { throw ContentError.badResponse }
+                text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if text.hasSuffix(";") { text = String(text.dropLast()) }
+                guard let jsonData = text.data(using: .utf8) else { throw ContentError.badResponse }
+                let decoded = try JSONDecoder().decode([FullSituationItem].self, from: jsonData)
+                weeklyCases = decoded
+                Self.saveCache(data, fileName: Self.weeklyCasesCacheFile)
+                // Do not clear isShowingCachedContent here: the flag
+                // belongs to the catalogue load, which may have fallen
+                // back to cache even when this file loads live.
+                isLoadingWeeklyCases = false
+                return
+            } catch {
+                if attempt < 2 {
+                    try? await Task.sleep(nanoseconds: UInt64(500_000_000 * (1 << attempt)))
+                }
+            }
+        }
+        if let cached = Self.loadCache(fileName: Self.weeklyCasesCacheFile),
+           var text = String(data: cached, encoding: .utf8) {
+            let prefix = "window.PA_WEEKLY_CASES = "
+            if text.hasPrefix(prefix) {
+                text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if text.hasSuffix(";") { text = String(text.dropLast()) }
+                if let jsonData = text.data(using: .utf8),
+                   let decoded = try? JSONDecoder().decode([FullSituationItem].self, from: jsonData) {
+                    weeklyCases = decoded
+                    isShowingCachedContent = true
+                }
+            }
+        }
+        isLoadingWeeklyCases = false
+    }
+
     /// Stage names, the same six learning stages as the website.
     static let situationStageNames: [Int: String] = [
         1: "Payment mechanics",
@@ -250,7 +756,7 @@ final class ContentService: ObservableObject {
 
     /// The stage for one full situation item. Priority: the data
     /// file's own `stage` field when it is present and in range
-    /// (authoritative, verified for all 564 items on 11 Nov 2026),
+    /// (authoritative, verified for all ContentManifest.situationCount items on 11 Nov 2026),
     /// then the website per-item stage map, then the level fallback.
     /// No stage numbers are invented beyond that map and fallback.
     static func stage(forFullItem item: FullSituationItem) -> Int {
@@ -269,7 +775,7 @@ final class ContentService: ObservableObject {
 
     /// The stage name for one full situation item: the data file's
     /// own `stage_name` when it is present and matches the resolved
-    /// stage (verified for all 564 items on 11 Nov 2026), otherwise
+    /// stage (verified for all ContentManifest.situationCount items on 11 Nov 2026), otherwise
     /// the standard name for the resolved stage.
     static func stageName(forFullItem item: FullSituationItem) -> String {
         let stage = stage(forFullItem: item)
@@ -430,13 +936,191 @@ final class ContentService: ObservableObject {
         allLessons.filter { $0.id.hasPrefix(prefix) }
     }
 
+    // MARK: - Lesson detail cache (offline)
+
+    /// Maximum lesson detail pages kept on disk, and maximum total
+    /// size. The oldest pages are evicted first when either bound is
+    /// passed. Lesson pages are HTML text, so 50 pages stay well
+    /// under 50MB in practice; both bounds are enforced.
+    static let lessonDetailCacheMaxFiles = 50
+    static let lessonDetailCacheMaxBytes: Int64 = 50 * 1024 * 1024
+
+    /// The cache file name for a lesson id. Only letters, numbers,
+    /// hyphen and underscore survive; every other character becomes
+    /// a hyphen, so an id can never escape the cache directory.
+    /// An id with no characters at all maps to "lesson.html".
+    static func sanitisedLessonDetailCacheFileName(for lessonID: String) -> String {
+        let safe = lessonID.map { char in
+            (char.isLetter || char.isNumber || char == "-" || char == "_") ? char : "-"
+        }
+        let stem = String(safe)
+        let base = stem.isEmpty ? "lesson" : stem
+        return base + ".html"
+    }
+
+    /// The Application Support directory holding cached lesson pages.
+    /// Application Support is persistent; the purgeable Caches
+    /// directory is not used, so a previously opened lesson stays
+    /// readable offline until the bound evicts it.
+    /// Sandbox rule: cached lesson pages stay inside this app's
+    /// private sandbox, like the audio downloads. They are never
+    /// shown in the Files app, never shared or exported, and they
+    /// are gone when the app is deleted. Keep this cache in
+    /// Application Support: never move it to Documents, a shared
+    /// container, or a share sheet.
+    static func lessonDetailCacheDirectoryURL() -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("LessonDetailCache", isDirectory: true)
+    }
+
+    /// The cache file URL for one lesson id.
+    static func lessonDetailCacheFileURL(for lessonID: String) -> URL {
+        lessonDetailCacheDirectoryURL()
+            .appendingPathComponent(sanitisedLessonDetailCacheFileName(for: lessonID))
+    }
+
+    /// The cached page HTML for a lesson, nil when nothing was cached
+    /// or the cached file is empty.
+    static func cachedLessonHTML(for lessonID: String) -> String? {
+        guard let data = try? Data(contentsOf: lessonDetailCacheFileURL(for: lessonID)),
+              let html = String(data: data, encoding: .utf8),
+              !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return html
+    }
+
+    /// Save a fetched lesson page to the cache and enforce the bounds.
+    /// Best effort: a failed write never fails the load that succeeded.
+    static func saveLessonDetailCache(html: String, lessonID: String) {
+        let directory = lessonDetailCacheDirectoryURL()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard let data = html.data(using: .utf8) else { return }
+        try? data.write(to: lessonDetailCacheFileURL(for: lessonID), options: [.atomic])
+        enforceLessonDetailCacheBounds()
+    }
+
+    /// One cached file, for eviction selection. The modification date
+    /// decides age; a missing date is treated as the oldest possible.
+    struct LessonDetailCacheFileInfo: Equatable {
+        let fileName: String
+        let modificationDate: Date
+        let sizeBytes: Int64
+    }
+
+    /// The file names to evict so the remaining files fit both bounds.
+    /// Oldest first; ties break by file name so the result is stable.
+    /// Pure logic with no disk access, so it is covered by unit tests.
+    static func cacheFilesToEvict(_ files: [LessonDetailCacheFileInfo], maxFiles: Int, maxBytes: Int64) -> [String] {
+        let ordered = files.sorted {
+            if $0.modificationDate != $1.modificationDate {
+                return $0.modificationDate < $1.modificationDate
+            }
+            return $0.fileName < $1.fileName
+        }
+        var remainingCount = ordered.count
+        var remainingBytes = ordered.reduce(Int64(0)) { $0 + $1.sizeBytes }
+        var evicted: [String] = []
+        for file in ordered {
+            if remainingCount <= maxFiles && remainingBytes <= maxBytes { break }
+            evicted.append(file.fileName)
+            remainingCount -= 1
+            remainingBytes -= file.sizeBytes
+        }
+        return evicted
+    }
+
+    /// Enforce the cache bounds on disk, evicting the oldest files
+    /// first. Best effort: failures are ignored.
+    static func enforceLessonDetailCacheBounds() {
+        let directory = lessonDetailCacheDirectoryURL()
+        guard let urls = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]) else { return }
+        var infos: [LessonDetailCacheFileInfo] = []
+        for url in urls {
+            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            infos.append(LessonDetailCacheFileInfo(
+                fileName: url.lastPathComponent,
+                modificationDate: values?.contentModificationDate ?? Date.distantPast,
+                sizeBytes: Int64(values?.fileSize ?? 0)
+            ))
+        }
+        let toEvict = cacheFilesToEvict(infos, maxFiles: lessonDetailCacheMaxFiles, maxBytes: lessonDetailCacheMaxBytes)
+        for fileName in toEvict {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(fileName))
+        }
+    }
+
     // MARK: - Lesson detail
 
     /// Fetch a lesson page and extract its content.
     /// Falls back to the search index entry if the page cannot be parsed.
     /// Bounded retry (3 attempts, exponential backoff) so a single
     /// transient network failure does not surface as a lesson error.
+    /// When the live fetch fails and a cached copy of the page exists
+    /// from a previous open, the cached copy is returned instead, so
+    /// a previously opened lesson stays readable offline. Throws only
+    /// when neither the live fetch nor the cache produces a lesson.
     func loadLessonDetail(entry: SearchEntry) async throws -> LessonDetail {
+        do {
+            return try await fetchLiveLessonDetail(entry: entry)
+        } catch {
+            if let cached = cachedLessonDetail(entry: entry) {
+                return cached
+            }
+            throw error
+        }
+    }
+
+    /// Load a lesson detail and report where it came from. Tries the
+    /// live page first; on failure, parses the cached page HTML when
+    /// one exists and reports .cached. Returns nil only when both
+    /// fail. Supplemental lessons are built locally with no network
+    /// and report .live, because the local build is never stale.
+    func loadLessonDetailWithSource(entry: SearchEntry) async -> (detail: LessonDetail, source: LessonDetailSource)? {
+        do {
+            let detail = try await fetchLiveLessonDetail(entry: entry)
+            return (detail, .live)
+        } catch {
+            if let cached = cachedLessonDetail(entry: entry) {
+                return (cached, .cached)
+            }
+            return nil
+        }
+    }
+
+    /// Fetch the live lesson page (3 attempts, exponential backoff)
+    /// and cache the page HTML on success, so the next offline open
+    /// can use it. Supplemental lessons have no page: their detail
+    /// is built locally and nothing is cached.
+    private func fetchLiveLessonDetail(entry: SearchEntry) async throws -> LessonDetail {
+        // Supplemental lessons have no page on the website: their
+        // detail is built locally from the bundled entry text, with
+        // no network fetch and no retry delay. Narration is recorded
+        // for all of them; there is still no quiz. Beats come from
+        // the bundled flow descriptor and are untimed (see
+        // supplementalBeats): the flow shows every step, with no
+        // invented timings. Flow lessons also carry a generated
+        // flow diagram, which makes the flow render with arrows,
+        // like website flow lessons. The full text is the lesson.
+        if entry.isSupplemental {
+            return LessonDetail(
+                id: entry.id,
+                title: entry.title,
+                chapterTitle: chapterTitle(for: entry),
+                audioFileName: entry.audioFileName ?? (entry.id + ".mp3"),
+                transcript: entry.text,
+                takeaways: defaultTakeaways(for: entry),
+                doThisAtWork: [],
+                sources: [],
+                quiz: [],
+                nextLessonID: nil,
+                beats: Self.supplementalBeats(for: entry),
+                diagramSVG: Self.supplementalFlowSVG(for: entry),
+                durationSec: 0,
+                nextLessonTitle: nil,
+                quizIntro: ""
+            )
+        }
         let pageURL = Self.siteBase.appendingPathComponent(entry.url)
         var lastError: Error = ContentError.badResponse
         for attempt in 0..<3 {
@@ -446,6 +1130,7 @@ final class ContentService: ObservableObject {
                       let html = String(data: data, encoding: .utf8) else {
                     throw ContentError.badResponse
                 }
+                Self.saveLessonDetailCache(html: html, lessonID: entry.id)
                 return parseLessonHTML(html, entry: entry)
             } catch {
                 lastError = error
@@ -455,6 +1140,17 @@ final class ContentService: ObservableObject {
             }
         }
         throw lastError
+    }
+
+    /// The lesson detail parsed from the cached page HTML, nil when
+    /// no cached copy exists. Parsing never throws: a cached page
+    /// that no longer parses yields the entry fallback detail, the
+    /// same fallback the live path uses. Supplemental lessons never
+    /// reach the cache; they are built locally.
+    private func cachedLessonDetail(entry: SearchEntry) -> LessonDetail? {
+        guard !entry.isSupplemental,
+              let html = Self.cachedLessonHTML(for: entry.id) else { return nil }
+        return parseLessonHTML(html, entry: entry)
     }
 
     /// Extract the lesson from its page. The page embeds the full lesson
@@ -551,9 +1247,11 @@ final class ContentService: ObservableObject {
     private func chapterTitle(for entry: SearchEntry) -> String {
         // The chapter name parsed from the single-line catalogue
         // text (`<lesson title> <chapter name> Part N: <domain> <body>`).
-        // Falls back to "Chapter <number>", never to the app name.
+        // Falls back to the book chapter label, never to the app
+        // name and never to an internal chapter number.
         if let name = entry.chapterName { return name }
-        if let number = entry.chapterNumber { return "Chapter \(number)" }
+        if let number = entry.chapterNumber,
+           let label = PFBookModeReadingOrder.chapterLabel(forInternalNumber: number) { return label }
         return "Chapter"
     }
 
@@ -814,11 +1512,23 @@ final class ContentService: ObservableObject {
         let nsSection = section as NSString
         let matches = liRegex.matches(in: section, options: [], range: NSRange(location: 0, length: nsSection.length))
         var items: [String] = []
-        for match in matches {
+        for (index, match) in matches.enumerated() {
             let itemStart = match.range.upperBound
+            // Stop at the next <li> as well as at </li>: with nested or
+            // unclosed items, running to the next </li> swallows the
+            // following item's text, which then repeats as its own item.
+            let nextItemStart = (index + 1 < matches.count) ? matches[index + 1].range.lowerBound : nsSection.length
             let closeRange = nsSection.range(of: "</li>", options: [.caseInsensitive], range: NSRange(location: itemStart, length: nsSection.length - itemStart))
-            guard closeRange.location != NSNotFound else { continue }
-            let raw = nsSection.substring(with: NSRange(location: itemStart, length: closeRange.location - itemStart))
+            let itemEnd: Int
+            if closeRange.location != NSNotFound, closeRange.location < nextItemStart {
+                itemEnd = closeRange.location
+            } else if nextItemStart < nsSection.length {
+                itemEnd = nextItemStart
+            } else {
+                continue
+            }
+            guard itemEnd > itemStart else { continue }
+            let raw = nsSection.substring(with: NSRange(location: itemStart, length: itemEnd - itemStart))
             let cleaned = stripTags(raw)
             if !cleaned.isEmpty { items.append(cleaned) }
         }

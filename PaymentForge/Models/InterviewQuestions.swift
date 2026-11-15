@@ -1,7 +1,7 @@
 // InterviewQuestions.swift
-// PaymentForge iOS - Interview questions bank.
+// Payments Training Hub iOS - Interview questions bank.
 //
-// 500 situation-based interview questions for payments and BA roles,
+// ContentManifest.interviewQuestionCount situation-based interview questions for payments and BA roles,
 // bundled as interview-questions.json in Resources. Loaded from the
 // app bundle only; no network, no backend. Each question carries a
 // short model answer written in plain language. The questions are
@@ -32,10 +32,21 @@ struct InterviewQuestionBank: Codable {
 
 /// Loads the bundled interview question bank and searches it.
 enum InterviewQuestionStore {
-    /// The bundled bank, loaded once. Nil only if the bundled JSON
-    /// is missing or unreadable, which should never happen in a
-    /// shipped build.
-    static let shared: InterviewQuestionBank? = load()
+    /// The bundled bank, loaded at first access. Nil only if the
+    /// bundled JSON is missing or unreadable, which should never
+    /// happen in a shipped build. `reload()` re-reads the file for
+    /// the view's Try again action; readers always see the latest
+    /// load attempt.
+    static private(set) var shared: InterviewQuestionBank? = load()
+
+    /// Re-read the bundled JSON, for the Try again action when the
+    /// first load failed. The bank is bundled, so a retry only
+    /// helps when the first read failed transiently; the view
+    /// keeps showing the unavailable state when the file is
+    /// genuinely missing or malformed.
+    static func reload() {
+        shared = load()
+    }
 
     private static func load() -> InterviewQuestionBank? {
         guard let url = Bundle.main.url(forResource: "interview-questions", withExtension: "json"),

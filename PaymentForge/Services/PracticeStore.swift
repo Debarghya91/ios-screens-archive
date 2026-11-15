@@ -1,7 +1,9 @@
 // PracticeStore.swift
 // PaymentForge iOS - Practice Mode attempt storage.
-// Attempts live in UserDefaults, so Practice Mode works fully for
-// guests and offline. When a learner is signed in and Supabase is
+// Attempts live in UserDefaults, namespaced per account through
+// AccountScopedStorage, so Practice Mode works fully for guests
+// and offline, and one account's attempts are never served to
+// another. When a learner is signed in and Supabase is
 // configured, each attempt is also mirrored to the practice_attempts
 // table (see supabase/migrations/0004_practice_attempts.sql, which the
 // project owner must run in the Supabase SQL editor before sync can
@@ -68,6 +70,17 @@ final class PracticeStore: ObservableObject {
         load()
     }
 
+    /// Reload for the current account namespace, clearing the
+    /// previous account's attempts first. Guest attempts reach an
+    /// account only through the guest-to-account migration offer:
+    /// after migration copies the guest attempts into the account
+    /// namespace, this reload loads them (still tagged with no user
+    /// id) and syncPendingAttempts adopts them on the next sync.
+    func reloadForCurrentAccount() {
+        attempts = []
+        load()
+    }
+
     // MARK: - Recording
 
     /// Record one decision. The attempt is saved locally first, then
@@ -83,6 +96,9 @@ final class PracticeStore: ObservableObject {
         )
         attempts.append(attempt)
         save()
+        // Practice attempts sync through SyncService, so a new
+        // attempt flags a sync.
+        SyncService.shared.noteLocalChange()
         Task { await mirror(attempt: attempt) }
         return attempt
     }
@@ -180,7 +196,8 @@ final class PracticeStore: ObservableObject {
     // MARK: - Persistence
 
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: Keys.attempts),
+        AccountScopedStorage.adoptLegacyKey(Keys.attempts)
+        guard let data = UserDefaults.standard.data(forKey: AccountScopedStorage.currentKey(Keys.attempts)),
               let decoded = try? JSONDecoder().decode([PracticeAttempt].self, from: data) else {
             return
         }
@@ -189,7 +206,7 @@ final class PracticeStore: ObservableObject {
 
     private func save() {
         if let data = try? JSONEncoder().encode(attempts) {
-            UserDefaults.standard.set(data, forKey: Keys.attempts)
+            UserDefaults.standard.set(data, forKey: AccountScopedStorage.currentKey(Keys.attempts))
         }
     }
 }

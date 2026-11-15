@@ -1,13 +1,30 @@
 // StoreManagerTests.swift
-// PaymentForge iOS - Phase 7 unit tests: entitlement logic.
-// The security rule under test: a submitted UTR never unlocks
-// anything on its own. Situations unlock only through a verified
+// PaymentForge iOS - Phase 7 unit tests: entitlement logic, reconciled
+// for Phase 1 (Release integrity).
+// The security rule under test: nothing unlocks without a verified
 // StoreKit transaction on this device or a server entitlement row
-// (user_purchases) written when an admin verifies the claim.
-// A pending claim, and even a claim object whose status reads
-// Verified, must not flip isSituationsUnlocked by itself: the
-// unlock comes from the server entitlement, not from the claim.
+// (user_purchases). A fresh store is locked: no chapters, no
+// situations, no products. Purchases are IAP only.
 // No test performs a real purchase or a real network call.
+//
+// UNEXECUTED: written on a Linux VM with no Xcode. These tests were
+// never compiled or run. Statically checked only: symbol names and
+// signatures were read from the final app source before writing.
+//
+// Phase 1 reconciliation (12 Nov 2026): the catalogue moved from
+// PaymentConfig (frozen, stale Situations count of 500) to
+// ProductCatalogue. Every catalogue assertion below now reads
+// ProductCatalogue. The ba-practice bundle name is "AI Product Owner
+// and Product Manager for Payments" in both the catalogue and the
+// frozen PaymentConfig; the old test name "BA and PO Professional
+// Practice" matched neither and is corrected here. The Situations
+// count is 564. ProductCatalogue.productContaining takes a labelled
+// chapterID argument, unlike the old positional PaymentConfig call.
+// The old PaymentConfig price assertions (priceAmountINR, priceText
+// "Rs. 4,999") are removed: a hardcoded price must never be presented
+// as a purchase price, and StoreManager.priceText now returns
+// "Price unavailable" until a StoreKit product loads (see
+// EntitlementTests for the price fallback tests).
 
 import XCTest
 @testable import PaymentForge
@@ -15,65 +32,46 @@ import XCTest
 @MainActor
 final class StoreManagerTests: XCTestCase {
 
+    // The StoreManager UserDefaults cache keys, as string literals.
+    // The keys are private in StoreManager, so tests cannot reference
+    // them by symbol; these literals mirror them exactly and must be
+    // kept in step. Cleaning them before each test is what makes a
+    // fresh StoreManager deterministic in DEBUG, where init restores
+    // the cached sets. In Release init starts locked and purges the
+    // bypass key itself.
+    private let cacheKeys = [
+        "pf.iap.purchasedProductIDs.v1",
+        "pf.iap.buildPhaseUnlocked.v1",
+        "pf.iap.situationsPurchased.v1"
+    ]
+
+    override func setUp() {
+        super.setUp()
+        for key in cacheKeys {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
+    override func tearDown() {
+        for key in cacheKeys {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+        super.tearDown()
+    }
+
     func testFreshStoreIsLocked() {
         let store = StoreManager()
         XCTAssertFalse(store.isPurchased)
         XCTAssertFalse(store.isServerEntitlementVerified)
         XCTAssertFalse(store.isSituationsUnlocked)
-        XCTAssertFalse(store.hasUPIClaim)
-        XCTAssertFalse(store.isUPIClaimVerified)
-        XCTAssertNil(store.upiClaim)
+        XCTAssertTrue(store.purchasedProductIDs.isEmpty)
+        XCTAssertTrue(store.serverEntitledProductIDs.isEmpty)
     }
 
-    func testPendingUPIClaimDoesNotUnlock() async {
-        let store = StoreManager()
-        let claim = await store.submitUPIClaim(payerName: "Test Learner", utr: "123456789012")
-        XCTAssertEqual(claim.status.rawValue, "Pending")
-        XCTAssertEqual(claim.utr, "123456789012")
-        XCTAssertEqual(claim.amount, 4999, "Situations still costs Rs. 4,999.")
-        XCTAssertTrue(store.hasUPIClaim)
-        XCTAssertFalse(store.isUPIClaimVerified)
-        XCTAssertFalse(store.isSituationsUnlocked, "A pending UTR must never unlock Situations.")
-        XCTAssertTrue(store.hasPendingClaimUpload, "A guest claim is held for upload after sign-in, never treated as paid.")
-    }
-
-    func testUPIClaimDecodesPendingByDefault() throws {
-        let json = """
-        {"product":"Payment Situations, all 564 situations","amount":4999,"payerName":"Test Learner","utr":"123456789012","submittedAt":"2026-11-11T00:00:00Z"}
-        """.data(using: .utf8)!
-        let claim = try JSONDecoder().decode(UPIClaim.self, from: json)
-        XCTAssertEqual(claim.status.rawValue, "Pending", "A claim with no status field is pending, never verified.")
-        XCTAssertEqual(claim.productID, PaymentConfig.situationsProductID, "A claim with no product id decodes as Situations, the only product when claims were introduced.")
-    }
-
-    func testUPIClaimStatusValuesDecode() throws {
-        for (raw, expectedRaw) in [("Pending", "Pending"), ("Verified", "Verified"), ("Rejected", "Rejected")] {
-            let json = """
-            {"product":"p","amount":4999,"payerName":"n","utr":"u","submittedAt":"2026-11-11T00:00:00Z","status":"\(raw)"}
-            """.data(using: .utf8)!
-            let claim = try JSONDecoder().decode(UPIClaim.self, from: json)
-            XCTAssertEqual(claim.status.rawValue, expectedRaw)
-        }
-    }
-
-    func testVerifiedClaimAloneDoesNotUnlockWithoutServerEntitlement() {
-        // A claim object that reads Verified is not the unlock: the
-        // unlock is isServerEntitlementVerified, set only by reading
-        // the user_purchases row the verification creates. A fresh
-        // store has no such row, so it stays locked even though a
-        // verified claim can exist as data.
-        let store = StoreManager()
-        XCTAssertFalse(store.isServerEntitlementVerified)
-        XCTAssertFalse(store.isSituationsUnlocked)
-        let verified = UPIClaim(product: "p", amount: 4999, payerName: "n", utr: "u", submittedAt: "2026-11-11T00:00:00Z", status: .verified)
-        XCTAssertEqual(verified.status.rawValue, "Verified")
-        XCTAssertFalse(store.isSituationsUnlocked, "Unlock must come from the server entitlement, not from the claim status.")
-    }
-
-    // MARK: - Twelve products (11 Nov 2026)
+    // MARK: - Twelve products (11 Nov 2026, catalogue moved 12 Nov 2026)
 
     func testTwelveProductsWithCorrectIDsNamesAndPrices() {
-        XCTAssertEqual(PaymentConfig.products.count, 12)
+        XCTAssertEqual(ProductCatalogue.products.count, 12)
         let expected: [(String, String, Int)] = [
             ("com.paymentforge.app.full", "The Integrated Course", 9999),
             ("com.paymentforge.app.foundations", "Payment Foundations", 1499),
@@ -84,22 +82,22 @@ final class StoreManagerTests: XCTestCase {
             ("com.paymentforge.app.cards", "Cards and Domestic Payments", 1499),
             ("com.paymentforge.app.compliance-ops", "Compliance, Risk, Operations and Reconciliation", 1999),
             ("com.paymentforge.app.architecture-apis", "Payment Architecture and APIs", 2499),
-            ("com.paymentforge.app.ba-practice", "BA and PO Professional Practice", 1999),
+            ("com.paymentforge.app.ba-practice", "AI Product Owner and Product Manager for Payments", 1999),
             ("com.paymentforge.app.emerging", "Emerging Technologies and the Future", 999),
             ("com.paymentforge.app.situations", "Payment Situations", 4999),
         ]
         for (id, name, price) in expected {
-            let product = PaymentConfig.product(for: id)
+            let product = ProductCatalogue.product(for: id)
             XCTAssertNotNil(product, "Missing product \(id)")
             XCTAssertEqual(product?.name, name)
             XCTAssertEqual(product?.priceINR, price)
         }
-        XCTAssertEqual(Set(PaymentConfig.allProductIDs).count, 12, "Product IDs must be unique.")
-        XCTAssertEqual(PaymentConfig.allProductIDs.count, 12)
+        XCTAssertEqual(Set(ProductCatalogue.allProductIDs).count, 12, "Product IDs must be unique.")
+        XCTAssertEqual(ProductCatalogue.allProductIDs.count, 12)
     }
 
     func testFullCourseCoversAll100Chapters() {
-        let full = PaymentConfig.product(for: PaymentConfig.fullCourseProductID)
+        let full = ProductCatalogue.product(for: ProductCatalogue.fullCourseProductID)
         XCTAssertEqual(full?.chapterIDs.count, 100)
         for number in 1...100 {
             XCTAssertTrue(full?.chapterIDs.contains("ch\(number)") ?? false, "The full course is missing ch\(number).")
@@ -107,24 +105,26 @@ final class StoreManagerTests: XCTestCase {
     }
 
     func testChapterBundleMappingMatchesBundlesJSON() {
-        XCTAssertEqual(PaymentConfig.productContaining("ch1")?.id, "foundations")
-        XCTAssertEqual(PaymentConfig.productContaining("ch5")?.id, "messaging")
-        XCTAssertEqual(PaymentConfig.productContaining("ch9")?.id, "rails")
-        XCTAssertEqual(PaymentConfig.productContaining("ch13")?.id, "crossborder")
-        XCTAssertEqual(PaymentConfig.productContaining("ch17")?.id, "clearing")
-        XCTAssertEqual(PaymentConfig.productContaining("ch21")?.id, "cards")
-        XCTAssertEqual(PaymentConfig.productContaining("ch23")?.id, "compliance-ops")
-        XCTAssertEqual(PaymentConfig.productContaining("ch25")?.id, "architecture-apis")
-        XCTAssertEqual(PaymentConfig.productContaining("ch28")?.id, "ba-practice")
-        XCTAssertEqual(PaymentConfig.productContaining("ch27")?.id, "emerging")
-        XCTAssertEqual(PaymentConfig.productContaining("ch64")?.id, "foundations")
-        XCTAssertEqual(PaymentConfig.productContaining("ch95")?.id, "compliance-ops")
-        XCTAssertEqual(PaymentConfig.productContaining("ch96")?.id, "ba-practice")
-        XCTAssertEqual(PaymentConfig.productContaining("ch100")?.id, "ba-practice")
-        XCTAssertNil(PaymentConfig.productContaining("ch999"), "An unknown chapter maps to no bundle.")
-        // The 11 chapter bundles together cover all 100 chapters.
-        let covered = Set(PaymentConfig.products
-            .filter { $0.productID != PaymentConfig.fullCourseProductID }
+        XCTAssertEqual(ProductCatalogue.productContaining(chapterID: "ch1")?.id, "foundations")
+        XCTAssertEqual(ProductCatalogue.productContaining(chapterID: "ch5")?.id, "messaging")
+        XCTAssertEqual(ProductCatalogue.productContaining(chapterID: "ch9")?.id, "rails")
+        XCTAssertEqual(ProductCatalogue.productContaining(chapterID: "ch13")?.id, "crossborder")
+        XCTAssertEqual(ProductCatalogue.productContaining(chapterID: "ch17")?.id, "clearing")
+        XCTAssertEqual(ProductCatalogue.productContaining(chapterID: "ch21")?.id, "cards")
+        XCTAssertEqual(ProductCatalogue.productContaining(chapterID: "ch23")?.id, "compliance-ops")
+        XCTAssertEqual(ProductCatalogue.productContaining(chapterID: "ch25")?.id, "architecture-apis")
+        XCTAssertEqual(ProductCatalogue.productContaining(chapterID: "ch28")?.id, "ba-practice")
+        XCTAssertEqual(ProductCatalogue.productContaining(chapterID: "ch27")?.id, "emerging")
+        XCTAssertEqual(ProductCatalogue.productContaining(chapterID: "ch64")?.id, "foundations")
+        XCTAssertEqual(ProductCatalogue.productContaining(chapterID: "ch95")?.id, "compliance-ops")
+        XCTAssertEqual(ProductCatalogue.productContaining(chapterID: "ch96")?.id, "ba-practice")
+        XCTAssertEqual(ProductCatalogue.productContaining(chapterID: "ch100")?.id, "ba-practice")
+        XCTAssertNil(ProductCatalogue.productContaining(chapterID: "ch999"), "An unknown chapter maps to no bundle.")
+        // The 10 chapter bundles together cover all 100 chapters.
+        // The full course is excluded (it contains every chapter by
+        // definition) and Situations contributes no chapters.
+        let covered = Set(ProductCatalogue.products
+            .filter { $0.productID != ProductCatalogue.fullCourseProductID && $0.productID != ProductCatalogue.situationsProductID }
             .flatMap { $0.chapterIDs })
         XCTAssertEqual(covered.count, 100)
         for number in 1...100 {
@@ -133,14 +133,12 @@ final class StoreManagerTests: XCTestCase {
     }
 
     func testSituationsProductUnchanged() {
-        XCTAssertEqual(PaymentConfig.situationsProductID, "com.paymentforge.app.situations")
-        XCTAssertEqual(PaymentConfig.priceAmountINR, 4999)
-        XCTAssertEqual(PaymentConfig.priceText, "Rs. 4,999")
-        let situations = PaymentConfig.product(for: PaymentConfig.situationsProductID)
-        XCTAssertEqual(situations?.situationCount, 500)
+        XCTAssertEqual(ProductCatalogue.situationsProductID, "com.paymentforge.app.situations")
+        let situations = ProductCatalogue.product(for: ProductCatalogue.situationsProductID)
+        XCTAssertEqual(situations?.situationCount, 564)
         XCTAssertTrue(situations?.chapterIDs.isEmpty ?? false)
         // The bundles.json id "situations-500" resolves to the same product.
-        XCTAssertEqual(PaymentConfig.product(forBundleID: "situations-500")?.productID, PaymentConfig.situationsProductID)
+        XCTAssertEqual(ProductCatalogue.product(forBundleID: "situations-500")?.productID, ProductCatalogue.situationsProductID)
     }
 
     func testFreshStoreLocksAllChaptersAndSituations() {
@@ -149,21 +147,14 @@ final class StoreManagerTests: XCTestCase {
         XCTAssertFalse(store.isChapterUnlocked("ch5"))
         XCTAssertFalse(store.isChapterUnlocked("ch95"))
         XCTAssertFalse(store.isSituationsUnlocked)
-        XCTAssertFalse(store.isProductUnlocked(PaymentConfig.fullCourseProductID))
-        XCTAssertFalse(store.isProductUnlocked(PaymentConfig.situationsProductID))
+        XCTAssertFalse(store.isProductUnlocked(ProductCatalogue.fullCourseProductID))
+        XCTAssertFalse(store.isProductUnlocked(ProductCatalogue.situationsProductID))
+        for productID in ProductCatalogue.allProductIDs {
+            XCTAssertFalse(store.isProductOwned(productID), "Fresh store must not own \(productID).")
+            XCTAssertFalse(store.isProductUnlocked(productID), "Fresh store must not unlock \(productID).")
+        }
         XCTAssertEqual(store.unlockedProductCount, 0)
-        // A chapter no bundle contains stays open, never locked by mistake.
-        XCTAssertTrue(store.isChapterUnlocked("ch999"))
-    }
-
-    func testUPIClaimForAnotherProductDoesNotUnlock() async {
-        let store = StoreManager()
-        let foundationsID = PaymentConfig.product(forBundleID: "foundations")!.productID
-        let claim = await store.submitUPIClaim(productID: foundationsID, payerName: "Test Learner", utr: "123456789012")
-        XCTAssertEqual(claim.productID, "com.paymentforge.app.foundations")
-        XCTAssertEqual(claim.amount, 1499)
-        XCTAssertEqual(claim.status.rawValue, "Pending")
-        XCTAssertFalse(store.isChapterUnlocked("ch1"), "A pending UTR must never unlock a chapter.")
-        XCTAssertFalse(store.isProductUnlocked(foundationsID))
+        // A chapter no bundle contains stays locked (fail closed).
+        XCTAssertFalse(store.isChapterUnlocked("ch999"))
     }
 }

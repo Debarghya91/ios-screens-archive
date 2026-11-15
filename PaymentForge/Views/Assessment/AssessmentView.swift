@@ -94,9 +94,7 @@ struct AssessmentView: View {
             .padding(PFSpacing.lg)
         }
         .background(Color.pfBackground)
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: PFSpacing.xl)
-        }
+        .pfTabBarClearance()
         .navigationTitle("Assessment")
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -112,6 +110,16 @@ struct AssessmentView: View {
                     dimension: dimension,
                     correct: session.correctCount,
                     total: session.questions.count
+                )
+                // Analytics, consent-gated by the service: the
+                // completion plus an improvement check for this
+                // dimension. No question or answer text is sent.
+                AnalyticsService.shared.recordAssessmentCompleted(
+                    dimension: dimension.rawValue,
+                    correct: session.correctCount,
+                    total: session.questions.count,
+                    elapsedSeconds: session.elapsedSeconds,
+                    unansweredCount: session.unansweredCount
                 )
             }
         }
@@ -149,6 +157,10 @@ struct AssessmentView: View {
         }
         if collected.isEmpty && contentService.searchIndex == nil {
             loadError = "The course catalogue has not loaded yet. Check your connection and try again."
+            // Analytics, consent-gated by the service: the
+            // assessment could not load because the catalogue
+            // has not loaded. No content is sent.
+            AnalyticsService.shared.recordContentLoadFailed(kind: "assessmentQuestions", failureCategory: "catalogueNotLoaded")
         }
         loadedQuestions = collected
         isLoading = false
@@ -206,6 +218,13 @@ struct AssessmentView: View {
                 didRecordResult = false
                 selectedOption = nil
                 session.start(questions: loadedQuestions, timed: timedMode, randomised: randomisedMode)
+                // Analytics, consent-gated by the service.
+                AnalyticsService.shared.recordAssessmentStarted(
+                    dimension: dimension.rawValue,
+                    questionCount: loadedQuestions.count,
+                    timed: timedMode,
+                    randomised: randomisedMode
+                )
             }
         }
     }
@@ -359,10 +378,7 @@ struct AssessmentView: View {
                                 .font(.pfCaption)
                                 .foregroundColor(.pfSecondaryText)
                         }
-                        Text(question.explanation)
-                            .font(.pfBody)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
+                        PFBodyText(text: question.explanation, textColor: .pfSecondaryText)
                         NavigationLink(destination: lessonDestination(for: question)) {
                             Text("Open the lesson: \(question.lessonTitle)")
                                 .font(.pfBody.weight(.semibold))
@@ -375,6 +391,14 @@ struct AssessmentView: View {
                 didRecordResult = false
                 selectedOption = nil
                 session.start(questions: loadedQuestions, timed: timedMode, randomised: randomisedMode)
+                // Analytics, consent-gated by the service: a retake
+                // is a fresh start for funnel purposes.
+                AnalyticsService.shared.recordAssessmentStarted(
+                    dimension: dimension.rawValue,
+                    questionCount: loadedQuestions.count,
+                    timed: timedMode,
+                    randomised: randomisedMode
+                )
             }
             PFSecondaryButton(title: "Change options") {
                 session.resetToSetup()

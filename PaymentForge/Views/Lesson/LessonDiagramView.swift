@@ -46,7 +46,38 @@ struct LessonDiagramView: View {
             .frame(minHeight: 120)
             .frame(height: contentHeight)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Lesson diagram")
+            .accessibilityLabel(accessibilityDescription)
+            .accessibilityAddTraits(.isImage)
+    }
+
+    /// The spoken description of the diagram: how many points it has
+    /// and which point is highlighted, counted from the data-beat
+    /// markers in the SVG itself. Falls back to a plain label when
+    /// the SVG carries no beat markers. Rendering is untouched.
+    private var accessibilityDescription: String {
+        let beatNumbers = beatNumbersInSVG
+        guard !beatNumbers.isEmpty else { return "Lesson diagram" }
+        let count = beatNumbers.count
+        if activeBeat >= 0, beatNumbers.contains(activeBeat) {
+            return "Lesson diagram with \(count) points, point \(activeBeat + 1) highlighted"
+        }
+        return "Lesson diagram with \(count) points, no point highlighted"
+    }
+
+    /// The distinct beat numbers in the SVG, from data-beat="N"
+    /// markers, in ascending order. Empty when the SVG has none.
+    private var beatNumbersInSVG: [Int] {
+        var found = Set<Int>()
+        var searchFrom = svg.startIndex
+        while let marker = svg.range(of: "data-beat=\"", range: searchFrom..<svg.endIndex) {
+            let after = svg[marker.upperBound...]
+            let digits = after.prefix(while: { $0.isNumber })
+            if let value = Int(digits) {
+                found.insert(value)
+            }
+            searchFrom = marker.upperBound
+        }
+        return found.sorted()
     }
 
     // MARK: - Web view

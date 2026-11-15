@@ -44,9 +44,15 @@ struct FinalAssessmentView: View {
 
     /// UserDefaults key for this course's exam end time. The timer
     /// is wall-clock based, so the end time is kept here while an
-    /// exam is running and cleared when it finishes.
+    /// exam is running and cleared when it finishes. The key is
+    /// namespaced per account: one learner's running exam clock
+    /// must never resume under another account. A legacy
+    /// un-namespaced end time (an exam running across the upgrade
+    /// to namespaced storage) is adopted once, on first read.
     private var endTimeKey: String {
-        "pf.finalAssessment.endTime.\(course.productID).v1"
+        let baseKey = "pf.finalAssessment.endTime.\(course.productID).v1"
+        AccountScopedStorage.adoptLegacyKey(baseKey)
+        return AccountScopedStorage.currentKey(baseKey)
     }
 
     /// The wall-clock end of an exam started earlier for this
@@ -130,10 +136,7 @@ struct FinalAssessmentView: View {
                             Text("Not enough real questions yet")
                                 .font(.pfCardTitle)
                                 .foregroundColor(.pfNavy)
-                            Text("Only \(loadedQuestions.count) real quiz \(loadedQuestions.count == 1 ? "question was" : "questions were") found in \(course.name). The Final Assessment needs \(FinalAssessmentStore.questionCount). No questions were invented to fill the gap. Check your connection and try again.")
-                                .font(.pfBody)
-                                .foregroundColor(.pfSecondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
+                            PFBodyText(text: "Only \(loadedQuestions.count) real quiz \(loadedQuestions.count == 1 ? "question was" : "questions were") found in \(course.name). The Final Assessment needs \(FinalAssessmentStore.questionCount). No questions were invented to fill the gap. Check your connection and try again.", textColor: .pfSecondaryText)
                             PFPrimaryButton(title: "Retry") {
                                 Task { await loadQuestions() }
                             }
@@ -153,9 +156,7 @@ struct FinalAssessmentView: View {
                 examTimerBar
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: PFSpacing.xl)
-        }
+        .pfTabBarClearance()
         .navigationTitle("Final Assessment")
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -186,6 +187,22 @@ struct FinalAssessmentView: View {
                     total: session.questions.count,
                     learnerName: learnerName
                 )
+                // Analytics, consent-gated by the service: the
+                // completion plus an improvement check for this
+                // course, and a certificate event only when one
+                // was actually issued. No question text is sent.
+                AnalyticsService.shared.recordFinalAssessmentCompleted(
+                    productID: course.productID,
+                    attemptNumber: attemptsUsed,
+                    correct: session.correctCount,
+                    total: session.questions.count,
+                    passed: session.correctCount >= FinalAssessmentStore.passCorrectCount,
+                    elapsedSeconds: session.elapsedSeconds,
+                    unansweredCount: session.unansweredCount
+                )
+                if earnedCertificate != nil {
+                    AnalyticsService.shared.recordCertificateEarned(productID: course.productID)
+                }
             }
         }
     }
@@ -245,6 +262,10 @@ struct FinalAssessmentView: View {
         }
         if collected.isEmpty && contentService.searchIndex == nil {
             loadError = "The course catalogue has not loaded yet. Check your connection and try again."
+            // Analytics, consent-gated by the service: the Final
+            // Assessment could not load because the catalogue
+            // has not loaded. No content is sent.
+            AnalyticsService.shared.recordContentLoadFailed(kind: "finalAssessmentQuestions", failureCategory: "catalogueNotLoaded")
         }
         loadedQuestions = collected
         isLoading = false
@@ -255,7 +276,10 @@ struct FinalAssessmentView: View {
     /// Start the exam: 20 questions, 30 minutes on a wall-clock
     /// end time, no per-question auto-advance. The end time is kept
     /// per course so leaving and coming back resumes the same clock.
-    private func startExam(totalLimit: Int) {
+    /// isResume is true only when resuming an exam already running
+    /// on its wall clock; it is recorded on the analytics start
+    /// event so resumes and fresh starts stay distinct.
+    private func startExam(totalLimit: Int, isResume: Bool = false) {
         didRecordAttempt = false
         earnedCertificate = nil
         selectedOption = nil
@@ -267,6 +291,14 @@ struct FinalAssessmentView: View {
             perQuestionTimeout: false,
             persistKey: endTimeKey
         )
+        // Analytics, consent-gated by the service. The attempt
+        // number is the next attempt: attempts used so far plus
+        // the one starting now.
+        AnalyticsService.shared.recordFinalAssessmentStarted(
+            productID: course.productID,
+            attemptNumber: attemptsUsed + 1,
+            isResume: isResume
+        )
     }
 
     /// Resume an exam started earlier: use the time left on its
@@ -274,7 +306,7 @@ struct FinalAssessmentView: View {
     /// fresh 30 minutes.
     private func resumeExam() {
         if let remaining = storedRemainingSeconds {
-            startExam(totalLimit: remaining)
+            startExam(totalLimit: remaining, isResume: true)
         } else {
             AssessmentSession.clearStoredEndTime(forKey: endTimeKey)
             startExam(totalLimit: AssessmentSession.finalAssessmentTimeLimit)
@@ -392,10 +424,7 @@ struct FinalAssessmentView: View {
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
                     }
-                    Text("You have 30 minutes for all 20 questions. The timer starts when you tap Start and keeps running even if you leave the app or lock your phone. When it reaches zero, your answers so far are submitted. Unanswered questions count as wrong.")
-                        .font(.pfBody)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+                    PFBodyText(text: "You have 30 minutes for all 20 questions. The timer starts when you tap Start and keeps running even if you leave the app or lock your phone. When it reaches zero, your answers so far are submitted. Unanswered questions count as wrong.", textColor: .pfSecondaryText)
                 }
             }
             if let remaining = storedRemainingSeconds {
@@ -601,10 +630,7 @@ struct FinalAssessmentView: View {
                                 .font(.pfCaption)
                                 .foregroundColor(.pfSecondaryText)
                         }
-                        Text(question.explanation)
-                            .font(.pfBody)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
+                        PFBodyText(text: question.explanation, textColor: .pfSecondaryText)
                             .textSelection(.disabled)
                         NavigationLink(destination: lessonDestination(for: question)) {
                             Text("Open the lesson: \(question.lessonTitle)")

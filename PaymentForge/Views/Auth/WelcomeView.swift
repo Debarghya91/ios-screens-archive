@@ -15,11 +15,16 @@ struct WelcomeView: View {
     @StateObject private var authService = AuthService.shared
 
     @State private var showEmailAuth = false
+    @State private var showEmailSignup = false
+    @State private var showMigrationOffer = false
 
     /// One alert for every auth failure, driven by authError itself.
     private var errorAlertBinding: Binding<Bool> {
         Binding(
-            get: { authService.authError != nil },
+            // Never present a sign-in error alert once signed in: a
+            // stale error from an earlier failed attempt must not
+            // surface on this view while it dismisses after success.
+            get: { authService.authError != nil && !authService.isSignedIn },
             set: { isPresented in
                 if !isPresented { authService.authError = nil }
             }
@@ -44,6 +49,9 @@ struct WelcomeView: View {
         .sheet(isPresented: $showEmailAuth) {
             EmailAuthView()
         }
+        .sheet(isPresented: $showEmailSignup) {
+            EmailSignupView()
+        }
         .alert("Sign-in", isPresented: errorAlertBinding) {
             Button("Continue as guest") { dismiss() }
             Button("OK", role: .cancel) { }
@@ -51,9 +59,62 @@ struct WelcomeView: View {
             Text(authService.authError ?? "Something went wrong. Please try again.")
         }
         .onChange(of: authService.isSignedIn) { _, signedIn in
-            if signedIn {
+            // When a guest-to-account migration is offered, stay
+            // open so the offer alert can be answered; both of
+            // its buttons dismiss this view. When the email or
+            // signup sheet is up, dismissal waits for it to close
+            // first (see the sheet changes below), so the sheets
+            // never dismiss in the same update.
+            if signedIn, !authService.offersGuestMigration, !showEmailAuth, !showEmailSignup {
                 dismiss()
             }
+        }
+        .onChange(of: authService.offersGuestMigration) { _, offered in
+            // The email and signup sheets present their own copy of
+            // this offer; only show it here for direct Apple/Google
+            // sign-ins. When an offer resolves while this view is
+            // showing a signed-in user, dismiss: sign-in is
+            // complete. A sheet closing is what dismisses this view
+            // for email and signup sign-ins, never this branch
+            // while one is up.
+            if offered, !showEmailAuth, !showEmailSignup {
+                showMigrationOffer = true
+            } else if !offered, authService.isSignedIn, !showEmailAuth, !showEmailSignup {
+                dismiss()
+            }
+        }
+        .onChange(of: showEmailAuth) { _, isPresented in
+            // The email sheet just closed. When sign-in completed
+            // through it and no migration offer is outstanding,
+            // this view's job is done: dismiss now, after the
+            // child sheet has gone, never at the same time.
+            if !isPresented, authService.isSignedIn, !authService.offersGuestMigration {
+                dismiss()
+            }
+        }
+        .onChange(of: showEmailSignup) { _, isPresented in
+            // The signup sheet just closed. Same rule as the email
+            // sheet: dismiss only after the child sheet has gone.
+            if !isPresented, authService.isSignedIn, !authService.offersGuestMigration {
+                dismiss()
+            }
+        }
+        .alert(
+            "Move your guest progress to your account?",
+            isPresented: $showMigrationOffer
+        ) {
+            Button("Move my progress") {
+                Task {
+                    await authService.acceptGuestMigration()
+                    dismiss()
+                }
+            }
+            Button("Not now", role: .cancel) {
+                authService.declineGuestMigration()
+                dismiss()
+            }
+        } message: {
+            Text("You learned as a guest on this device. Move that progress, notes and bookmarks to your account? Anything already in your account is kept, and nothing is overwritten.")
         }
     }
 
@@ -131,6 +192,24 @@ struct WelcomeView: View {
                 }
             } label: {
                 Label("Continue with Email", systemImage: "envelope.fill")
+                    .font(.pfBody.weight(.semibold))
+                    .foregroundColor(.pfNavy)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Color.white)
+                    .cornerRadius(PFSpacing.cornerRadius)
+            }
+            .buttonStyle(.plain)
+            .disabled(authService.isBusy)
+
+            Button {
+                if authService.canSignIn {
+                    showEmailSignup = true
+                } else {
+                    authService.authError = "Sign-in is not set up yet. You can keep learning as a guest, and your progress stays on this device."
+                }
+            } label: {
+                Label("Create account", systemImage: "person.badge.plus")
                     .font(.pfBody.weight(.semibold))
                     .foregroundColor(.pfNavy)
                     .frame(maxWidth: .infinity)

@@ -75,13 +75,10 @@ enum SupabaseConfig {
 
     /// The custom URL scheme the app uses for Supabase Auth callbacks
     /// (Google sign-in and magic links). The callback URL is
-    /// com.paymentforge.app://auth-callback.
-    /// OWNER STEP, not done here: register this scheme in Info.plist
-    /// (CFBundleURLSchemes) and add an onOpenURL handler in
-    /// PaymentForgeApp that calls
-    /// AuthService.shared.handleAuthCallback(url:). Until that wiring
-    /// exists, Google sign-in and magic-link taps cannot return to
-    /// the app; email OTP (the default) is unaffected. Also add
+    /// com.paymentforge.app://auth-callback. The scheme is registered
+    /// in Info.plist (CFBundleURLSchemes) and PaymentForgeApp
+    /// forwards incoming URLs to
+    /// AuthService.shared.handleAuthCallback(url:). Also add
     /// com.paymentforge.app://auth-callback to the Redirect URLs in
     /// the Supabase dashboard under Authentication > URL Configuration.
     static let authRedirectScheme = "com.paymentforge.app"
@@ -123,13 +120,12 @@ enum SupabaseConfig {
 /// are the 11 chapter bundles plus Payment Situations. A bundle's
 /// chapters are the chapters it unlocks; Situations has no chapters
 /// and unlocks the 500 situations instead. Prices are the INR prices
-/// from bundles.json, as ordered by the owner on 11 Nov 2026.
+/// from bundles.json, as set on 11 Nov 2026.
 /// Product IDs follow com.paymentforge.app.<bundle-id>, matching the
 /// App Store Connect products and PaymentForge.storekit.
 ///
 struct CourseProduct: Identifiable, Hashable {
     /// Bundle id from bundles.json, for example "foundations".
-    /// Also used as the UPI transaction note.
     let id: String
     /// The App Store Connect product ID.
     let productID: String
@@ -164,11 +160,10 @@ struct CourseProduct: Identifiable, Hashable {
 
 ///
 /// All payment configuration lives here, so no view or service
-/// hardcodes a product ID, a price or the UPI ID. The 12 products
-/// below are the single source of truth for the catalogue; change a
-/// price only on the owner's explicit instruction, in this one place.
-/// The UPI ID is the public payee address shown to the user, not a
-/// credential: there are no secrets, admin credentials or
+/// hardcodes a product ID or a price. The 12 products below are the
+/// single source of truth for the catalogue; change a price only with
+/// explicit approval, in this one place. Payment is
+/// In-App Purchase only. There are no secrets, admin credentials or
 /// service-role keys anywhere in the app.
 ///
 enum PaymentConfig {
@@ -181,7 +176,7 @@ enum PaymentConfig {
             productID: "com.paymentforge.app.full",
             name: "The Integrated Course",
             tagline: "The flagship. Everything in the academy, all 15 domains.",
-            description: "The complete Payments Training Hub academy in one course: all 100 chapters and all 746 narrated lessons, from what a payment is to payment hub architecture, ISO 20022 and SWIFT messaging, clearing and settlement, cards, compliance, APIs, exceptions, reconciliation and AI product ownership for payments. Buy this and every chapter unlocks.",
+            description: "The complete Payments Training Hub academy in one course: all 100 chapters and all 881 narrated lessons, from what a payment is to payment hub architecture, ISO 20022 and SWIFT messaging, clearing and settlement, cards, compliance, APIs, exceptions, reconciliation and AI product ownership for payments. Buy this and every chapter unlocks.",
             priceINR: 9999,
             chapterIDs: (1...100).map { "ch\($0)" },
             situationCount: 0
@@ -301,7 +296,8 @@ enum PaymentConfig {
     /// All 12 product IDs.
     static let allProductIDs: [String] = products.map { $0.productID }
 
-    /// The Integrated Course product ID: it unlocks everything.
+    /// The Integrated Course product ID: it unlocks everything,
+    /// all chapters and all Payment Situations.
     static let fullCourseProductID = "com.paymentforge.app.full"
 
     /// The product for an App Store product ID, nil when unknown.
@@ -350,30 +346,4 @@ enum PaymentConfig {
 
     /// The price as shown on the Purchases detail row.
     static let priceDetailText = "Rs. 4,999, one-time payment"
-
-    /// The UPI ID payments are sent to.
-    static let upiID = "deb.arghya@ptyes"
-
-    /// The payee name shown in the UPI payment request.
-    static let upiPayeeName = "Payments Training Hub"
-
-    /// The UPI payment deep link opened in the user's UPI app.
-    /// Amount and currency are fixed to the price above.
-    static var upiPaymentURL: URL? {
-        upiPaymentURL(for: situationsProductID)
-    }
-
-    /// The UPI payment deep link for one product: the product's own
-    /// price as the amount and its bundle id as the transaction note,
-    /// so the owner can tell which product a UPI payment was for.
-    /// Situations keeps its existing note "situations-500", matching
-    /// the bundle id in bundles.json.
-    static func upiPaymentURL(for productID: String) -> URL? {
-        guard let product = product(for: productID) else { return nil }
-        let payee = upiPayeeName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "Payments%20Training%20Hub"
-        let noteID = product.id == "situations" ? "situations-500" : product.id
-        let note = noteID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? noteID
-        let urlString = "upi://pay?pa=\(upiID)&pn=\(payee)&am=\(product.priceINR)&cu=INR&tn=\(note)"
-        return URL(string: urlString)
-    }
 }

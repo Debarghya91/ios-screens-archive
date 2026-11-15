@@ -1,6 +1,6 @@
 // DailyChallengeView.swift
 // PaymentForge iOS - Daily Challenge: one real situation per day.
-// The situation is picked deterministically from the 564 by the
+// The situation is picked deterministically from the situations by the
 // calendar day, so every learner gets the same challenge each day and
 // it changes daily. The question is "What is the key lesson here?":
 // the correct option is the situation's own takeaway, and the wrong
@@ -8,22 +8,33 @@
 // option is real text and none is an invented technical fact. The
 // explanation is the situation's own takeaway. Completion is tracked
 // locally, one per day.
+//
+// v70 gate: a learner without Payment Situations unlocked sees only
+// the 6 free samples plus this week's free case here. The pick, the
+// options, the scenario text and the post-answer takeaway all draw
+// from the gated pool, so no locked explain or takeaway text can
+// reach a non-entitled learner through this surface. Entitled
+// learners are unaffected: the gate returns the full list unchanged
+// for them, so the pick, the options and the shuffle are identical.
 // No em dashes in any user-facing text.
 
 import SwiftUI
 
 struct DailyChallengeView: View {
     @EnvironmentObject private var contentService: ContentService
+    @EnvironmentObject private var storeManager: StoreManager
 
     @State private var selectedOption: Int? = nil
     @State private var answered = false
 
     private enum Keys {
+        /// Namespaced per account: one learner's completed challenge
+        /// must never show as completed for another learner.
         static func completed(for dayKey: String) -> String {
-            "pf.dailyChallenge.completed.\(dayKey).v1"
+            AccountScopedStorage.currentKey("pf.dailyChallenge.completed.\(dayKey).v1")
         }
         static func correct(for dayKey: String) -> String {
-            "pf.dailyChallenge.correct.\(dayKey).v1"
+            AccountScopedStorage.currentKey("pf.dailyChallenge.correct.\(dayKey).v1")
         }
     }
 
@@ -49,27 +60,125 @@ struct DailyChallengeView: View {
         return contentService.allSituations.map { situation(from: $0) }
     }
 
-    /// Today's situation, deterministic by day.
+    // MARK: - Entitlement gate (v70)
+
+    /// The situations a learner may see in this challenge. Entitled
+    /// learners get the input unchanged, in catalogue order, so
+    /// their pick, options and shuffle are byte-identical to the
+    /// ungated behavior. Everyone else gets only the free samples
+    /// (flagged by situation(from:) and situation(fromFull:) from
+    /// ContentService.freeSampleIDs) plus this week's free case.
+    /// A nil or unknown weekly case id leaves only the free
+    /// samples: the gate never invents a situation and never falls
+    /// back to locked content. Pure, so it is covered by unit tests.
+    static func eligiblePool(
+        from situations: [Situation],
+        isSituationsUnlocked: Bool,
+        weeklyCaseID: String?
+    ) -> [Situation] {
+        guard !isSituationsUnlocked else { return situations }
+        return situations.filter { situation in
+            if situation.isFreeSample { return true }
+            guard let weeklyCaseID else { return false }
+            return situation.id == weeklyCaseID
+        }
+    }
+
+    /// This week's free case id, picked exactly the way
+    /// WeeklyFreeCaseView picks it: the dedicated 52-case weekly
+    /// list wins when it has loaded, otherwise the catalogue
+    /// fallback. No second cycle rule lives here: the selector is
+    /// WeeklyFreeCaseSelector in both places, over the same
+    /// orders (weekly list in week order, catalogue order).
+    private var weeklyCaseID: String? {
+        if let weekly = contentService.weeklyCases, !weekly.isEmpty {
+            return WeeklyFreeCaseSelector.situationID(from: weekly.map(\.id), on: Date())
+        }
+        return WeeklyFreeCaseSelector.situationID(from: situations.map(\.id), on: Date())
+    }
+
+    /// This week's free case from the dedicated weekly list, when
+    /// it has loaded. Only needed when the catalogue source has
+    /// not loaded the full data yet: the weekly item then carries
+    /// the full explain and takeaway the search index excerpt
+    /// cannot. Nil when the weekly list has not loaded, in which
+    /// case the weekly case already sits in `situations` through
+    /// the catalogue fallback pick.
+    private var weeklyListSituation: Situation? {
+        guard let weekly = contentService.weeklyCases, !weekly.isEmpty,
+              let pickedID = WeeklyFreeCaseSelector.situationID(from: weekly.map(\.id), on: Date()),
+              let item = weekly.first(where: { $0.id == pickedID }) else { return nil }
+        return situation(fromFull: item)
+    }
+
+    /// The pick pool for this challenge. For entitled learners it
+    /// is exactly `situations`: the weekly case is never appended
+    /// for them, so the pool order and count stay exactly the
+    /// catalogue order and the deterministic pick is unchanged.
+    /// For everyone else the weekly case is appended when it
+    /// comes from the dedicated weekly list and is not already in
+    /// the catalogue source, so it is never missing from the
+    /// pool, and the gate then keeps only the free samples plus
+    /// that case. The pick logic lives in this view, not in a
+    /// shared file, so the gate is applied here, before pick and
+    /// display, and every display path below reads from this pool.
+    private var eligibleSituations: [Situation] {
+        let unlocked = storeManager.isSituationsUnlocked
+        var source = situations
+        if !unlocked,
+           let weekly = weeklyListSituation,
+           !source.contains(where: { $0.id == weekly.id }) {
+            source.append(weekly)
+        }
+        return Self.eligiblePool(from: source, isSituationsUnlocked: unlocked, weeklyCaseID: weeklyCaseID)
+    }
+
+    /// Today's situation, deterministic by day. For non-entitled
+    /// learners the day number cycles within the small free pool,
+    /// so the same free case repeats across days: that is the
+    /// documented fallback for the small pool, never a fallback
+    /// to locked content.
     private var todaysSituation: Situation? {
-        guard !situations.isEmpty else { return nil }
-        return situations[dayNumber % situations.count]
+        guard !eligibleSituations.isEmpty else { return nil }
+        return eligibleSituations[dayNumber % eligibleSituations.count]
     }
 
     /// The four answer options: today's takeaway plus three other real
     /// takeaways, shuffled deterministically by the day number.
+    /// Every option comes from the gated pool, so a non-entitled
+    /// learner never sees a locked takeaway as a distractor.
     private var options: [(text: String, isCorrect: Bool)] {
         guard let today = todaysSituation else { return [] }
-        var pool: [(String, Bool)] = [(firstSentence(of: today.takeaway), true)]
+        let pool = eligibleSituations
+        var result: [(String, Bool)] = [(firstSentence(of: today.takeaway), true)]
         let offsets = [97, 211, 331]
         for offset in offsets {
-            let other = situations[(dayNumber + offset) % situations.count]
+            let other = pool[(dayNumber + offset) % pool.count]
             guard other.id != today.id else { continue }
             let text = firstSentence(of: other.takeaway)
-            if !pool.contains(where: { $0.0 == text }) {
-                pool.append((text, false))
+            if !result.contains(where: { $0.0 == text }) {
+                result.append((text, false))
             }
         }
-        var shuffled = pool
+        // Small-pool fill: with only 6 or 7 free cases the fixed
+        // offsets can land on the same case twice, leaving fewer
+        // than four options. Walk the pool in day order until
+        // there are four options or the pool is exhausted. With
+        // the full catalogue the offset loop already yields four,
+        // so this never runs for entitled learners.
+        if result.count < 4 {
+            var step = 1
+            while result.count < 4 && step <= pool.count {
+                let other = pool[(dayNumber + step) % pool.count]
+                step += 1
+                guard other.id != today.id else { continue }
+                let text = firstSentence(of: other.takeaway)
+                if !result.contains(where: { $0.0 == text }) {
+                    result.append((text, false))
+                }
+            }
+        }
+        var shuffled = result
         var seed = UInt64(bitPattern: Int64(dayNumber &+ 1))
         for index in stride(from: shuffled.count - 1, through: 1, by: -1) {
             seed = seed &* 6364136223846793005 &+ 1442695040888963407
@@ -139,15 +248,28 @@ struct DailyChallengeView: View {
         // it out.
         .pfProtectedContent()
         .background(Color.pfBackground)
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: PFSpacing.xl)
-        }
+        .pfTabBarClearance()
         .navigationTitle("Daily Challenge")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
+            // Adopt any pre-namespacing challenge records into the
+            // current namespace once; a no-op once adopted.
+            AccountScopedStorage.adoptLegacyKeys(withPrefix: "pf.dailyChallenge.")
+            // Analytics, consent-gated by the service: the
+            // challenge was viewed.
+            AnalyticsService.shared.recordChallengeViewed()
             if alreadyCompletedToday {
                 answered = true
             }
+        }
+        .task {
+            // The weekly free case id prefers the dedicated weekly
+            // list; load it so the gate uses the same weekly case
+            // WeeklyFreeCaseView shows. Idempotent: a loaded list
+            // is never fetched again. Until it loads, the
+            // catalogue fallback pick applies, exactly as in the
+            // weekly view.
+            await contentService.loadWeeklyCases()
         }
     }
 
@@ -159,7 +281,9 @@ struct DailyChallengeView: View {
                 .font(.pfScreenTitle)
                 .foregroundColor(.pfNavy)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("A new situation every day, the same one for every learner. Read the case, pick the key lesson, then check yourself against the situation's own takeaway.")
+            Text(storeManager.isSituationsUnlocked
+                ? "A new situation every day, the same one for every learner. Read the case, pick the key lesson, then check yourself against the situation's own takeaway."
+                : "A new free case every day, drawn from the free samples and this week's free case. Read the case, pick the key lesson, then check yourself against the situation's own takeaway.")
                 .font(.pfBody)
                 .foregroundColor(.pfSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -184,7 +308,7 @@ struct DailyChallengeView: View {
                         PFPill(
                             text: situation.level.displayName,
                             background: Color.pfGoldSoft,
-                            foreground: Color(red: 0.55, green: 0.44, blue: 0.08)
+                            foreground: Color.pfGoldText
                         )
                         if let schemeName = scheme(for: situation) {
                             PFPill(text: schemeName)
@@ -194,10 +318,7 @@ struct DailyChallengeView: View {
                         .font(.pfSectionTitle)
                         .foregroundColor(.pfNavy)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text(scenarioText)
-                        .font(.pfBody)
-                        .foregroundColor(.pfNavy)
-                        .fixedSize(horizontal: false, vertical: true)
+                    PFBodyText(text: scenarioText)
                 }
             }
             Text("What is the key lesson here?")
@@ -251,6 +372,9 @@ struct DailyChallengeView: View {
                     let correct = options[selectedOption].isCorrect
                     UserDefaults.standard.set(true, forKey: Keys.completed(for: dayKey))
                     UserDefaults.standard.set(correct, forKey: Keys.correct(for: dayKey))
+                    // Analytics, consent-gated by the service: the
+                    // challenge was answered. No case text is sent.
+                    AnalyticsService.shared.recordChallengeCompleted(correct: correct)
                 }
                 .disabled(selectedOption == nil)
                 .opacity(selectedOption == nil ? 0.5 : 1)
@@ -264,10 +388,15 @@ struct DailyChallengeView: View {
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text(situation.takeaway)
-                            .font(.pfBody)
-                            .foregroundColor(.pfNavy)
-                            .fixedSize(horizontal: false, vertical: true)
+                        PFBodyText(text: situation.takeaway)
+                        // The detail is opened without the weekly-path
+                        // flag on purpose: the D101 gate treats the
+                        // weekly case as free only on the weekly path,
+                        // and any other path stays gated. A weekly
+                        // case reached from this challenge therefore
+                        // shows the locked gate in the detail, which
+                        // is the conservative option. Free samples
+                        // open fully, as they do everywhere.
                         NavigationLink(destination: SituationDetailView(situation: situation)) {
                             Text("Open the full situation")
                                 .font(.pfBody.weight(.semibold))

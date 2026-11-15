@@ -1,5 +1,5 @@
 // SituationsView.swift
-// PaymentForge iOS - Payment Situations: 564 real-world situations.
+// PaymentForge iOS - Payment Situations: ContentManifest.situationCount real-world situations.
 // Native SwiftUI only, no WebView.
 
 import SwiftUI
@@ -48,7 +48,7 @@ func situation(from entry: SearchEntry) -> Situation {
 
 /// Build a Situation from one full data-file item. The stage and stage
 /// name come from the data file's own `stage` and `stage_name` fields
-/// when present (authoritative for all 564 items, verified 11 Nov 2026);
+/// when present (authoritative for all ContentManifest.situationCount items, verified 11 Nov 2026);
 /// ContentService falls back to the website stage map and then to the
 /// level, and the result is marked derived in that case. The level
 /// comes from the item itself, and the explain, takeaway and visual
@@ -311,6 +311,15 @@ struct SituationsView: View {
     /// pushed detail views have no menu button and keep a clean back button.
     @Binding var isDrawerOpen: Bool
 
+    /// Shows a Done button in the navigation bar when this view is
+    /// pushed from Checkout after a build-phase Buy, so the learner
+    /// has a way back: the pushed copy has no drawer, and its own
+    /// NavigationStack hides the outer back button. False in the
+    /// tab, where the drawer button is the way out.
+    var showCloseButton: Bool = false
+
+    @Environment(\.dismiss) private var dismiss
+
     @State private var levelFilter: SituationLevel? = nil
     @State private var stageFilter: Int? = nil
     @State private var showCheckout = false
@@ -321,7 +330,7 @@ struct SituationsView: View {
 
     /// Pagination inside each stage group: 10 situations per
     /// page, with a Load more button. Only the shown situations
-    /// are rendered, so 564 situations never sit in the view
+    /// are rendered, so ContentManifest.situationCount situations never sit in the view
     /// hierarchy at once.
     private static let stagePageSize = 10
     /// Expanded stage groups. Stage 1 starts open so the list
@@ -429,9 +438,7 @@ struct SituationsView: View {
                 .background(Color.pfBackground)
                 // Extra scrollable space at the bottom so the last card
                 // clears the tab bar on every iPhone size.
-                .safeAreaInset(edge: .bottom) {
-                    Color.clear.frame(height: PFSpacing.xl)
-                }
+                .pfTabBarClearance()
                 // Any filter change: back to the first page in
                 // every stage group.
                 .onChange(of: searchText) { _, _ in stageVisibleCounts = [:] }
@@ -440,10 +447,16 @@ struct SituationsView: View {
                 .onChange(of: stageFilter) { _, _ in stageVisibleCounts = [:] }
                 .onChange(of: showOnlyFree) { _, _ in stageVisibleCounts = [:] }
             }
-            .navigationTitle("Situations")
+            .navigationTitle("Payment Cases")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     DrawerMenuButton(isDrawerOpen: $isDrawerOpen)
+                }
+                if showCloseButton {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Done") { dismiss() }
+                    }
                 }
             }
             .sheet(isPresented: $showCheckout) {
@@ -472,7 +485,7 @@ struct SituationsView: View {
             Text("Payment Situations")
                 .font(.pfHeroTitle)
                 .foregroundColor(.white)
-            Text("564 real-world situations across 6 learning stages. Try 10 free samples, then unlock the full set for Rs. 4,999.")
+            Text("\(ContentManifest.situationCount) real-world situations across 6 learning stages. Try one free sample from each stage, then unlock the full set\(storeManager.isPriceAvailable(for: ProductCatalogue.situationsProductID) ? " for \(storeManager.priceText)" : ""). The Integrated Course includes all situations too.")
                 .font(.pfBody)
                 .foregroundColor(.white.opacity(0.85))
             PFGoldButton(title: "See the free samples", action: onSeeFreeSamples)
@@ -504,7 +517,7 @@ struct SituationsView: View {
                 actionTitle: showOnlyFree ? "Show all" : nil,
                 action: showOnlyFree ? { showOnlyFree = false } : nil
             )
-            Text("Try these 10 situations free, no payment needed.")
+            Text("Try one situation from each stage free, no payment needed.")
                 .font(.pfBody)
                 .foregroundColor(.pfSecondaryText)
             if contentService.isLoadingIndex && contentService.searchIndex == nil {
@@ -522,6 +535,7 @@ struct SituationsView: View {
                             situationRow(situation, showFreePill: true)
                         }
                         .buttonStyle(PFCardButtonStyle())
+                        .accessibilityIdentifier("freeSituationRow")
                     }
                 }
             }
@@ -675,15 +689,14 @@ struct SituationsView: View {
 
     /// One collapsible stage group: a header card with the stage
     /// name and situation count, and, when expanded, its
-    /// situation rows in catalogue order, ten at a time with a
-    /// Load more button and a "Showing X of Y" label. The rows
-    /// are the same situationRow as before, detail navigation
-    /// included. A group opens on its own when it is the only
-    /// one left after filtering.
+    /// situation rows in catalogue order, numbered 1 to N within
+    /// the stage, ten at a time with a Load more button and a
+    /// "Showing X of Y" label. The rows are the same situationRow
+    /// as before, detail navigation included. A group opens on
+    /// its own when it is the only one left after filtering.
     private func stageGroupCard(_ group: (stage: Int, stageName: String, situations: [Situation])) -> some View {
         let isExpanded = expandedStages.contains(group.stage) || groupedSituations.count == 1
         let visibleCount = min(stageVisibleCounts[group.stage] ?? Self.stagePageSize, group.situations.count)
-        let visible = Array(group.situations.prefix(visibleCount))
         return VStack(alignment: .leading, spacing: PFSpacing.md) {
             Button {
                 withAnimation {
@@ -716,11 +729,12 @@ struct SituationsView: View {
             .accessibilityHint(isExpanded ? "Collapse this stage" : "Expand to see its situations")
             if isExpanded {
                 VStack(spacing: PFSpacing.sm) {
-                    ForEach(visible) { situation in
+                    ForEach(Array(group.situations.enumerated().prefix(visibleCount)), id: \.element.id) { index, situation in
                         NavigationLink(destination: SituationDetailView(situation: situation)) {
-                            situationRow(situation, showFreePill: situation.isFreeSample)
+                            situationRow(situation, showFreePill: situation.isFreeSample, number: index + 1)
                         }
                         .buttonStyle(PFCardButtonStyle())
+                        .accessibilityIdentifier(!situation.isFreeSample && !storeManager.isSituationsUnlocked ? "lockedSituationRow" : "situationRow")
                     }
                     if group.situations.count > visibleCount {
                         Text("Showing \(visibleCount) of \(group.situations.count) situations")
@@ -738,16 +752,26 @@ struct SituationsView: View {
 
     /// A situation row has a distinct case-study identity, different
     /// from a lesson card: a gold leading accent and a briefcase tile,
-    /// navy heading, and the stage and level pills.
-    private func situationRow(_ situation: Situation, showFreePill: Bool) -> some View {
+    /// navy heading, and the stage and level pills. Inside a stage
+    /// group the row also carries its number within the stage, and
+    /// every row shows the approximate read time.
+    private func situationRow(_ situation: Situation, showFreePill: Bool, number: Int? = nil) -> some View {
         HStack(alignment: .top, spacing: PFSpacing.md) {
+            if let number {
+                Text("\(number)")
+                    .font(.pfCaptionBold)
+                    .foregroundColor(.pfRoyal)
+                    .frame(width: 26, height: 26)
+                    .background(Color.pfRoyal.opacity(0.10))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
             Rectangle()
                 .fill(Color.pfGold)
                 .frame(width: 4)
                 .cornerRadius(2)
             Image(systemName: "briefcase.fill")
                 .font(.pfCardTitle.weight(.semibold))
-                .foregroundColor(Color(red: 0.55, green: 0.44, blue: 0.08))
+                .foregroundColor(Color.pfGoldText)
                 .frame(width: 44, height: 44)
                 .background(Color.pfGoldSoft)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -762,7 +786,7 @@ struct SituationsView: View {
                     PFPill(
                         text: situation.level.displayName,
                         background: Color.pfGoldSoft,
-                        foreground: Color(red: 0.55, green: 0.44, blue: 0.08)
+                        foreground: Color.pfGoldText
                     )
                     if let schemeName = scheme(for: situation) {
                         PFPill(
@@ -778,6 +802,23 @@ struct SituationsView: View {
                             foreground: .pfSuccess
                         )
                     }
+                    if !situation.isFreeSample && !storeManager.isSituationsUnlocked {
+                        PFPill(
+                            text: "Locked",
+                            background: Color.pfGoldSoft,
+                            foreground: Color.pfGoldText
+                        )
+                    }
+                }
+                if let readLabel = ReadTime.label(for: situation.explain + " " + situation.takeaway) {
+                    HStack(spacing: PFSpacing.xs) {
+                        Image(systemName: "clock")
+                            .font(.pfCaption.weight(.semibold))
+                            .accessibilityHidden(true)
+                        Text(readLabel)
+                            .font(.pfCaption)
+                    }
+                    .foregroundColor(.pfSecondaryText)
                 }
             }
             Spacer()
@@ -808,10 +849,10 @@ struct SituationsView: View {
     private var footerCard: some View {
         PFCard {
             VStack(alignment: .leading, spacing: PFSpacing.md) {
-                Text("Unlock all 564 situations for Rs. 4,999")
+                Text("Unlock all \(ContentManifest.situationCount) situations\(storeManager.isPriceAvailable(for: ProductCatalogue.situationsProductID) ? " for \(storeManager.priceText)" : "")")
                     .font(.pfCardTitle)
                     .foregroundColor(.pfNavy)
-                Text("One-time payment by In-App Purchase or UPI, with manual verification for UPI. The 10 free samples stay free.")
+                Text("One-time payment by In-App Purchase. The 6 free samples stay free. The Integrated Course includes all situations too.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
                 PFPrimaryButton(title: "Go to checkout") {
@@ -868,11 +909,22 @@ private struct PillFlow: Layout {
 
 // MARK: - Situation detail
 //
-// The full case, in the owner's format: the situation, what is
+// The full case, in the 7-part case format: the situation, what is
 // happening (the full explain text, line breaks kept), the visual
 // investigation (flow, diagram or stacked, rendered natively), and
 // one thing to remember. No source name or source link is shown:
 // the data carries them internally, and they never appear here.
+//
+// D101 HARD GATE (owner-decided 13 Nov 2026): a locked situation
+// shows only the teaser (case label, title, stage and level pills,
+// read time) plus the checkout card as the gate, placed before any
+// substantive content. The full explain, the takeaway, the visual
+// and the Practice Mode entry do not render while locked. Locked
+// means not a free sample, not the weekly free case on the weekly
+// path, and Payment Situations not unlocked. There is no separate
+// hook field in FullSituationItem or Situation, so the teaser
+// carries no excerpt text at all: the opening paragraphs are part
+// of the explain field and never render for a locked situation.
 
 struct SituationDetailView: View {
     @EnvironmentObject private var storeManager: StoreManager
@@ -880,8 +932,26 @@ struct SituationDetailView: View {
     @ObservedObject private var bookmarkStore = PFBookmarkStore.shared
     let situation: Situation
 
+    /// True only when this detail was opened from the weekly free
+    /// case path (WeeklyCaseDetailHost). The weekly case is free
+    /// by design for its week; the same situation opened from the
+    /// list, search or any other path stays gated. Defaults to
+    /// false, so every existing call site is unaffected except
+    /// for the gate itself.
+    var isWeeklyFreeCase: Bool = false
+
+    /// D101 hard gate: locked when the situation is not a free
+    /// sample, not this week's free case on the weekly path, and
+    /// Payment Situations is not unlocked. Entitlement routes
+    /// through the existing StoreManager boolean only, which
+    /// covers both the situations product and the Integrated
+    /// Course. No new entitlement logic lives here.
+    private var isLocked: Bool {
+        !situation.isFreeSample && !isWeeklyFreeCase && !storeManager.isSituationsUnlocked
+    }
+
     @State private var showCheckout = false
-    @State private var selectedTab = 0
+    @State private var selectedDetailTab = 0
 
     /// All situations, full data first, search index fallback, so
     /// Practice Mode can draw its distractors from real takeaways.
@@ -946,6 +1016,62 @@ struct SituationDetailView: View {
         }
     }
 
+    /// Investigation entry point, next to the Practice Mode entry
+    /// in the unlocked branch only. The case is built through the
+    /// engine at Professional difficulty; the experience view lets
+    /// the learner pick another difficulty before starting, and the
+    /// rebuild callback rebuilds through the engine for it. The
+    /// full item comes from the loaded full situations data when
+    /// available, else nil, following the allSituations pattern.
+    private var investigationEntry: some View {
+        let fullItem = contentService.fullSituations?.first { $0.id == situation.id }
+        let investigation = InvestigationEngine.caseFor(situation: situation, fullItem: fullItem, difficulty: .professional)
+        return PFCard {
+            VStack(alignment: .leading, spacing: PFSpacing.md) {
+                HStack(spacing: PFSpacing.sm) {
+                    PFIconTile(systemImage: "magnifyingglass", size: 44)
+                    VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                        Text("Investigate this case")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                        Text("Case \(situation.id)")
+                            .font(.pfCaptionBold)
+                            .foregroundColor(.pfSecondaryText)
+                        Text("Work this case from briefing to report: inspect the evidence, test hypotheses, make decisions, and diagnose the root cause.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                NavigationLink(destination: InvestigationExperienceView(
+                    investigation: investigation,
+                    isFreeSample: situation.isFreeSample,
+                    isWeeklyFreeCase: isWeeklyFreeCase,
+                    onDifficultyChange: { difficulty in
+                        InvestigationEngine.caseFor(situation: situation, fullItem: fullItem, difficulty: difficulty)
+                    }
+                )) {
+                    HStack {
+                        Text("Investigate this case")
+                            .font(.pfBody.weight(.semibold))
+                            .foregroundColor(.white)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.pfBody.weight(.semibold))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.vertical, 14)
+                    .padding(.horizontal, PFSpacing.lg)
+                    .background(Color.pfRoyal)
+                    .cornerRadius(PFSpacing.cornerRadius)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Investigate this case")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PFSpacing.lg) {
@@ -955,7 +1081,7 @@ struct SituationDetailView: View {
                         PFPill(
                             text: situation.level.displayName,
                             background: Color.pfGoldSoft,
-                            foreground: Color(red: 0.55, green: 0.44, blue: 0.08)
+                            foreground: Color.pfGoldText
                         )
                         if let schemeName = scheme(for: situation) {
                             PFPill(
@@ -971,42 +1097,60 @@ struct SituationDetailView: View {
                                 foreground: .pfSuccess
                             )
                         }
+                        if isLocked {
+                            PFPill(
+                                text: "Locked",
+                                background: Color.pfGoldSoft,
+                                foreground: Color.pfGoldText
+                            )
+                        }
                     }
+                    Text("Case \(situation.id)")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfSecondaryText)
                     Text(situation.title)
                         .font(.pfSectionTitle)
                         .foregroundColor(.pfNavy)
                         .fixedSize(horizontal: false, vertical: true)
+                    if let readLabel = ReadTime.label(for: situation.explain + " " + situation.takeaway) {
+                        Label(readLabel, systemImage: "clock")
+                            .font(.pfCaptionBold)
+                            .foregroundColor(.pfSecondaryText)
+                    }
                 }
 
-                Picker("Situation detail", selection: $selectedTab) {
-                    Text("Overview").tag(0)
-                    Text("Analysis").tag(1)
-                    Text("Solution").tag(2)
-                    Text("Flow").tag(3)
-                }
-                .pickerStyle(.segmented)
+                if isLocked {
+                    lockedGateView
+                } else {
+                    Picker("Situation detail", selection: $selectedDetailTab) {
+                        Text("Overview").tag(0)
+                        Text("Analysis").tag(1)
+                        Text("Flow").tag(3)
+                    }
+                    .pickerStyle(.segmented)
 
-                switch selectedTab {
-                case 1:
-                    analysisTab
-                case 2:
-                    solutionTab
-                case 3:
-                    flowTab
-                default:
-                    overviewTab
-                }
+                    switch selectedDetailTab {
+                    case 1:
+                        analysisTab
+                    case 3:
+                        flowTab
+                    default:
+                        overviewTab
+                    }
 
-                practiceModeEntry
+                    practiceModeEntry
 
-                if !situation.isFreeSample && !storeManager.isSituationsUnlocked {
-                    PFCard {
-                        VStack(alignment: .leading, spacing: PFSpacing.md) {
-                            Text("This situation is part of the full Payment Situations set. Unlock all 564 for Rs. 4,999.")
-                                .font(.pfBody)
-                                .foregroundColor(.pfNavy)
-                            PFPrimaryButton(title: "Go to checkout") {
-                                showCheckout = true
+                    investigationEntry
+
+                    if !situation.isFreeSample && !storeManager.isSituationsUnlocked {
+                        PFCard {
+                            VStack(alignment: .leading, spacing: PFSpacing.md) {
+                                Text("This situation is part of the full Payment Situations set. Unlock all \(ContentManifest.situationCount)\(storeManager.isPriceAvailable(for: ProductCatalogue.situationsProductID) ? " for \(storeManager.priceText)" : ""). The Integrated Course includes all situations too.")
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfNavy)
+                                PFPrimaryButton(title: "Go to checkout") {
+                                    showCheckout = true
+                                }
                             }
                         }
                     }
@@ -1019,9 +1163,7 @@ struct SituationDetailView: View {
         // recording blurs it out.
         .pfProtectedContent()
         .background(Color.pfBackground)
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: PFSpacing.xl)
-        }
+        .pfTabBarClearance()
         .navigationTitle("Situation")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -1041,16 +1183,44 @@ struct SituationDetailView: View {
         }
     }
 
+    /// The hard gate for a locked situation (D101): the teaser
+    /// header above plus this checkout card, and nothing else. No
+    /// tab, no visual, no Practice Mode entry and no explain or
+    /// takeaway text renders for a locked situation. The checkout
+    /// card is the gate: it sits before any substantive content
+    /// because there is no substantive content on this screen
+    /// while locked. The copy reuses the existing upsell wording;
+    /// no price or product is changed here.
+    private var lockedGateView: some View {
+        PFCard {
+            VStack(alignment: .leading, spacing: PFSpacing.md) {
+                HStack(spacing: PFSpacing.sm) {
+                    PFIconTile(systemImage: "lock.fill", size: 44)
+                    Text("Unlock this case")
+                        .font(.pfCardTitle)
+                        .foregroundColor(.pfNavy)
+                }
+                Text("This situation is part of the full Payment Situations set. Unlock all \(ContentManifest.situationCount)\(storeManager.isPriceAvailable(for: ProductCatalogue.situationsProductID) ? " for \(storeManager.priceText)" : ""). The 6 free samples stay free. The Integrated Course includes all situations too.")
+                    .font(.pfBody)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                PFPrimaryButton(title: "Go to checkout") {
+                    showCheckout = true
+                }
+            }
+        }
+        .accessibilityIdentifier("situationLockedGate")
+    }
+
     // MARK: - Tab helpers
 
     /// One body-text paragraph, wrapping to the screen width.
+    /// Rendered through the shared paragraph renderer, so a long
+    /// field that arrives as one block (the full explain, a long
+    /// takeaway) still reads as logical paragraphs, while a
+    /// paragraph the parser already split renders unchanged.
     private func bodyText(_ text: String) -> some View {
-        Text(text)
-            .font(.pfBody)
-            .foregroundColor(.pfNavy)
-            .lineSpacing(4)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        PFBodyText(text: text)
     }
 
     /// A labelled section inside a tab.
@@ -1151,73 +1321,6 @@ struct SituationDetailView: View {
         }
     }
 
-    // MARK: - Solution tab
-
-    /// The recommended resolution (the BA Takeaway paragraphs and
-    /// the controls to keep separate), the BA takeaway card ("One
-    /// thing to remember"), the reframed real requirement, and the
-    /// closing question.
-    private var solutionTab: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.lg) {
-            if parsed.isParsed {
-                if !parsed.baBody.isEmpty {
-                    tabSection(title: "Recommended Resolution") {
-                        ForEach(Array(parsed.baBody.enumerated()), id: \.offset) { _, paragraph in
-                            bodyText(paragraph)
-                        }
-                    }
-                }
-                if !parsed.controls.isEmpty {
-                    tabSection(title: "Keep these controls separate") {
-                        VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                            ForEach(Array(parsed.controls.enumerated()), id: \.offset) { _, control in
-                                HStack(alignment: .top, spacing: PFSpacing.md) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.pfCardTitle.weight(.regular))
-                                        .foregroundColor(.pfGold)
-                                        .padding(.top, 2)
-                                    bodyText(control)
-                                }
-                            }
-                        }
-                    }
-                }
-                if parsed.baBody.isEmpty && parsed.controls.isEmpty {
-                    fullExplainSection
-                }
-            } else {
-                fullExplainSection
-            }
-
-            VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                Text("One thing to remember")
-                    .font(.pfCaptionBold)
-                    .foregroundColor(.pfNavy)
-                Text(situation.takeaway)
-                    .font(.pfBody)
-                    .foregroundColor(.pfNavy)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(PFSpacing.lg)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.pfGoldSoft)
-            .cornerRadius(PFSpacing.cardRadius)
-
-            if parsed.isParsed, !parsed.realRequirement.isEmpty {
-                tabSection(title: "The real requirement") {
-                    ForEach(Array(parsed.realRequirement.enumerated()), id: \.offset) { _, paragraph in
-                        bodyText(paragraph)
-                    }
-                }
-            }
-            if let closing = parsed.closingQuestion {
-                tabSection(title: "Think about it") {
-                    bodyText(closing)
-                }
-            }
-        }
-    }
-
     // MARK: - Flow tab
 
     /// The visual (flow, diagram or stacked), rendered natively.
@@ -1309,7 +1412,7 @@ struct SituationDetailView: View {
                                 if isDecision {
                                     Text("DECISION")
                                         .font(.pfCaptionBold)
-                                        .foregroundColor(Color(red: 0.55, green: 0.44, blue: 0.08))
+                                        .foregroundColor(Color.pfGoldText)
                                 }
                                 Text(step.title)
                                     .font(.pfCardTitle)
@@ -1352,7 +1455,7 @@ struct SituationDetailView: View {
                 VStack(alignment: .leading, spacing: PFSpacing.xs) {
                     Text("MAIN POINT")
                         .font(.pfCaptionBold)
-                        .foregroundColor(Color(red: 0.55, green: 0.44, blue: 0.08))
+                        .foregroundColor(Color.pfGoldText)
                     Text(diagram.centre)
                         .font(.pfCardTitle)
                         .foregroundColor(.pfRoyal)

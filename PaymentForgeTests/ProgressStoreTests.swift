@@ -5,6 +5,16 @@
 // history (appended, never overwritten). Each test starts from a
 // clean store and resets in tearDown, so no test leaks progress
 // into another test.
+//
+// UNEXECUTED: written on a Linux VM with no Xcode. These tests were
+// never compiled or run. Statically checked only.
+//
+// Phase 1 reconciliation (12 Nov 2026): ProgressStore keys are now
+// namespaced through AccountScopedStorage. These tests never touched
+// raw pf.* keys: they go through store APIs only, so no expectation
+// changed. setUp and tearDown now pin the namespace to guest, so a
+// namespace left set by another test file in the same process cannot
+// make these tests read another namespace's progress.
 
 import XCTest
 @testable import PaymentForge
@@ -16,6 +26,7 @@ final class ProgressStoreTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
+        AccountScopedStorage.setCurrentNamespace(nil)
         store = ProgressStore()
         store.resetAll()
         store.weeklyGoal = 5
@@ -24,6 +35,7 @@ final class ProgressStoreTests: XCTestCase {
     override func tearDown() {
         store.resetAll()
         store = nil
+        AccountScopedStorage.setCurrentNamespace(nil)
         super.tearDown()
     }
 
@@ -129,5 +141,35 @@ final class ProgressStoreTests: XCTestCase {
         XCTAssertTrue(store.events.isEmpty)
         XCTAssertEqual(store.streakCount, 0)
         XCTAssertEqual(store.weeklyGoal, 7, "The weekly goal is a preference, not progress.")
+    }
+
+    // MARK: - Phase 1: account namespacing
+
+    func testProgressDoesNotLeakAcrossNamespaces() {
+        let firstNamespace = "test-progress-a"
+        let secondNamespace = "test-progress-b"
+        AccountScopedStorage.removeAllKeys(in: firstNamespace)
+        AccountScopedStorage.removeAllKeys(in: secondNamespace)
+        defer {
+            AccountScopedStorage.removeAllKeys(in: firstNamespace)
+            AccountScopedStorage.removeAllKeys(in: secondNamespace)
+            AccountScopedStorage.setCurrentNamespace(nil)
+        }
+
+        AccountScopedStorage.setCurrentNamespace(firstNamespace)
+        let firstStore = ProgressStore()
+        firstStore.resetAll()
+        firstStore.markLessonComplete(id: "ch1s1", title: "Lesson 1")
+        XCTAssertEqual(firstStore.totalLessonsCompleted, 1)
+
+        AccountScopedStorage.setCurrentNamespace(secondNamespace)
+        let secondStore = ProgressStore()
+        XCTAssertEqual(secondStore.totalLessonsCompleted, 0, "The second namespace must not see the first namespace's progress.")
+        XCTAssertFalse(secondStore.isLessonComplete("ch1s1"))
+
+        AccountScopedStorage.setCurrentNamespace(firstNamespace)
+        let firstStoreAgain = ProgressStore()
+        XCTAssertEqual(firstStoreAgain.totalLessonsCompleted, 1, "Returning to the first namespace restores its progress.")
+        XCTAssertTrue(firstStoreAgain.isLessonComplete("ch1s1"))
     }
 }

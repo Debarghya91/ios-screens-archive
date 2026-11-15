@@ -1,1 +1,189 @@
-{"_readme":"PaymentForge StoreKit Configuration for local testing in Xcode. This file lets the app fetch and buy the 12 course products WITHOUT a paid Developer Program account and WITHOUT App Store Connect. HOW TO USE: in Xcode, go to Product > Scheme > Edit Scheme > Run > Options > StoreKit Configuration, and select PaymentForge.storekit. Then Run the app and buy in the sandbox (no real money is charged; use a sandbox Apple ID, or the local StoreKit test account Xcode offers). WHAT THE OWNER MUST DO LATER: once he enrols in the paid Apple Developer Program ($99/year), create the real products in App Store Connect with the SAME product IDs below, each type Non-Consumable, at the SAME INR prices. The app code does not change; StoreKit will then fetch the real products from the App Store instead of this file. Do NOT change the product IDs, they must match in both places. Products: com.paymentforge.app.full (Rs. 9,999), com.paymentforge.app.foundations (Rs. 1,499), com.paymentforge.app.messaging (Rs. 2,999), com.paymentforge.app.rails (Rs. 2,499), com.paymentforge.app.crossborder (Rs. 1,999), com.paymentforge.app.clearing (Rs. 999), com.paymentforge.app.cards (Rs. 1,499), com.paymentforge.app.compliance-ops (Rs. 1,999), com.paymentforge.app.architecture-apis (Rs. 2,499), com.paymentforge.app.ba-practice (Rs. 1,999), com.paymentforge.app.emerging (Rs. 999), com.paymentforge.app.situations (Rs. 4,999).","identifier":"PaymentForge","products":[{"displayPrice":"9999.00","familyShareable":true,"internalID":"paymentforge-full-001","productID":"com.paymentforge.app.full","referenceName":"The Integrated Course","type":"Non-Consumable"},{"displayPrice":"1499.00","familyShareable":true,"internalID":"paymentforge-foundations-001","productID":"com.paymentforge.app.foundations","referenceName":"Payment Foundations","type":"Non-Consumable"},{"displayPrice":"2999.00","familyShareable":true,"internalID":"paymentforge-messaging-001","productID":"com.paymentforge.app.messaging","referenceName":"ISO 20022 and SWIFT Messaging","type":"Non-Consumable"},{"displayPrice":"2499.00","familyShareable":true,"internalID":"paymentforge-rails-001","productID":"com.paymentforge.app.rails","referenceName":"Global Payment Rails","type":"Non-Consumable"},{"displayPrice":"1999.00","familyShareable":true,"internalID":"paymentforge-crossborder-001","productID":"com.paymentforge.app.crossborder","referenceName":"Cross-Border and Correspondent Banking","type":"Non-Consumable"},{"displayPrice":"999.00","familyShareable":true,"internalID":"paymentforge-clearing-001","productID":"com.paymentforge.app.clearing","referenceName":"Clearing, Settlement and Liquidity","type":"Non-Consumable"},{"displayPrice":"1499.00","familyShareable":true,"internalID":"paymentforge-cards-001","productID":"com.paymentforge.app.cards","referenceName":"Cards and Domestic Payments","type":"Non-Consumable"},{"displayPrice":"1999.00","familyShareable":true,"internalID":"paymentforge-compliance-ops-001","productID":"com.paymentforge.app.compliance-ops","referenceName":"Compliance, Risk, Operations and Reconciliation","type":"Non-Consumable"},{"displayPrice":"2499.00","familyShareable":true,"internalID":"paymentforge-architecture-apis-001","productID":"com.paymentforge.app.architecture-apis","referenceName":"Payment Architecture and APIs","type":"Non-Consumable"},{"displayPrice":"1999.00","familyShareable":true,"internalID":"paymentforge-ba-practice-001","productID":"com.paymentforge.app.ba-practice","referenceName":"BA and PO Professional Practice","type":"Non-Consumable"},{"displayPrice":"999.00","familyShareable":true,"internalID":"paymentforge-emerging-001","productID":"com.paymentforge.app.emerging","referenceName":"Emerging Technologies and the Future","type":"Non-Consumable"},{"displayPrice":"4999.00","familyShareable":true,"internalID":"paymentforge-situations-001","productID":"com.paymentforge.app.situations","referenceName":"Payment Situations","type":"Non-Consumable"}],"settings":{"locale":"en_IN"},"version":"1"}
+{
+  "identifier": "PaymentForge",
+  "products": [
+    {
+      "displayPrice": "9999.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-full-001",
+      "localizations": [
+        {
+          "description": "The flagship. Everything in the academy, all 15 domains.",
+          "displayName": "The Integrated Course",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.full",
+      "referenceName": "The Integrated Course",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "1499.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-foundations-001",
+      "localizations": [
+        {
+          "description": "What a payment is, and how the ecosystem fits together.",
+          "displayName": "Payment Foundations",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.foundations",
+      "referenceName": "Payment Foundations",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "2999.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-messaging-001",
+      "localizations": [
+        {
+          "description": "MT and MX messages, field by field, with real examples.",
+          "displayName": "ISO 20022 and SWIFT Messaging",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.messaging",
+      "referenceName": "ISO 20022 and SWIFT Messaging",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "2499.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-rails-001",
+      "localizations": [
+        {
+          "description": "India, US, Europe and UK rails, plus TARGET and TIPS.",
+          "displayName": "Global Payment Rails",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.rails",
+      "referenceName": "Global Payment Rails",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "1999.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-crossborder-001",
+      "localizations": [
+        {
+          "description": "How international payments really work, end to end.",
+          "displayName": "Cross-Border and Correspondent Banking",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.crossborder",
+      "referenceName": "Cross-Border and Correspondent Banking",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "999.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-clearing-001",
+      "localizations": [
+        {
+          "description": "Clearing is not settlement. Learn the difference properly.",
+          "displayName": "Clearing, Settlement and Liquidity",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.clearing",
+      "referenceName": "Clearing, Settlement and Liquidity",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "1499.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-cards-001",
+      "localizations": [
+        {
+          "description": "Authorisation, clearing, settlement, wallets and POS.",
+          "displayName": "Cards and Domestic Payments",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.cards",
+      "referenceName": "Cards and Domestic Payments",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "1999.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-compliance-ops-001",
+      "localizations": [
+        {
+          "description": "Sanctions, AML, exceptions, returns and the daily ops grind.",
+          "displayName": "Compliance, Risk, Operations and Reconciliation",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.compliance-ops",
+      "referenceName": "Compliance, Risk, Operations and Reconciliation",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "2499.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-architecture-apis-001",
+      "localizations": [
+        {
+          "description": "Hubs, platforms, gateways and integration, the engineering view.",
+          "displayName": "Payment Architecture and APIs",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.architecture-apis",
+      "referenceName": "Payment Architecture and APIs",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "1999.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-ba-practice-001",
+      "localizations": [
+        {
+          "description": "AI for the payments BA and PO: foundations, assisted work, product ownership, governance and the capstone.",
+          "displayName": "AI Product Owner and Product Manager for Payments",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.ba-practice",
+      "referenceName": "AI Product Owner and Product Manager for Payments",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "999.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-emerging-001",
+      "localizations": [
+        {
+          "description": "CBDCs, stablecoins, AI, and where payments goes next.",
+          "displayName": "Emerging Technologies and the Future",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.emerging",
+      "referenceName": "Emerging Technologies and the Future",
+      "type": "Non-Consumable"
+    },
+    {
+      "displayPrice": "4999.00",
+      "familyShareable": true,
+      "internalID": "paymentforge-situations-001",
+      "localizations": [
+        {
+          "description": "End-to-end payments knowledge, one real situation at a time.",
+          "displayName": "Payment Situations",
+          "locale": "en_IN"
+        }
+      ],
+      "productID": "com.paymentforge.app.situations",
+      "referenceName": "Payment Situations",
+      "type": "Non-Consumable"
+    }
+  ],
+  "settings": {
+    "locale": "en_IN"
+  },
+  "version": "1"
+}

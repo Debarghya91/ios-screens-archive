@@ -1,5 +1,5 @@
 // ContentManagementService.swift
-// PaymentForge iOS - Local content-version registry (Phase 6).
+// PaymentForge iOS - Local content-version registry.
 //
 // The website remains the operational source of truth: ContentService
 // keeps loading the live search index and situations data, and this
@@ -9,9 +9,13 @@
 // flag, publication status, access classification). Those annotations
 // are the validation step for the future server-driven architecture:
 // they prove the model works end to end on this device before any
-// content is migrated. Draft items are never shown to learners; only
-// published items appear (see shouldShow). Nothing here is synced to
-// a server yet, and no content is downloaded by this service.
+// content is migrated. Publication status is recorded but not
+// enforced: no learner view calls shouldShow yet, so marking an item
+// Draft does not hide it from learners. Nothing here is synced to
+// a server yet, and no content is downloaded by this service. The
+// admin UI over this registry is an internal diagnostic tool,
+// reachable only in DEBUG builds; it is not a central content
+// management system.
 // No em dashes in any user-facing text.
 
 import Foundation
@@ -93,6 +97,8 @@ final class ContentManagementService: ObservableObject {
     /// archived items are never shown; only published items appear.
     /// Items with no registry record are published by default,
     /// because the website is the source of truth and serves them.
+    /// No learner view calls this yet, so the status is recorded
+    /// but not enforced: Draft does not currently hide an item.
     func shouldShow(contentType: PFContentType, contentID: String) -> Bool {
         guard let status = record(for: contentType, contentID: contentID)?.status else { return true }
         return status == .published
@@ -133,8 +139,9 @@ final class ContentManagementService: ObservableObject {
         mutate(contentType: contentType, contentID: contentID) { $0.isPreview = isPreview }
     }
 
-    /// Change an item's publication status. Draft hides it from
-    /// learners (see shouldShow); published shows it again.
+    /// Change an item's publication status. Draft records the item
+    /// as hidden in the intended design (see shouldShow); no learner
+    /// view reads this yet, so it does not hide the item today.
     func setStatus(_ status: ContentPublicationStatus, contentType: PFContentType, contentID: String) {
         mutate(contentType: contentType, contentID: contentID) { $0.status = status }
     }

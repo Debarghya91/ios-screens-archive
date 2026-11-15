@@ -9,12 +9,9 @@
 //   2. Screen recording / mirroring guard: while the screen is being
 //      recorded or mirrored (AirPlay), the content is blurred and a
 //      notice is shown. It comes back the moment recording stops.
-//      A single still screenshot cannot be intercepted on iOS (the
-//      system only reports it after the image is taken), so the
-//      watermark below is the trace for that case.
-//   3. Faint diagonal watermark: the signed-in learner's email, or
-//      "Payments Training Hub" for guests, repeated faintly across
-//      the content, so a leaked copy traces back to an account.
+//   The faint diagonal watermark (layer 3) was removed 12 Nov 2026.
+//   PFWatermarkOverlay below is dormant, kept only so the watermark
+//   can return without rebuilding it.
 //
 // Apply with .pfProtectedContent() on a lesson content ScrollView.
 // The watermark never intercepts touches, and the blur never blocks
@@ -131,8 +128,9 @@ struct PFProtectedContentModifier: ViewModifier {
             .blur(radius: captureMonitor.isCaptured ? 24 : 0)
             .overlay {
                 ZStack {
-                    // Faint identity watermark over the content.
-                    PFWatermarkOverlay()
+                    // No watermark: removed 12 Nov 2026 on his
+                    // order. PFWatermarkOverlay stays defined
+                    // below, dormant, in case it returns.
                     // Recording veil: frosted panel plus a plain
                     // notice. It never intercepts touches, so the
                     // learner can still pause audio or close the

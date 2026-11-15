@@ -158,6 +158,7 @@ struct CourseCertificateView: View {
     /// share actions, so it can never be passed off as earned.
     var isSample: Bool = false
 
+    @StateObject private var authService = AuthService.shared
     @State private var shareImage: UIImage? = nil
     @State private var shareImageURL: URL? = nil
     @State private var pdfURL: URL? = nil
@@ -222,10 +223,17 @@ struct CourseCertificateView: View {
                             .font(.pfBody)
                             .foregroundColor(.pfRoyal)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Anyone can check this certificate at the address above.")
-                            .font(.pfCaption)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
+                        if authService.currentUser == nil {
+                            Text("This certificate is stored on this device. The website verification copy is only written for signed-in learners.")
+                                .font(.pfCaption)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text("Anyone can check this certificate at the address above.")
+                                .font(.pfCaption)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         if certifierCredential != nil {
                             if let qrImage {
                                 HStack {
@@ -296,14 +304,17 @@ struct CourseCertificateView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                 }
+                // Shareable achievement card (image, text and
+                // LinkedIn), built only from this earned
+                // certificate's own data. Samples never reach
+                // here: this block runs only when !isSample.
+                AchievementShareActions(content: .courseCertificate(certificate))
                 }
             }
             .padding(PFSpacing.lg)
         }
         .background(Color.pfBackground)
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: PFSpacing.xl)
-        }
+        .pfTabBarClearance()
         .navigationTitle("Certificate")
         .navigationBarTitleDisplayMode(.inline)
         .task {

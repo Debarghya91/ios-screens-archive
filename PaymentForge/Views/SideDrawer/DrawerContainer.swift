@@ -37,17 +37,37 @@ struct DrawerContainer<Content: View>: View {
     @Binding var isOpen: Bool
     /// Called when a drawer row is selected, after the drawer closes.
     var onSelect: (DrawerDestination) -> Void
+    /// The currently selected tab, passed through to the drawer so
+    /// the row for the current tab shows the active state. Nil means
+    /// no row is active.
+    var selectedTab: Int? = nil
+    /// The drawer row the guided tour wants scrolled into view, if
+    /// any. Passed through to the drawer list; nil when the tour is
+    /// not running or is on a tab step.
+    var tourScrollTarget: DrawerDestination? = nil
     let content: Content
 
     @State private var dragOffset: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The slide animation for opening and closing the drawer. No
+    /// animation when Reduce Motion is on: the drawer appears and
+    /// disappears instantly instead of sliding.
+    private var drawerAnimation: Animation? {
+        reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85)
+    }
 
     init(
         isOpen: Binding<Bool>,
         onSelect: @escaping (DrawerDestination) -> Void,
+        selectedTab: Int? = nil,
+        tourScrollTarget: DrawerDestination? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self._isOpen = isOpen
         self.onSelect = onSelect
+        self.selectedTab = selectedTab
+        self.tourScrollTarget = tourScrollTarget
         self.content = content()
     }
 
@@ -66,7 +86,7 @@ struct DrawerContainer<Content: View>: View {
                                 if !isOpen
                                     && value.startLocation.x < 24
                                     && value.translation.width > 60 {
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                    withAnimation(drawerAnimation) {
                                         isOpen = true
                                     }
                                 }
@@ -80,16 +100,19 @@ struct DrawerContainer<Content: View>: View {
                         .onTapGesture {
                             close()
                         }
+                        .accessibilityLabel("Close menu")
+                        .accessibilityHint("Closes the navigation menu.")
+                        .accessibilityAddTraits(.isButton)
                 }
 
                 // The drawer panel.
-                SideDrawerView { destination in
+                SideDrawerView(onSelect: { destination in
                     close()
                     // Wait for the close animation before navigating.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         onSelect(destination)
                     }
-                }
+                }, selectedTab: selectedTab, tourScrollTarget: tourScrollTarget)
                 .frame(width: drawerWidth)
                 .ignoresSafeArea(edges: .vertical)
                 .offset(x: isOpen ? dragOffset : -drawerWidth + dragOffset)
@@ -105,7 +128,7 @@ struct DrawerContainer<Content: View>: View {
                             if value.translation.width < -60 {
                                 close()
                             } else {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                withAnimation(drawerAnimation) {
                                     dragOffset = 0
                                 }
                             }
@@ -116,7 +139,7 @@ struct DrawerContainer<Content: View>: View {
     }
 
     private func close() {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+        withAnimation(drawerAnimation) {
             isOpen = false
             dragOffset = 0
         }
@@ -126,13 +149,15 @@ struct DrawerContainer<Content: View>: View {
 // MARK: - Menu button
 
 /// The hamburger button that opens the drawer. Place it in the
-/// navigation bar of the root screens.
+/// navigation bar of the root screens. The visible circle stays
+/// 40 points, with a 44-point tap area around it.
 struct DrawerMenuButton: View {
     @Binding var isDrawerOpen: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85)) {
                 isDrawerOpen = true
             }
         } label: {
@@ -143,7 +168,11 @@ struct DrawerMenuButton: View {
                 .background(Color.pfCard)
                 .clipShape(Circle())
                 .shadow(color: Color.black.opacity(0.10), radius: 6, x: 0, y: 2)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+                .pfDecorative()
         }
         .accessibilityLabel("Open menu")
+        .accessibilityHint("Opens the navigation menu.")
     }
 }

@@ -10,17 +10,29 @@ import SwiftUI
 /// The Learning Preferences screen, reached from Profile.
 struct LearningPreferencesView: View {
     @StateObject private var authService = AuthService.shared
+    @ObservedObject private var progressStore = ProgressStore.shared
 
     @State private var experienceLevel: String?
     @State private var selectedInterests: Set<String> = []
-    @State private var weeklyTarget: Int = 5
     @State private var includeAudio = true
+
+    /// The weekly goal, bound straight to ProgressStore.weeklyGoal:
+    /// the one goal, edited here and shown on Home and Dashboard.
+    /// There is no second weekly target anywhere in the app.
+    private var weeklyGoalBinding: Binding<Int> {
+        Binding(
+            get: { progressStore.weeklyGoal },
+            set: { progressStore.weeklyGoal = $0 }
+        )
+    }
     @State private var savedMessage: String?
     @State private var didLoad = false
 
     /// Weekly target range. No low cap: the most a learner can
-    /// aim for in a week is the whole catalogue (746 lessons).
-    private let weeklyRange = 1...746
+    /// aim for in a week is the whole catalogue, from
+    /// ContentManifest so this range cannot drift from the
+    /// DashboardView range, which uses the same count.
+    private let weeklyRange = 1...ContentManifest.lessonCount
     @State private var weeklyTargetText = "5"
 
     var body: some View {
@@ -59,6 +71,12 @@ struct LearningPreferencesView: View {
                 didLoad = true
                 Task { await load() }
             }
+        }
+        .onChange(of: authService.currentUser?.id) { _, _ in
+            // The account changed while this screen was in the
+            // stack: reload the new account's preferences instead
+            // of showing the previous account's saved values.
+            Task { await load() }
         }
     }
 
@@ -163,16 +181,16 @@ struct LearningPreferencesView: View {
                                 let digits = newValue.filter { $0.isNumber }
                                 if digits != newValue { weeklyTargetText = digits }
                                 if let value = Int(digits), weeklyRange.contains(value) {
-                                    weeklyTarget = value
+                                    progressStore.weeklyGoal = value
                                 }
                             }
                         Text("lessons per week")
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
                         Spacer()
-                        Stepper("", value: $weeklyTarget, in: weeklyRange)
+                        Stepper("", value: weeklyGoalBinding, in: weeklyRange)
                             .labelsHidden()
-                            .onChange(of: weeklyTarget) { newValue in
+                            .onChange(of: progressStore.weeklyGoal) { newValue in
                                 weeklyTargetText = "\(newValue)"
                             }
                     }
@@ -220,19 +238,17 @@ struct LearningPreferencesView: View {
     private func load() async {
         let local = LearningPreferences.loadLocal()
         apply(local)
-        weeklyTargetText = "\(local.weeklyTarget)"
+        weeklyTargetText = "\(progressStore.weeklyGoal)"
         guard authService.isSignedIn, !LearningPreferences.hasSavedLocally,
               let server = await SyncService.shared.fetchPreferences() else {
             return
         }
         apply(server)
-        weeklyTargetText = "\(server.weeklyTarget)"
     }
 
     private func apply(_ prefs: LearningPreferences) {
         experienceLevel = prefs.experienceLevel
         selectedInterests = Set(prefs.domainInterests)
-        weeklyTarget = prefs.weeklyTarget
         includeAudio = prefs.includeAudio
     }
 
@@ -245,14 +261,13 @@ struct LearningPreferencesView: View {
             userID: authService.currentUser?.id,
             experienceLevel: experienceLevel,
             domainInterests: Array(selectedInterests).sorted(),
-            weeklyTarget: weeklyTarget,
             includeAudio: includeAudio,
             updatedAt: nil
         )
         prefs.saveLocal()
-        weeklyTargetText = "\(weeklyTarget)"
-        // Keep the Dashboard weekly goal in step with the target here.
-        ProgressStore.shared.weeklyGoal = weeklyTarget
+        // The weekly goal is already in ProgressStore.weeklyGoal:
+        // the Stepper and text field write to it directly.
+        weeklyTargetText = "\(progressStore.weeklyGoal)"
         if authService.isSignedIn {
             let pushed = await SyncService.shared.pushPreferences(prefs)
             savedMessage = pushed

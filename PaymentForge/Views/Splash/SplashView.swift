@@ -52,12 +52,22 @@ struct SplashView: View {
 
                 Spacer()
 
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    .accessibilityLabel("Loading Payments Training Hub")
-                    .padding(.bottom, PFSpacing.xxl)
+                VStack(spacing: PFSpacing.sm) {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        .accessibilityLabel("Loading Payments Training Hub")
+                    Text("Loading your course...")
+                        .font(.pfBody)
+                        .foregroundColor(.white.opacity(0.85))
+                }
+                .padding(.bottom, PFSpacing.xxl)
             }
             .padding(PFSpacing.xl)
+        }
+        .onAppear {
+            // Launch analytics, at most once per process and only
+            // with consent. The service gates on consent itself.
+            AnalyticsService.shared.recordAppLaunch()
         }
     }
 

@@ -1,14 +1,16 @@
 // LessonView.swift
-// PaymentForge iOS - One narrated lesson: diagram first, autoplaying
-// narration, key moments synced to the audio, transcript, checklist,
-// sources, quiz and the next lesson.
-// Layout rules: the diagram shows first under the header; the audio card
-// keeps one fixed height so loading, fallback and error lines never move
-// the page; every text view wraps inside the screen width with no fixed
-// container widths, so nothing clips at any edge on an iPhone SE or a
-// Pro Max. The navigation bar is opaque so no text shows cut off behind
-// it, and the bottom padding clears the tab bar. Text uses the design
-// system sizes, which scale with the system text size.
+// Payments Training Hub iOS - One narrated lesson: diagram first, narration off
+// by default (Play starts it), key moments synced to the audio,
+// transcript, checklist, sources, quiz and the next lesson. One mode
+// at a time: the diagram never auto-expands full screen, the audio
+// never auto-plays, and the audio card sizes to its content instead
+// of pushing the lesson text below the fold.
+// Layout rules: the diagram shows first under the header; every text
+// view wraps inside the screen width with no fixed container widths,
+// so nothing clips at any edge on an iPhone SE or a Pro Max. The
+// navigation bar is opaque so no text shows cut off behind it, and the
+// bottom padding clears the tab bar. Text uses the design system sizes,
+// which scale with the system text size.
 // No em dashes in any user-facing text.
 
 import SwiftUI
@@ -16,8 +18,10 @@ import Foundation
 
 // MARK: - Local bookmarks (guest, no sign-in)
 //
-// Bookmarks live only on this device, in UserDefaults, keyed by lesson
-// id and situation id. No account and no sign-in is ever required.
+// Bookmarks live only on this device, in UserDefaults namespaced per
+// account through AccountScopedStorage, keyed by lesson id and
+// situation id. No sign-in is ever required: signed-out bookmarks
+// live under the guest namespace.
 // One shared instance, so a bookmark set in a detail view is reflected
 // in every list that shows the same item.
 final class PFBookmarkStore: ObservableObject {
@@ -32,11 +36,26 @@ final class PFBookmarkStore: ObservableObject {
     }
 
     private init() {
+        load()
+    }
+
+    /// Reload for the current account namespace, clearing the
+    /// previous account's bookmarks first. Called by AuthService
+    /// on sign-in, sign-out and account deletion.
+    func reloadForCurrentAccount() {
+        lessonIDs = []
+        situationIDs = []
+        load()
+    }
+
+    private func load() {
+        AccountScopedStorage.adoptLegacyKey(Keys.lessons)
+        AccountScopedStorage.adoptLegacyKey(Keys.situations)
         let defaults = UserDefaults.standard
-        if let ids = defaults.array(forKey: Keys.lessons) as? [String] {
+        if let ids = defaults.array(forKey: AccountScopedStorage.currentKey(Keys.lessons)) as? [String] {
             lessonIDs = Set(ids)
         }
-        if let ids = defaults.array(forKey: Keys.situations) as? [String] {
+        if let ids = defaults.array(forKey: AccountScopedStorage.currentKey(Keys.situations)) as? [String] {
             situationIDs = Set(ids)
         }
     }
@@ -47,6 +66,10 @@ final class PFBookmarkStore: ObservableObject {
     func toggleLesson(_ id: String) {
         if lessonIDs.contains(id) { lessonIDs.remove(id) } else { lessonIDs.insert(id) }
         save()
+        // Lesson bookmarks sync to the account (SyncService), so a
+        // change flags a sync. Situation bookmarks stay local only
+        // and do not flag one.
+        SyncService.shared.noteLocalChange()
     }
 
     func toggleSituation(_ id: String) {
@@ -56,8 +79,8 @@ final class PFBookmarkStore: ObservableObject {
 
     private func save() {
         let defaults = UserDefaults.standard
-        defaults.set(Array(lessonIDs), forKey: Keys.lessons)
-        defaults.set(Array(situationIDs), forKey: Keys.situations)
+        defaults.set(Array(lessonIDs), forKey: AccountScopedStorage.currentKey(Keys.lessons))
+        defaults.set(Array(situationIDs), forKey: AccountScopedStorage.currentKey(Keys.situations))
     }
 }
 
@@ -71,6 +94,7 @@ struct LessonView: View {
     @EnvironmentObject private var progressStore: ProgressStore
     @EnvironmentObject private var storeManager: StoreManager
     @ObservedObject private var bookmarkStore = PFBookmarkStore.shared
+    @ObservedObject private var downloadStore = LessonDownloadStore.shared
     @StateObject private var audioService = AudioPlayerService()
 
     /// Content / Transcript / Resources tab below the player.
@@ -82,9 +106,15 @@ struct LessonView: View {
     @State private var hasStartedAudio = false
     @State private var hasLoadedDetail = false
 
-    /// Local checklist state, per lesson, in memory only. Keys are the
-    /// item indices as strings, for example "0", "1", "2".
-    @State private var checkedDoThis: Set<String> = []
+    /// Where the loaded detail came from. Nil until a load finishes.
+    /// When .cached, the banner above the lesson says the copy on
+    /// this device is being shown, with a Retry for the live page.
+    @State private var detailSource: LessonDetailSource? = nil
+
+    /// The beat the learner tapped in the flow, if any. Tapping a
+    /// beat seeks the audio to it and marks the row selected, so the
+    /// beat note stands out. Nil until a beat is tapped.
+    @State private var selectedBeatID: String? = nil
 
     /// Quiz answers: question id to the tapped option index.
     @State private var selectedAnswers: [String: Int] = [:]
@@ -99,11 +129,11 @@ struct LessonView: View {
     /// the transcript) is quoted into the note when one is selected.
     @State private var showNoteComposer = false
     @State private var noteText = ""
-    @State private var noteCollection = "General"
     @State private var highlightedParagraphIndex: Int? = nil
 
-    /// Note collections offered in the composer picker.
-    private let noteCollections = ["General", "Key points", "Questions", "To review"]
+    /// The full-screen lesson visual, opened from the "How it
+    /// flows" section. The audio keeps playing underneath.
+    @State private var showFullScreenVisual = false
 
     /// Whether this lesson already has notes, for the toolbar icon.
     @State private var hasNotes = false
@@ -120,6 +150,18 @@ struct LessonView: View {
 
     /// Opens the Purchases screen from the locked lesson card.
     @State private var showCheckout = false
+    /// Arms the Purchase alert: it only ever shows a store
+    /// message that follows the learner's own Buy tap in this
+    /// view. The launch-time product load also writes to
+    /// statusMessage, and without this gate its failure pops a
+    /// Purchase alert over the first lesson opened, unprompted.
+    @State private var showPurchaseAlert = false
+
+    /// Arms the remove-download confirmation: removing the saved
+    /// audio is confirmed before it happens, and the section then
+    /// shows the download state again, which is the after
+    /// feedback (streaming still works afterwards).
+    @State private var showRemoveDownloadConfirmation = false
 
     /// The paragraph currently highlighted in the transcript, if any.
     /// Tapping a transcript paragraph highlights it and jumps the
@@ -130,14 +172,19 @@ struct LessonView: View {
         return transcriptParagraphs[index]
     }
 
-    /// Auto full-screen visual: when the lesson opens and the narration
-    /// starts playing, the visual expands to full screen on its own.
-    /// The learner closes it with the close button; it is shown once
-    /// per lesson open and never re-opens after the learner closes it.
-    /// The audio keeps playing in both views.
-    @State private var showVisualFullScreen = false
-    @State private var didAutoShowVisual = false
-    @State private var visualDismissedByUser = false
+    /// True once the quiz has been submitted and scored. Answers can
+    /// be changed until Submit; after Submit they are locked and the
+    /// score is recorded.
+    @State private var quizSubmitted = false
+
+    /// Navigation generation: incremented on every manual navigation,
+    /// so a delayed auto-advance fires only when the learner has not
+    /// already moved to another lesson.
+    @State private var navGeneration = 0
+
+    /// Note shown under the transcript header, for example when a
+    /// paragraph has no audio timing.
+    @State private var transcriptNote: String? = nil
 
     init(entry: SearchEntry) {
         self.entry = entry
@@ -157,8 +204,45 @@ struct LessonView: View {
         detail?.title ?? entry.title
     }
 
+    /// "Chapter 26, Lesson 3 of 8" for a regular lesson: the book
+    /// chapter and lesson numbers plus the chapter's catalogue
+    /// lesson count. Supplemental lessons show the chapter label
+    /// only (no lesson number); held-out lessons show nothing
+    /// here, the chapter name above is the context.
+    private var positionCaption: String? {
+        guard let number = PFChapterHelper.chapterNumber(from: entry.id),
+              let book = PFBookModeReadingOrder.bookNumber(forInternalNumber: number) else { return nil }
+        if entry.isSupplemental { return "Chapter \(book)" }
+        let display = PFBookModeReadingOrder.displayNumber(forLessonID: entry.id)
+            ?? contentService.lessonPositionInChapter(for: entry)
+            ?? entry.lessonNumber
+        guard let display else { return "Chapter \(book)" }
+        let total = chapterLessons.filter { !$0.isSupplemental }.count
+        guard total > 0 else { return "Chapter \(book), Lesson \(display)" }
+        return "Chapter \(book), Lesson \(display) of \(total)"
+    }
+
+    /// "Part 3, Lesson 142 of 774 in the book": the part number
+    /// and the position among all in-book lessons in reading
+    /// order. Nil for held-out lessons and lessons outside the
+    /// loaded catalogue.
+    private var bookPositionCaption: String? {
+        guard let number = PFChapterHelper.chapterNumber(from: entry.id),
+              let part = PFBookModeReadingOrder.part(forInternalNumber: number),
+              let position = contentService.bookPosition(for: entry) else { return nil }
+        return "Part \(part.number), Lesson \(position.position) of \(position.total) in the book"
+    }
+
     private var transcriptText: String {
         detail?.transcript ?? entry.text
+    }
+
+    /// True when the transcript is the shortened catalogue text
+    /// (entry.text) because the full lesson detail has not loaded
+    /// yet. The transcript header says so, instead of showing the
+    /// short text as if it were the full transcript.
+    private var isTranscriptShortened: Bool {
+        detail?.transcript == nil
     }
 
     private var takeaways: [String] {
@@ -185,10 +269,72 @@ struct LessonView: View {
         detail?.beats ?? []
     }
 
-    /// The beat being narrated right now, from the audio clock. The last
-    /// beat stays highlighted once its end time has passed.
-    private var currentBeatIndex: Int? {
+    /// True when this lesson's beats carry no per-beat timings.
+    /// Supplemental lessons have recorded narration but no timed
+    /// beat data, so their beats are untimed: the flow shows every
+    /// step, but nothing highlights a current beat, nothing seeks
+    /// from a beat or a paragraph, and no "Now playing" badge
+    /// appears. Website lessons are unaffected: their beats keep
+    /// real start and end times.
+    private var beatsAreUntimed: Bool {
+        entry.isSupplemental
+    }
+
+    /// The "In this lesson" intro: the first real takeaway when the
+    /// lesson has one, otherwise the beat titles in order. This is
+    /// not called an objective: the lesson page carries no objective
+    /// field, so none is invented. Nil when neither exists.
+    private var inThisLessonIntro: String? {
+        if let first = detail?.takeaways.first, !first.isEmpty {
+            return first
+        }
         guard !beats.isEmpty else { return nil }
+        return beats.map { $0.title }.joined(separator: ", ")
+    }
+
+    /// Other lessons in this chapter, in catalogue order, excluding
+    /// this lesson. Real titles only, from the live catalogue. Empty
+    /// when the chapter is unknown or has no other lessons.
+    private var relatedLessons: [SearchEntry] {
+        chapterLessons.filter { $0.id != entry.id }
+    }
+
+    /// The listening length from the lesson data, shown only when
+    /// the lesson carries a real duration. Hidden when the duration
+    /// is 0, which includes supplemental lessons. Never a reading
+    /// time: it is the narration length.
+    private var listeningLengthText: String? {
+        guard let duration = detail?.durationSec, duration > 0 else { return nil }
+        return formatTime(duration)
+    }
+
+    /// The player status in words, so playing and paused are never
+    /// shown by colour or icon shape alone.
+    private var audioStatusText: String {
+        if audioService.isPlaying { return "Playing" }
+        if hasStartedAudio { return "Paused" }
+        return "Not started yet"
+    }
+
+    /// True only once playback has actually started in this view:
+    /// the learner pressed Play and a track is loaded. The beats
+    /// flow "Now playing" badge is gated on this, so it never
+    /// shows before the first Play tap, when the audio clock still
+    /// sits at 0 on the first beat. It stays on while paused
+    /// mid-playback, and goes off once the narration has finished
+    /// (the same half-second end margin resume() uses).
+    private var isNowPlayingBadgeVisible: Bool {
+        guard hasStartedAudio, audioService.duration > 0 else { return false }
+        return audioService.currentTime < audioService.duration - 0.5
+    }
+
+    /// The beat being narrated right now, from the audio clock. The last
+    /// beat stays highlighted once its end time has passed. Nil for
+    /// untimed beats: with all beat times at zero, the clock check
+    /// below would falsely highlight the last beat, so supplemental
+    /// lessons never get a current beat.
+    private var currentBeatIndex: Int? {
+        guard !beatsAreUntimed, !beats.isEmpty else { return nil }
         let now = audioService.currentTime
         if let index = beats.firstIndex(where: { now >= $0.startTime && now < $0.endTime }) {
             return index
@@ -206,6 +352,20 @@ struct LessonView: View {
         return detail?.durationSec ?? 0
     }
 
+    /// Approximate time for this lesson, from the real audio
+    /// length when known, else the bundled narration manifest.
+    /// Nil when neither knows it: no time is shown, never a
+    /// guessed number.
+    private var lessonTimeLabel: String? {
+        if audioDuration > 0 {
+            return "About " + LessonDurations.durationText(Int(audioDuration))
+        }
+        if let label = LessonDurations.label(for: entry.id) {
+            return "About " + label
+        }
+        return nil
+    }
+
     private var correctCount: Int {
         quiz.filter { question in
             selectedAnswers[question.id] == question.correctOptionIndex
@@ -220,9 +380,10 @@ struct LessonView: View {
         !quiz.isEmpty && selectedAnswers.count == quiz.count
     }
 
-    /// Neighbours in catalogue order, from the loaded search index.
-    private var catalogueIndex: Int? {
-        contentService.allLessons.firstIndex { $0.id == entry.id }
+    /// This lesson's index in book reading order, for prev/next
+    /// navigation across chapter boundaries.
+    private var readingIndex: Int? {
+        contentService.readingOrderLessons.firstIndex { $0.id == entry.id }
     }
 
     /// The chapter prefix of this lesson id, for example "ch1" for
@@ -240,37 +401,24 @@ struct LessonView: View {
         return contentService.allLessons.filter { $0.id.hasPrefix(prefix + "s") }
     }
 
-    private var chapterIndex: Int? {
-        chapterLessons.firstIndex { $0.id == entry.id }
-    }
-
-    /// Previous lesson: the previous lesson in this chapter when there
-    /// is one, otherwise the previous lesson in catalogue order.
+    /// Previous lesson in book reading order: the previous lesson
+    /// in the chapter when there is one, otherwise the last lesson
+    /// of the previous chapter in the reading map, never the
+    /// numerically previous chapter.
     private var previousLessonEntry: SearchEntry? {
-        if let index = chapterIndex, index > 0 { return chapterLessons[index - 1] }
-        guard let index = catalogueIndex, index > 0 else { return nil }
-        return contentService.allLessons[index - 1]
+        guard let index = readingIndex, index > 0 else { return nil }
+        return contentService.readingOrderLessons[index - 1]
     }
 
-    private var catalogueNextEntry: SearchEntry? {
-        guard let index = catalogueIndex, index + 1 < contentService.allLessons.count else { return nil }
-        return contentService.allLessons[index + 1]
-    }
-
-    private var chapterNextEntry: SearchEntry? {
-        guard let index = chapterIndex, index + 1 < chapterLessons.count else { return nil }
-        return chapterLessons[index + 1]
-    }
-
-    /// Next lesson: the next lesson the lesson page names wins, then
-    /// the next lesson in this chapter, then catalogue order.
+    /// Next lesson: the next lesson the lesson page names wins,
+    /// then the next lesson in book reading order.
     private var nextLessonEntry: SearchEntry? {
         if let nextID = detail?.nextLessonID,
            let named = contentService.allLessons.first(where: { $0.id == nextID }) {
             return named
         }
-        if let next = chapterNextEntry { return next }
-        return catalogueNextEntry
+        guard let index = readingIndex, index + 1 < contentService.readingOrderLessons.count else { return nil }
+        return contentService.readingOrderLessons[index + 1]
     }
 
     private var nextLessonTitle: String {
@@ -295,12 +443,14 @@ struct LessonView: View {
     /// The audio timestamp for a transcript paragraph, in seconds.
     /// Paragraphs map to the beats in order: paragraph i starts at
     /// beat i when there is one, otherwise at the nearest beat. With
-    /// no beats there is no timestamp: paragraphs never spread evenly
-    /// across the audio length, because that would invent timestamps
-    /// the narration does not have. Nil means the paragraph highlights
+    /// no beats, or with untimed beats, there is no timestamp:
+    /// paragraphs never spread evenly across the audio length, and
+    /// untimed beat times (all zero) must never seek the audio to
+    /// the start, because that would invent timestamps the
+    /// narration does not have. Nil means the paragraph highlights
     /// on tap but does not seek.
     private func timestamp(forParagraph index: Int) -> Double? {
-        guard !transcriptParagraphs.isEmpty else { return nil }
+        guard !beatsAreUntimed, !transcriptParagraphs.isEmpty else { return nil }
         if !beats.isEmpty {
             if index < beats.count { return beats[index].startTime }
             return beats.last?.startTime
@@ -309,27 +459,93 @@ struct LessonView: View {
     }
 
     /// Jump the audio to a transcript paragraph's timestamp and
-    /// highlight that paragraph. Tapping the highlighted paragraph
-    /// again clears the highlight without moving the audio.
+    /// highlight that paragraph. A paragraph with no timestamp cannot
+    /// jump the audio, so it is not highlighted as if it were synced:
+    /// a note says so instead. Tapping the highlighted paragraph
+    /// again re-seeks to it, instead of silently clearing the
+    /// highlight without explanation.
     private func jumpToParagraph(_ index: Int) {
-        if highlightedParagraphIndex == index {
+        guard let time = timestamp(forParagraph: index) else {
             highlightedParagraphIndex = nil
+            transcriptNote = "This paragraph has no audio timing, so it cannot jump the audio."
             return
         }
+        transcriptNote = nil
         highlightedParagraphIndex = index
-        if let time = timestamp(forParagraph: index) {
-            audioService.seek(to: time)
-        }
+        audioService.seek(to: time)
+    }
+
+    /// Jump the audio to a beat's start time and mark the beat
+    /// selected, so its note stands out in the flow. Playback is not
+    /// started here: the Play button starts the narration, as
+    /// everywhere else in this view. Seeking uses the audio
+    /// service seek API, the same call the transcript uses. For
+    /// untimed beats there is no jump: tapping only marks the beat
+    /// selected, and never seeks the audio to the start.
+    private func jumpToBeat(_ beat: LessonBeat) {
+        selectedBeatID = beat.id
+        guard !beatsAreUntimed else { return }
+        audioService.seek(to: beat.startTime)
     }
 
     /// Detailed explanation: the first paragraphs of the transcript,
-    /// kept as separate paragraphs so each reads as its own block.
+    /// split into readable paragraphs so each reads as its own
+    /// block with breathing room, never one wall of text. The
+    /// splitting never changes any wording: it only breaks long
+    /// blocks at paragraph and sentence boundaries.
     private var detailedExplanationParagraphs: [String] {
-        Array(transcriptParagraphs.prefix(2))
+        transcriptParagraphs.prefix(2).flatMap { splitIntoReadableParagraphs($0) }
+    }
+
+    /// Split a block of lesson text into readable paragraphs
+    /// without changing any wording. Line breaks mark paragraph
+    /// boundaries first; a long block is then split into sentence
+    /// groups (at most three sentences, about 480 characters) so
+    /// it never renders as one wall of text. Sentence boundaries
+    /// come from the system sentence enumeration, so abbreviations
+    /// and decimals do not split sentences.
+    private func splitIntoReadableParagraphs(_ text: String) -> [String] {
+        let blocks = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var paragraphs: [String] = []
+        for block in blocks {
+            paragraphs.append(contentsOf: splitLongBlock(block))
+        }
+        return paragraphs
+    }
+
+    /// Split one long block into sentence groups. Short blocks
+    /// come back unchanged.
+    private func splitLongBlock(_ block: String) -> [String] {
+        var sentences: [String] = []
+        block.enumerateSubstrings(in: block.startIndex..<block.endIndex, options: [.bySentences]) { substring, _, _, _ in
+            if let sentence = substring?.trimmingCharacters(in: .whitespacesAndNewlines), !sentence.isEmpty {
+                sentences.append(sentence)
+            }
+        }
+        guard sentences.count > 3 || block.count > 480 else { return [block] }
+        guard sentences.count > 1 else { return [block] }
+        var chunks: [String] = []
+        var current = ""
+        var currentCount = 0
+        for sentence in sentences {
+            if !current.isEmpty && (currentCount >= 3 || current.count + 1 + sentence.count > 480) {
+                chunks.append(current)
+                current = ""
+                currentCount = 0
+            }
+            current = current.isEmpty ? sentence : current + " " + sentence
+            currentCount += 1
+        }
+        if !current.isEmpty { chunks.append(current) }
+        return chunks
     }
 
     /// Real-world example fallback: the last transcript paragraph,
-    /// used only when the lesson has no "Do this at work" items.
+    /// used only when the lesson has no real-world example items.
     private var transcriptLastParagraph: String? {
         guard transcriptParagraphs.count > 2 else { return nil }
         return transcriptParagraphs.last
@@ -361,8 +577,19 @@ struct LessonView: View {
                 } else if isLoadingDetail && detail == nil {
                     loadingSection
                 } else {
+                    if isFreeSample {
+                        freeSampleBanner
+                    }
+                    if detailSource == .cached {
+                        cachedCopyBanner
+                    }
+                    inThisLessonSection
                     diagramSection
-                    audioSection
+                    if audioFileName.isEmpty {
+                        noNarrationSection
+                    } else {
+                        audioSection
+                    }
 
                     if showFinishedPrompt, let nextEntry = nextLessonEntry {
                         finishedPromptSection(entry: nextEntry)
@@ -378,6 +605,8 @@ struct LessonView: View {
 
                     quizSection
 
+                    relatedLessonsSection
+
                     completionSection
 
                     if let nextEntry = nextLessonEntry {
@@ -388,8 +617,12 @@ struct LessonView: View {
             .padding(.horizontal, PFSpacing.lg)
             .padding(.top, PFSpacing.lg)
             // Bottom padding clears the floating tab bar so the last
-            // content is never hidden behind it.
-            .padding(.bottom, 112)
+            // content is never hidden behind it. The shared
+            // clearance value: the same 112pt every tab list uses
+            // through pfTabBarClearance(), kept as in-content
+            // padding here because this ScrollView is the
+            // reference pattern the shared value was taken from.
+            .padding(.bottom, PFSpacing.tabBarClearance)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         // Copy protection: lesson text cannot be selected, a faint
@@ -404,7 +637,6 @@ struct LessonView: View {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 Button {
                     noteText = ""
-                    noteCollection = "General"
                     showNoteComposer = true
                 } label: {
                     Image(systemName: hasNotes ? "note.text" : "note.text.badge.plus")
@@ -449,9 +681,8 @@ struct LessonView: View {
         }
         .onDisappear {
             audioService.stop()
-            // Allow autoplay again if the learner comes back to this
-            // lesson: otherwise the start-once guard would leave the
-            // audio stopped until Play is tapped.
+            // Reset the started flag so Play starts the audio fresh
+            // if the learner comes back to this lesson.
             hasStartedAudio = false
             didAutoAdvance = false
         }
@@ -460,72 +691,51 @@ struct LessonView: View {
                 seekValue = newValue
             }
         }
-        .onChange(of: audioService.isPlaying) { _, newValue in
-            if newValue {
-                maybeAutoShowVisual()
-            }
-        }
-        .onChange(of: selectedAnswers) { _, _ in
-            // Record the score as soon as the quiz is fully answered,
-            // so it persists even if the lesson is left before the
-            // Mark as Complete button is tapped.
-            if allQuizAnswered {
-                progressStore.recordQuizScore(
-                    lessonID: entry.id,
-                    correct: correctCount,
-                    total: quiz.count
-                )
-            }
-        }
         .sheet(isPresented: $showNoteComposer) {
             noteComposerSheet
         }
-        .fullScreenCover(isPresented: $showVisualFullScreen) {
+        .fullScreenCover(isPresented: $showFullScreenVisual) {
             LessonVisualFullScreenView(
                 svg: detail?.diagramSVG,
                 beats: beats,
                 currentBeatIndex: currentBeatIndex,
                 lessonTitle: lessonTitle,
                 audioService: audioService,
-                onClose: closeVisualFullScreen
+                onClose: { showFullScreenVisual = false }
             )
         }
         .alert(
             "Purchase",
             isPresented: Binding(
-                get: { storeManager.statusMessage != nil },
-                set: { if !$0 { storeManager.clearStatusMessage() } }
+                get: { showPurchaseAlert && storeManager.statusMessage != nil },
+                set: {
+                    if !$0 {
+                        storeManager.clearStatusMessage()
+                        showPurchaseAlert = false
+                    }
+                }
             )
         ) {
             Button("OK", role: .cancel) { }
         } message: {
             Text(storeManager.statusMessage ?? "")
         }
-    }
-
-    // MARK: - Auto full-screen visual
-
-    /// Whether this lesson has a visual to show full screen.
-    private var hasVisual: Bool {
-        if let svg = detail?.diagramSVG, !svg.isEmpty { return true }
-        return !beats.isEmpty
-    }
-
-    /// Show the visual full screen once, when the lesson has loaded
-    /// and the narration is playing. Does nothing after the learner
-    /// has closed it.
-    private func maybeAutoShowVisual() {
-        guard detail != nil, hasVisual, audioService.isPlaying,
-              !didAutoShowVisual, !visualDismissedByUser else { return }
-        didAutoShowVisual = true
-        showVisualFullScreen = true
-    }
-
-    /// Close the full-screen visual and remember the choice for this
-    /// lesson open, so it never pops back up on its own.
-    private func closeVisualFullScreen() {
-        visualDismissedByUser = true
-        showVisualFullScreen = false
+        .confirmationDialog(
+            "Remove this download?",
+            isPresented: $showRemoveDownloadConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Remove download", role: .destructive) {
+                // removeDownload(for:) is synchronous: the file is
+                // removed and the state flips to notDownloaded
+                // before this returns, so the section below
+                // immediately shows the download state again.
+                downloadStore.removeDownload(for: entry.id)
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("The downloaded narration is removed from this device. You can download it again any time, and streaming still works afterwards.")
+        }
     }
 
     // MARK: - Lesson notes
@@ -544,14 +754,13 @@ struct LessonView: View {
             lessonID: entry.id,
             lessonTitle: lessonTitle,
             text: text,
-            highlightedText: highlightedText,
-            collection: noteCollection
+            highlightedText: highlightedText
         )
         refreshHasNotes()
         showNoteComposer = false
     }
 
-    /// Small note composer: a text field and a collection picker.
+    /// Small note composer: a text field.
     /// The highlighted transcript paragraph, when there is one, is
     /// shown as the quote that will be saved with the note.
     private var noteComposerSheet: some View {
@@ -589,17 +798,6 @@ struct LessonView: View {
                                 .stroke(Color.pfBorder, lineWidth: 1)
                         )
                 }
-                VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                    Text("Collection")
-                        .font(.pfCaptionBold)
-                        .foregroundColor(.pfNavy)
-                    Picker("Collection", selection: $noteCollection) {
-                        ForEach(noteCollections, id: \.self) { collection in
-                            Text(collection).tag(collection)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
                 PFPrimaryButton(title: "Save note") {
                     saveNote()
                 }
@@ -632,6 +830,17 @@ struct LessonView: View {
                 .foregroundColor(.pfRoyal)
                 .lineLimit(2)
 
+            if let positionCaption {
+                Text(positionCaption)
+                    .font(.pfCaption)
+                    .foregroundColor(.pfSecondaryText)
+            }
+            if let bookPositionCaption {
+                Text(bookPositionCaption)
+                    .font(.pfCaption)
+                    .foregroundColor(.pfSecondaryText)
+            }
+
             Text(lessonTitle)
                 .font(.pfHeroTitle)
                 .foregroundColor(.pfNavy)
@@ -639,6 +848,11 @@ struct LessonView: View {
 
             HStack(spacing: PFSpacing.sm) {
                 PFPill(text: entry.type.displayName)
+                if let timeLabel = lessonTimeLabel {
+                    Label(timeLabel, systemImage: "clock")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfSecondaryText)
+                }
                 if progressStore.isLessonComplete(entry.id) || didMarkComplete {
                     Label("Completed", systemImage: "checkmark.circle.fill")
                         .font(.pfCaptionBold)
@@ -653,14 +867,10 @@ struct LessonView: View {
     // MARK: - Loading and error
 
     private var loadingSection: some View {
-        PFCard {
-            HStack(spacing: PFSpacing.md) {
-                ProgressView()
-                Text("Loading lesson...")
-                    .font(.pfBody)
-                    .foregroundColor(.pfSecondaryText)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            PFLoadingView(message: "Loading lesson...")
+            PFSkeletonView()
+            PFSkeletonView()
         }
     }
 
@@ -679,54 +889,146 @@ struct LessonView: View {
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
                 PFSecondaryButton(title: "Retry") {
-                    Task { await loadDetail() }
+                    Task { await retryLoadDetail() }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    // MARK: - 2. Lesson diagram, first under the header
+    /// Shown when the lesson on screen came from the copy saved on
+    /// this device because the live page could not be loaded. The
+    /// cached lesson stays fully usable underneath; Retry tries the
+    /// live page again.
+    private var cachedCopyBanner: some View {
+        PFCard {
+            VStack(alignment: .leading, spacing: PFSpacing.md) {
+                HStack(spacing: PFSpacing.sm) {
+                    Image(systemName: "wifi.slash")
+                        .foregroundColor(.pfNavy)
+                        .accessibilityHidden(true)
+                    Text("Showing the copy saved on this device. The latest version could not be loaded.")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfNavy)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                PFSecondaryButton(title: "Retry live version") {
+                    Task { await retryLoadDetail() }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 
-    private var diagramSection: some View {
+    /// "In this lesson": the first real takeaway, or the beat titles
+    /// when there is no takeaway. Never labelled an objective, and
+    /// hidden entirely when neither exists.
+    private var inThisLessonSection: some View {
         Group {
-            if let svg = detail?.diagramSVG, !svg.isEmpty {
+            if let intro = inThisLessonIntro {
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
-                    PFSectionHeader(title: "How it flows")
+                    PFSectionHeader(title: "In this lesson")
                     PFCard {
-                        LessonDiagramView(svg: svg, activeBeat: currentBeatIndex ?? 0)
-                            .frame(height: 300)
-                            .frame(maxWidth: .infinity)
-                            .clipped()
+                        Text(intro)
+                            .font(.pfBody)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-            } else if !beats.isEmpty {
+            }
+        }
+    }
+
+    // MARK: - 2. Lesson flow, first under the header
+
+    /// The lesson visual for every lesson: the beats as a native
+    /// vertical flow. The website's flow-diagram SVG is never
+    /// shown in the app: rendered in a narrow WebView it came
+    /// out tiny and unreadable, while the native flow reads
+    /// clearly. Flow lessons get arrows between the points.
+    /// Supplemental lessons render this same section from their
+    /// bundled flow descriptor, with untimed beats: every step
+    /// shows, with no current-beat highlight and no seeking.
+    private var diagramSection: some View {
+        Group {
+            if !beats.isEmpty {
                 beatsFlowSection
             }
         }
     }
 
-    /// Fallback visual for lessons whose visual is not a flow SVG
-    /// (for example a comparison table). The beats are the same steps
-    /// the website shows, so they render here as a vertical flow with
-    /// the beat matching the narration highlighted, instead of the
-    /// lesson opening with no visual at all.
+    /// True when the lesson has a flow diagram: website lessons
+    /// carry the flow-diagram SVG from the lesson page, and
+    /// supplemental flow lessons carry a diagram generated from
+    /// their flow descriptor. Those lessons get arrows between the
+    /// flow points, showing the direction of the flow. Other
+    /// lessons get a plain rail.
+    private var hasFlowDiagram: Bool {
+        detail?.diagramSVG?.isEmpty == false
+    }
+
+    /// The beats as a vertical flow, with the beat matching the
+    /// narration highlighted. No numbers: the beats are the
+    /// lesson's points, not a sequence. For untimed beats there is
+    /// no highlight and no "Now playing" badge: currentBeatIndex
+    /// is nil, so every point renders at rest.
     private var beatsFlowSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
             PFSectionHeader(title: "How it flows")
             PFCard {
-                BeatsFlowContent(beats: beats, currentBeatIndex: currentBeatIndex)
+                BeatsFlowContent(
+                    beats: beats,
+                    currentBeatIndex: currentBeatIndex,
+                    showsFlowArrows: hasFlowDiagram,
+                    showsNowPlayingBadge: isNowPlayingBadgeVisible,
+                    selectedBeatID: selectedBeatID,
+                    isUntimed: beatsAreUntimed,
+                    onBeatTapped: { beat in jumpToBeat(beat) }
+                )
             }
+            Button {
+                showFullScreenVisual = true
+            } label: {
+                Label("View full screen", systemImage: "arrow.up.left.and.arrow.down.right")
+                    .font(.pfBody.weight(.semibold))
+                    .foregroundColor(.pfRoyal)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("View the lesson visual full screen")
+            .accessibilityHint("Opens the flow visual filling the whole screen. Audio keeps playing.")
         }
     }
 
-    // MARK: - 3. Audio player, one fixed height
+    /// Shown in place of the audio player for a lesson with no
+    /// audio file: the full text below is the lesson, the player
+    /// never appears and never fails.
+    private var noNarrationSection: some View {
+        PFCard {
+            HStack(spacing: PFSpacing.md) {
+                PFIconTile(systemImage: "text.book.closed.fill", size: 44)
+                VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                    Text("No narration")
+                        .font(.pfCardTitle)
+                        .foregroundColor(.pfNavy)
+                    Text("This lesson has no recorded narration. Read the full text below.")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: - 3. Audio player (sizes to its content)
 
     private var audioSection: some View {
         PFCard {
             VStack(alignment: .leading, spacing: PFSpacing.md) {
                 HStack(alignment: .center, spacing: PFSpacing.md) {
-                    Button(action: { audioService.togglePlayPause() }) {
+                    Button(action: { playButtonTapped() }) {
                         Image(systemName: audioService.isPlaying ? "pause.fill" : "play.fill")
                             .font(.pfSectionTitle.weight(.bold))
                             .foregroundColor(.white)
@@ -741,10 +1043,18 @@ struct LessonView: View {
                         Text("Listen to this lesson")
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
-                        Text("Narration plays while you read along below.")
+                        Text("Tap play to start the narration, then read along below.")
                             .font(.pfCaption)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
+                        if let listeningLength = listeningLengthText {
+                            Text("Listening length: \(listeningLength)")
+                                .font(.pfCaptionBold)
+                                .foregroundColor(.pfSecondaryText)
+                        }
+                        Text(audioStatusText)
+                            .font(.pfCaptionBold)
+                            .foregroundColor(.pfRoyal)
                         if audioService.isLoading && audioService.duration == 0 {
                             ProgressView()
                                 .padding(.top, 2)
@@ -803,18 +1113,29 @@ struct LessonView: View {
                     ) {
                         audioService.toggleMute()
                     }
-                    audioControlButton(
-                        icon: "gauge.with.needle",
-                        label: audioService.speedLabel
-                    ) {
-                        audioService.cycleSpeed()
+                    Menu {
+                        ForEach(AudioPlayerService.playbackSpeeds, id: \.self) { speed in
+                            Button(Self.speedLabel(for: speed)) {
+                                audioService.setSpeed(speed)
+                            }
+                        }
+                    } label: {
+                        audioControlLabel(icon: "gauge.with.needle", label: audioService.speedLabel)
                     }
-                    audioControlButton(
-                        icon: "moon.zzz",
-                        label: audioService.sleepTimerMinutes == nil ? "Sleep" : audioService.sleepTimerLabel
-                    ) {
-                        audioService.cycleSleepTimer()
+                    .accessibilityLabel("Playback speed, \(audioService.speedLabel)")
+                    Menu {
+                        Button("Off") {
+                            audioService.setSleepTimer(minutes: nil)
+                        }
+                        ForEach(AudioPlayerService.sleepTimerOptions, id: \.self) { minutes in
+                            Button("\(minutes) minutes") {
+                                audioService.setSleepTimer(minutes: minutes)
+                            }
+                        }
+                    } label: {
+                        audioControlLabel(icon: "moon.zzz", label: audioService.sleepTimerMinutes == nil ? "Sleep" : audioService.sleepTimerLabel)
                     }
+                    .accessibilityLabel("Sleep timer, \(audioService.sleepTimerMinutes == nil ? "Off" : audioService.sleepTimerLabel)")
                     audioControlButton(
                         icon: "goforward.15",
                         label: "Forward 15s"
@@ -822,6 +1143,8 @@ struct LessonView: View {
                         audioService.seekForward()
                     }
                 }
+
+                downloadSection
 
                 // Playback queue: auto-advance is off by default. When
                 // it is on, the next lesson starts on its own when this
@@ -846,7 +1169,7 @@ struct LessonView: View {
                             .font(.pfCaptionBold)
                             .foregroundColor(.pfRoyal)
                             .fixedSize(horizontal: false, vertical: true)
-                    } else if AudioPlayerService.savedPosition(for: entry.id) > 5 {
+                    } else if AudioPlayerService.savedPosition(for: entry.id) > 0 {
                         // Saved position, playback not started yet:
                         // show where reopening resumes from.
                         Text("Resume from \(formatTimePadded(AudioPlayerService.savedPosition(for: entry.id)))")
@@ -856,14 +1179,21 @@ struct LessonView: View {
                     }
 
                     if audioService.isUsingFallback {
-                        Text("Playing from the backup audio host.")
+                        Text("The main audio was unavailable, so this lesson is playing from the backup copy. The content is the same.")
                             .font(.pfCaption)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    if let errorMessage = audioService.errorMessage {
-                        Text(errorMessage)
+                    if audioService.isPlayingDownloadedCopy {
+                        Text("Playing the downloaded copy saved on this device.")
+                            .font(.pfCaptionBold)
+                            .foregroundColor(.pfRoyal)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if audioService.errorMessage != nil {
+                        Text("The audio could not be played. Check your connection and tap Retry audio.")
                             .font(.pfCallout)
                             .foregroundColor(.pfError)
                             .fixedSize(horizontal: false, vertical: true)
@@ -872,14 +1202,77 @@ struct LessonView: View {
                         }
                     }
                 }
-                .frame(height: 112, alignment: .top)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            // One consistent player size: the card height does not change
-            // when loading, fallback or error text appears.
-            .frame(height: 400, alignment: .top)
         }
+    }
+
+    /// Explicit offline download for this lesson's narration. This
+    /// control only exists in the unlocked lesson view, under the
+    /// same gating as playback, so a locked lesson can never be
+    /// downloaded from here. Nothing downloads automatically: the
+    /// download starts only on the learner's tap, and it does not
+    /// continue if the app is closed before it finishes.
+    private var downloadSection: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.sm) {
+            switch downloadStore.state(for: entry.id) {
+            case .notDownloaded:
+                Text("Listen offline by downloading the narration to this device.")
+                    .font(.pfCaption)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                PFSecondaryButton(title: "Download audio") {
+                    Task { await downloadStore.downloadAudio(for: entry) }
+                }
+            case .downloading:
+                HStack(spacing: PFSpacing.sm) {
+                    ProgressView()
+                    Text("Downloading audio...")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfNavy)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            case .downloaded:
+                Label("Downloaded to this device", systemImage: "arrow.down.circle.fill")
+                    .font(.pfCaptionBold)
+                    .foregroundColor(.pfNavy)
+                Text("Playing this lesson uses the downloaded copy. Remove it to free space; streaming still works afterwards.")
+                    .font(.pfCaption)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                PFSecondaryButton(title: "Remove download") {
+                    showRemoveDownloadConfirmation = true
+                }
+            case .failed(let message):
+                Text(message)
+                    .font(.pfCallout)
+                    .foregroundColor(.pfError)
+                    .fixedSize(horizontal: false, vertical: true)
+                PFSecondaryButton(title: "Try download again") {
+                    Task { await downloadStore.downloadAudio(for: entry) }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// One audio control label: icon above a short label, flexible
+    /// width. Shared by the tap buttons and the Speed and Sleep menus,
+    /// so every control looks the same.
+    private func audioControlLabel(icon: String, label: String) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.pfCardTitle.weight(.regular))
+                .foregroundColor(.pfRoyal)
+            Text(label)
+                .font(.pfCaption.weight(.semibold))
+                .foregroundColor(.pfNavy)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity, minHeight: 48)
+        .contentShape(Rectangle())
     }
 
     /// One audio control: icon above a short label, flexible width.
@@ -889,21 +1282,22 @@ struct LessonView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.pfCardTitle.weight(.regular))
-                    .foregroundColor(.pfRoyal)
-                Text(label)
-                    .font(.pfCaption.weight(.semibold))
-                    .foregroundColor(.pfNavy)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .frame(maxWidth: .infinity, minHeight: 48)
-            .contentShape(Rectangle())
+            audioControlLabel(icon: icon, label: label)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+    }
+
+    /// "1.0x" style label for one playback speed, matching the
+    /// player's speedLabel for the current rate.
+    private static func speedLabel(for rate: Float) -> String {
+        switch rate {
+        case 0.75: return "0.75x"
+        case 1.25: return "1.25x"
+        case 1.5: return "1.5x"
+        case 2.0: return "2.0x"
+        default: return "1.0x"
+        }
     }
 
     /// Zero-padded MM:SS, for the "Resumed from 08:43" line.
@@ -984,6 +1378,7 @@ struct LessonView: View {
     /// Push the given lesson. Used by the arrow row and by auto-advance.
     private func navigateToLesson(_ target: SearchEntry) {
         guard target.id != entry.id, !isNavLinkActive else { return }
+        navGeneration += 1
         pendingNavEntry = target
         isNavLinkActive = true
     }
@@ -994,7 +1389,13 @@ struct LessonView: View {
     private func advanceToNextLesson() {
         guard !didAutoAdvance, let next = nextLessonEntry else { return }
         didAutoAdvance = true
+        // Capture the generation: if the learner manually navigated
+        // to another lesson in the half second before this fires,
+        // the generation has moved on and this delayed navigation
+        // is dropped instead of pushing a second copy of the lesson.
+        let generation = navGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            guard self.navGeneration == generation else { return }
             self.navigateToLesson(next)
         }
     }
@@ -1115,31 +1516,57 @@ struct LessonView: View {
         }
     }
 
-    /// Real-world example: the "Do this at work" checklist when the
-    /// lesson has one, otherwise the last paragraph of the transcript
-    /// when the transcript is long enough to have one. Nothing is
-    /// shown when neither exists.
+    /// Real-world example: reading content, not tasks. Each
+    /// example renders as its own card with no checkbox, no
+    /// strikethrough and no tap action. When the lesson has no
+    /// example items, the last paragraph of the transcript is
+    /// shown instead, split into readable paragraphs, when the
+    /// transcript is long enough to have one. Nothing is shown
+    /// when neither exists.
     private var realWorldExampleSection: some View {
         Group {
-            if !doThisItems.isEmpty {
+            if !realWorldExamples.isEmpty {
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
                     PFSectionHeader(title: "Real-World Example")
-                    doThisChecklistCard
+                    realWorldExampleCards
                 }
             } else if let example = transcriptLastParagraph {
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
                     PFSectionHeader(title: "Real-World Example")
                     PFCard {
-                        Text(example)
-                            .font(.pfBody)
-                            .foregroundColor(.pfNavy)
-                            .lineSpacing(7)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: PFSpacing.lg) {
+                            ForEach(Array(splitIntoReadableParagraphs(example).enumerated()), id: \.offset) { _, paragraph in
+                                Text(paragraph)
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfNavy)
+                                    .lineSpacing(7)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
         }
+    }
+
+    /// The example items in source order, with repeats removed:
+    /// exact duplicates, and any item whose text already appears
+    /// inside an earlier item, are dropped, so no example text
+    /// repeats. Items are plain strings in the lesson data, with
+    /// no separate title or body field, so each item is shown
+    /// whole, in the order the lesson lists it.
+    private var realWorldExamples: [String] {
+        var unique: [String] = []
+        for item in doThisItems {
+            let trimmed = item.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            guard !unique.contains(trimmed) else { continue }
+            guard !unique.contains(where: { $0.contains(trimmed) }) else { continue }
+            unique.append(trimmed)
+        }
+        return unique
     }
 
     /// Resources tab: the lesson sources, and the lesson's key points.
@@ -1185,17 +1612,14 @@ struct LessonView: View {
         }
     }
 
-    /// Mark as Complete, shown on its own when no other Mark as
-    /// Complete button is visible: a quiz that is not fully answered
-    /// yet has no button in the quiz card, and a lesson with no quiz
-    /// at all has its button in the practice card. In those two
-    /// states this section is the button; otherwise the quiz or
-    /// practice card already shows it, so this section stays empty
-    /// and there is never a duplicate button on screen.
+    /// Mark as Complete, always in this one place, in the same
+    /// position whether or not the lesson has a quiz and whether or
+    /// not the quiz is answered. The quiz card and the practice card
+    /// never show their own button, so there is exactly one button
+    /// on screen and it never moves.
     private var completionSection: some View {
         Group {
-            if !progressStore.isLessonComplete(entry.id) && !didMarkComplete
-                && !quiz.isEmpty && !allQuizAnswered {
+            if !progressStore.isLessonComplete(entry.id) && !didMarkComplete {
                 PFCard {
                     VStack(alignment: .leading, spacing: PFSpacing.md) {
                         Text("Finished listening and reading? Mark the lesson complete to track your progress.")
@@ -1243,11 +1667,25 @@ struct LessonView: View {
     private var transcriptSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
             PFSectionHeader(title: "Full lesson text")
-            Text("Tap a paragraph to jump the audio to it, when a timestamp is shown. Tap it again to clear the highlight.")
+            Text("Tap a paragraph to jump the audio to it. Paragraphs without a timestamp cannot jump the audio.")
                 .font(.pfCaption)
                 .foregroundColor(.pfSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if isTranscriptShortened && !transcriptParagraphs.isEmpty {
+                Text("Shortened version: the full transcript is still loading.")
+                    .font(.pfCaptionBold)
+                    .foregroundColor(.pfRoyal)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let transcriptNote {
+                Text(transcriptNote)
+                    .font(.pfCaptionBold)
+                    .foregroundColor(.pfRoyal)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             PFCard {
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
                     ForEach(Array(transcriptParagraphs.enumerated()), id: \.offset) { index, paragraph in
@@ -1285,7 +1723,7 @@ struct LessonView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Jump audio to paragraph \(index + 1)")
+                        .accessibilityLabel(timestamp(forParagraph: index) == nil ? "Paragraph \(index + 1), no audio timing" : "Jump audio to paragraph \(index + 1)")
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1293,46 +1731,19 @@ struct LessonView: View {
         }
     }
 
-    // MARK: - 7. Do this at work
+    // MARK: - 7. Real-world example
 
-    /// The "Do this at work" checklist as a card on its own, so the
-    /// Content tab can show it under its own "Real-World Example"
-    /// heading. Tapping an item toggles its checkmark; the checks are
-    /// kept in memory for this lesson open only.
-    private var doThisChecklistCard: some View {
-        PFCard {
-            VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                ForEach(Array(doThisItems.enumerated()), id: \.offset) { index, item in
-                    let key = String(index)
-                    let isChecked = checkedDoThis.contains(key)
-                    Button {
-                        if isChecked {
-                            checkedDoThis.remove(key)
-                        } else {
-                            checkedDoThis.insert(key)
-                        }
-                    } label: {
-                        HStack(alignment: .top, spacing: PFSpacing.md) {
-                            Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
-                                .font(.pfSectionTitle.weight(.regular))
-                                .foregroundColor(isChecked ? .pfSuccess : .pfSecondaryText)
-                                .padding(.top, 1)
-                            Text(item)
-                                .font(.pfBody)
-                                .foregroundColor(.pfNavy)
-                                .strikethrough(isChecked)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(item)
+    /// One reading card per real-world example. No checkbox, no
+    /// strikethrough, no tap action: examples are read, not done.
+    private var realWorldExampleCards: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            ForEach(Array(realWorldExamples.enumerated()), id: \.offset) { _, example in
+                PFCard {
+                    PFBodyText(text: example, lineSpacing: 7)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - 8. Sources
@@ -1371,15 +1782,16 @@ struct LessonView: View {
                 }
             }
 
-            // The last recorded score, shown when reopening the lesson
-            // before any answer is tapped in this visit.
-            if let savedScore = savedQuizScore, selectedAnswers.isEmpty, !quiz.isEmpty {
+            // The best recorded score, shown when reopening the lesson.
+            // Previous answers are restored below, so the learner sees
+            // what they answered last time.
+            if let savedScore = savedQuizScore, !quiz.isEmpty {
                 PFCard {
                     HStack(spacing: PFSpacing.sm) {
                         Image(systemName: "trophy.fill")
                             .font(.pfCardTitle.weight(.regular))
                             .foregroundColor(.pfGold)
-                        Text("Last score: You scored \(savedScore) of \(quiz.count)")
+                        Text("Best score: You scored \(savedScore) of \(quiz.count)")
                             .font(.pfCardTitle)
                             .foregroundColor(.pfNavy)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1395,7 +1807,6 @@ struct LessonView: View {
                             .font(.pfBody)
                             .foregroundColor(.pfNavy)
                             .fixedSize(horizontal: false, vertical: true)
-                        markCompleteButton
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -1404,13 +1815,43 @@ struct LessonView: View {
                     quizQuestionCard(question, number: index + 1)
                 }
 
-                if allQuizAnswered {
+                // Submit: the score is recorded only when the learner
+                // taps Submit, never the moment the last answer is
+                // tapped. Answers can be changed until then.
+                if allQuizAnswered && !quizSubmitted {
+                    PFCard {
+                        VStack(alignment: .leading, spacing: PFSpacing.md) {
+                            Text("All questions answered. Submit to see your score.")
+                                .font(.pfBody)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                            PFPrimaryButton(title: "Submit answers") {
+                                progressStore.recordQuizScore(
+                                    lessonID: entry.id,
+                                    correct: correctCount,
+                                    total: quiz.count
+                                )
+                                quizSubmitted = true
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                // After Submit: the score, and a Retake that clears
+                // the answers so the quiz can be taken again. The
+                // recorded score history stays; the best score stands.
+                if quizSubmitted {
                     PFCard {
                         VStack(alignment: .leading, spacing: PFSpacing.md) {
                             Text("You scored \(correctCount) of \(quiz.count)")
                                 .font(.pfCardTitle)
                                 .foregroundColor(.pfNavy)
-                            markCompleteButton
+                            PFSecondaryButton(title: "Retake quiz") {
+                                progressStore.clearQuizAnswers(lessonID: entry.id)
+                                selectedAnswers = [:]
+                                quizSubmitted = false
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -1434,16 +1875,13 @@ struct LessonView: View {
                     }
                 }
 
-                if let selected = selectedAnswers[question.id] {
+                if quizSubmitted, let selected = selectedAnswers[question.id] {
                     let isCorrect = selected == question.correctOptionIndex
                     VStack(alignment: .leading, spacing: PFSpacing.xs) {
                         Text(isCorrect ? "Correct" : "Not quite")
                             .font(.pfCaptionBold)
                             .foregroundColor(isCorrect ? .pfSuccess : .pfError)
-                        Text(question.explanation)
-                            .font(.pfCallout)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
+                        PFBodyText(text: question.explanation, font: .pfCallout, textColor: .pfSecondaryText)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -1454,35 +1892,41 @@ struct LessonView: View {
 
     private func quizOptionRow(question: QuizQuestion, optionIndex: Int, option: String) -> some View {
         let selected = selectedAnswers[question.id]
-        let isAnswered = selected != nil
         let isSelected = selected == optionIndex
         let isCorrectOption = optionIndex == question.correctOptionIndex
-
+        // Correct/incorrect colours show only after Submit. Before
+        // that, the selected option is simply highlighted, and the
+        // learner can change it.
         let background: Color
-        if !isAnswered || !isSelected {
+        if !isSelected {
             background = Color.pfNavySoft
-        } else if isCorrectOption {
+        } else if quizSubmitted && isCorrectOption {
             background = Color.pfSuccess.opacity(0.12)
-        } else {
+        } else if quizSubmitted {
             background = Color.pfError.opacity(0.12)
+        } else {
+            background = Color.pfRoyal.opacity(0.12)
         }
         let border: Color
-        if !isAnswered || !isSelected {
+        if !isSelected {
             border = Color.pfNavy.opacity(0.10)
-        } else if isCorrectOption {
+        } else if quizSubmitted && isCorrectOption {
             border = .pfSuccess
-        } else {
+        } else if quizSubmitted {
             border = .pfError
+        } else {
+            border = .pfRoyal
         }
 
         return Button {
-            guard selectedAnswers[question.id] == nil else { return }
+            guard !quizSubmitted else { return }
             selectedAnswers[question.id] = optionIndex
+            progressStore.saveQuizAnswer(lessonID: entry.id, questionID: question.id, optionIndex: optionIndex)
         } label: {
             HStack(alignment: .top, spacing: PFSpacing.md) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.pfCardTitle.weight(.regular))
-                    .foregroundColor(isSelected ? (isCorrectOption ? .pfSuccess : .pfError) : .pfSecondaryText)
+                    .foregroundColor(isSelected ? (quizSubmitted ? (isCorrectOption ? .pfSuccess : .pfError) : .pfRoyal) : .pfSecondaryText)
                     .padding(.top, 1)
                 Text(option)
                     .font(.pfBody)
@@ -1502,7 +1946,7 @@ struct LessonView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(isAnswered)
+        .disabled(quizSubmitted)
     }
 
     private var markCompleteButton: some View {
@@ -1515,7 +1959,11 @@ struct LessonView: View {
             } else {
                 PFPrimaryButton(title: "Mark lesson complete") {
                     progressStore.markLessonComplete(id: entry.id, title: lessonTitle)
-                    if quizAttempted {
+                    // Record the score here only when the quiz was
+                    // answered but never submitted: Submit already
+                    // recorded it, and recording twice would duplicate
+                    // the attempt in history.
+                    if quizAttempted && !quizSubmitted {
                         progressStore.recordQuizScore(
                             lessonID: entry.id,
                             correct: correctCount,
@@ -1523,6 +1971,48 @@ struct LessonView: View {
                         )
                     }
                     didMarkComplete = true
+                }
+            }
+        }
+    }
+
+    // MARK: - Related lessons
+
+    /// More lessons in this chapter, below the quiz. Real titles
+    /// from the live catalogue, each opening that lesson. Hidden
+    /// when this chapter has no other lessons. A locked sibling
+    /// opens into the same locked lesson state as everywhere else;
+    /// no gating is changed here.
+    private var relatedLessonsSection: some View {
+        Group {
+            if !relatedLessons.isEmpty {
+                VStack(alignment: .leading, spacing: PFSpacing.md) {
+                    PFSectionHeader(title: "More in this chapter")
+                    PFCard {
+                        VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                            ForEach(relatedLessons) { lesson in
+                                NavigationLink(destination: LessonView(entry: lesson)) {
+                                    HStack(spacing: PFSpacing.md) {
+                                        Text(lesson.title)
+                                            .font(.pfBody)
+                                            .foregroundColor(.pfNavy)
+                                            .multilineTextAlignment(.leading)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                        Image(systemName: "chevron.right")
+                                            .font(.pfBody.weight(.semibold))
+                                            .foregroundColor(.pfRoyal)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .frame(minHeight: 44)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Open lesson: \(lesson.title)")
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
         }
@@ -1570,10 +2060,21 @@ struct LessonView: View {
     }
 
     /// True when this lesson's chapter is not unlocked: neither the
-    /// bundle containing it nor the Integrated Course is owned.
+    /// bundle containing it nor the Integrated Course is owned. The
+    /// free sample lesson (the first lesson of each chapter) is
+    /// never locked: it opens with full content, no purchase.
     private var isLessonLocked: Bool {
         guard let chapterID else { return false }
+        if PFChapterHelper.isSampleLesson(entry, in: contentService) { return false }
         return !storeManager.isChapterUnlocked(chapterID)
+    }
+
+    /// True when this lesson is the free sample of its chapter and
+    /// the chapter itself is locked, so the banner can say so.
+    private var isFreeSample: Bool {
+        guard let chapterID else { return false }
+        return PFChapterHelper.isSampleLesson(entry, in: contentService)
+            && !storeManager.isChapterUnlocked(chapterID)
     }
 
     /// The bundle that unlocks this lesson's chapter, for the lock
@@ -1581,6 +2082,26 @@ struct LessonView: View {
     private var unlockingProduct: CourseProduct? {
         guard let chapterID else { return nil }
         return storeManager.unlockingProduct(for: chapterID)
+    }
+
+    /// Shown at the top of a free sample lesson in a locked chapter:
+    /// this lesson is free and complete, the rest of the chapter is
+    /// not. One line, so the lesson itself stays the focus.
+    private var freeSampleBanner: some View {
+        PFCard {
+            HStack(spacing: PFSpacing.md) {
+                PFIconTile(systemImage: "gift.fill", size: 44)
+                VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                    Text("Free sample lesson")
+                        .font(.pfCardTitle)
+                        .foregroundColor(.pfNavy)
+                    Text("This lesson is free, with the full content. The rest of this chapter unlocks with the course.")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 
     /// Shown in place of the lesson when its chapter is locked: the
@@ -1604,25 +2125,30 @@ struct LessonView: View {
                     }
                 }
                 if let bundle = unlockingProduct {
-                    Text("This lesson is part of \(bundle.name). Buy it for \(storeManager.priceText(for: bundle.productID)) to unlock this chapter, or get everything with The Integrated Course for \(storeManager.priceText(for: PaymentConfig.fullCourseProductID)).")
+                    Text("This lesson is part of \(bundle.name). Buy it for \(storeManager.priceText(for: bundle.productID)) to unlock this chapter, or unlock all chapters with The Integrated Course for \(storeManager.priceText(for: StoreManager.fullCourseProductID)).")
                         .font(.pfBody)
                         .foregroundColor(.pfNavy)
                         .fixedSize(horizontal: false, vertical: true)
                     PFGoldButton(title: storeManager.isBusy ? "Please wait..." : "Buy \(bundle.name) for \(storeManager.priceText(for: bundle.productID))") {
+                        // Clear any stale launch-time store message
+                        // and arm the alert, so only this tap's
+                        // result can pop the Purchase alert.
+                        storeManager.clearStatusMessage()
+                        showPurchaseAlert = true
                         Task { await storeManager.purchase(productID: bundle.productID) }
                     }
                     .disabled(storeManager.isBusy)
                     .opacity(storeManager.isBusy ? 0.5 : 1)
                 } else {
-                    Text("This lesson is part of a course. Buy The Integrated Course for \(storeManager.priceText(for: PaymentConfig.fullCourseProductID)) to unlock it.")
+                    Text("This lesson is part of a course. Buy The Integrated Course for \(storeManager.priceText(for: StoreManager.fullCourseProductID)) to unlock it.")
                         .font(.pfBody)
                         .foregroundColor(.pfNavy)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                PFSecondaryButton(title: "See all courses") {
+                PFSecondaryButton(title: "See purchase options") {
                     showCheckout = true
                 }
-                Text("Pay securely with your Apple ID, or by UPI from the Purchases screen. No account needed.")
+                Text(StoreManager.buildPhaseBuyOpensContent ? "For now, Buy opens the course on this device. No payment is taken." : "Pay securely with your Apple ID. No account needed.")
                     .font(.pfCaption)
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1647,32 +2173,51 @@ struct LessonView: View {
         RecentLessonsStore.shared.record(lessonID: entry.id)
         wireFinishHandler()
         refreshHasNotes()
-        startAudioOnce()
+        // Narration is off by default: nothing auto-plays. The Play
+        // button in the audio card starts it when the learner taps it.
         await loadDetail()
+        // Previous quiz answers, so reopening the lesson shows them.
+        selectedAnswers = progressStore.savedQuizAnswers(for: entry.id)
+        quizSubmitted = savedQuizScore != nil && !quiz.isEmpty && selectedAnswers.count == quiz.count
         // The detail carries the real chapter title: refresh the
         // lock-screen Now Playing metadata with it.
         audioService.updateLessonMetadata(title: lessonTitle, chapterTitle: chapterTitle)
-        maybeAutoShowVisual()
     }
 
     private func loadDetail() async {
         if hasLoadedDetail { return }
         isLoadingDetail = true
         loadError = nil
-        do {
-            let loaded = try await contentService.loadLessonDetail(entry: entry)
-            detail = loaded
+        detailSource = nil
+        if let loaded = await contentService.loadLessonDetailWithSource(entry: entry) {
+            detail = loaded.detail
+            detailSource = loaded.source
             hasLoadedDetail = true
-        } catch {
-            loadError = error.localizedDescription
+        } else {
+            loadError = "This lesson could not be loaded. Check your connection and tap Retry."
         }
         isLoadingDetail = false
     }
 
-    private func startAudioOnce() {
-        guard !hasStartedAudio else { return }
-        hasStartedAudio = true
-        audioService.play(fileName: audioFileName, lessonID: entry.id, title: lessonTitle, chapterTitle: chapterTitle)
+    /// Retry the lesson load from scratch, including after a cached
+    /// copy was shown. Clears the loaded guard so the live page is
+    /// tried again; a failed retry falls back to the cached copy
+    /// when one exists, and the banner stays honest about it.
+    private func retryLoadDetail() async {
+        hasLoadedDetail = false
+        detailSource = nil
+        await loadDetail()
+    }
+
+    /// Start the narration when the learner taps Play. The first tap
+    /// loads the audio; later taps pause and resume it.
+    private func playButtonTapped() {
+        if !hasStartedAudio {
+            hasStartedAudio = true
+            audioService.play(fileName: audioFileName, lessonID: entry.id, title: lessonTitle, chapterTitle: chapterTitle)
+        } else {
+            audioService.togglePlayPause()
+        }
     }
 
     // MARK: - Helpers
@@ -1686,64 +2231,162 @@ struct LessonView: View {
 
 // MARK: - Beats flow content
 
-/// The beats of a lesson as a vertical numbered flow, with the beat
-/// matching the narration highlighted in gold. Shared by the inline
-/// lesson card and the full-screen visual, so both show the same steps.
+/// The beats of a lesson as a vertical flow, with the beat
+/// matching the narration highlighted in gold. The "Now playing"
+/// badge shows only when showsNowPlayingBadge is true, so it
+/// never appears before playback has actually started. The markers are
+/// plain dots, not numbers: the beats are the lesson's points,
+/// not a sequence. Flow lessons get arrows between the points,
+/// showing the direction of the flow; other lessons get a
+/// plain rail. Shared by the inline lesson card and the
+/// full-screen visual, so both show the same steps. In the lesson
+/// view the rows are tappable: tapping a beat seeks the audio to
+/// it. Each row exposes its title and note as its accessibility
+/// label, and the flow exposes a point count summary. When the
+/// beats are untimed (supplemental lessons), tapping a row marks
+/// the point as selected instead of jumping the audio, and the
+/// accessibility hint says so.
 struct BeatsFlowContent: View {
     let beats: [LessonBeat]
     let currentBeatIndex: Int?
+    let showsFlowArrows: Bool
+    let showsNowPlayingBadge: Bool
+    let selectedBeatID: String?
+    /// True when the beats carry no per-beat timings. Rows then
+    /// select rather than seek, and no row claims to jump audio.
+    let isUntimed: Bool
+    let onBeatTapped: ((LessonBeat) -> Void)?
+
+    init(
+        beats: [LessonBeat],
+        currentBeatIndex: Int?,
+        showsFlowArrows: Bool,
+        showsNowPlayingBadge: Bool = false,
+        selectedBeatID: String? = nil,
+        isUntimed: Bool = false,
+        onBeatTapped: ((LessonBeat) -> Void)? = nil
+    ) {
+        self.beats = beats
+        self.currentBeatIndex = currentBeatIndex
+        self.showsFlowArrows = showsFlowArrows
+        self.showsNowPlayingBadge = showsNowPlayingBadge
+        self.selectedBeatID = selectedBeatID
+        self.isUntimed = isUntimed
+        self.onBeatTapped = onBeatTapped
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(beats.enumerated()), id: \.element.id) { index, beat in
-                HStack(alignment: .top, spacing: PFSpacing.md) {
-                    VStack(spacing: 0) {
-                        Circle()
-                            .fill(index == currentBeatIndex ? Color.pfGold : Color.pfRoyal)
-                            .frame(width: 28, height: 28)
-                            .overlay(
-                                Text("\(index + 1)")
-                                    .font(.pfCaption)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.white)
-                            )
-                        if index < beats.count - 1 {
-                            Rectangle()
-                                .fill(Color.pfRoyal.opacity(0.35))
-                                .frame(width: 2, height: 22)
-                        }
-                    }
-                    VStack(alignment: .leading, spacing: PFSpacing.xs) {
-                        Text(beat.title)
-                            .font(.pfCardTitle)
-                            .foregroundColor(.pfNavy)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if !beat.note.isEmpty {
-                            Text(beat.note)
-                                .font(.pfCallout)
-                                .foregroundColor(.pfSecondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.bottom, index < beats.count - 1 ? PFSpacing.sm : 0)
-                }
-                .padding(.vertical, 2)
-                .background(index == currentBeatIndex ? Color.pfRoyal.opacity(0.06) : Color.clear)
-                .cornerRadius(PFSpacing.cornerRadius)
+                beatRow(beat: beat, index: index)
             }
         }
         .padding(PFSpacing.md)
+        .accessibilityLabel("Lesson flow, \(beats.count) points")
+    }
+
+    /// One beat row. When onBeatTapped is set, the row is a button
+    /// that seeks the audio to the beat, or only marks the beat
+    /// selected when the beats are untimed; otherwise it is plain
+    /// content, as in the dormant full-screen visual. The dot and
+    /// arrow visuals are unchanged. The current and selected beats
+    /// are marked with text and icon shape as well as colour, never
+    /// colour alone. The highlight change is instant, with no
+    /// animation, so there is nothing for Reduce Motion to gate.
+    @ViewBuilder
+    private func beatRow(beat: LessonBeat, index: Int) -> some View {
+        let isCurrent = index == currentBeatIndex
+        let isSelected = beat.id == selectedBeatID
+        // The badge follows real playback only: the current beat is
+        // still marked by dot and background before playback, but
+        // the "Now playing" badge and spoken label appear only when
+        // playback has actually started.
+        let showsBadge = isCurrent && showsNowPlayingBadge
+        let label = beatAccessibilityLabel(for: beat, isNowPlaying: showsBadge, isSelected: isSelected)
+        let content = HStack(alignment: .top, spacing: PFSpacing.md) {
+            VStack(spacing: 0) {
+                Circle()
+                    .fill(isCurrent ? Color.pfGold : Color.pfRoyal)
+                    .frame(width: 14, height: 14)
+                    .padding(.top, 4)
+                if index < beats.count - 1 {
+                    if showsFlowArrows {
+                        Image(systemName: "arrow.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.pfRoyal.opacity(0.6))
+                            .frame(height: 22)
+                    } else {
+                        Rectangle()
+                            .fill(Color.pfRoyal.opacity(0.35))
+                            .frame(width: 2, height: 22)
+                    }
+                }
+            }
+            VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                Text(beat.title)
+                    .font(.pfCardTitle)
+                    .foregroundColor(.pfNavy)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !beat.note.isEmpty {
+                    Text(beat.note)
+                        .font(.pfCallout)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if showsBadge {
+                    Label("Now playing", systemImage: "speaker.wave.2.fill")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfRoyal)
+                }
+                if isSelected {
+                    Label("Selected point", systemImage: "checkmark.circle.fill")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfRoyal)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, index < beats.count - 1 ? PFSpacing.sm : 0)
+        }
+        .padding(.vertical, 2)
+        .frame(minHeight: 44, alignment: .top)
+        .background(isCurrent ? Color.pfRoyal.opacity(0.06) : Color.clear)
+        .cornerRadius(PFSpacing.cornerRadius)
+        .overlay(
+            RoundedRectangle(cornerRadius: PFSpacing.cornerRadius)
+                .stroke(isSelected ? Color.pfGold : Color.clear, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        if let onBeatTapped {
+            Button(action: { onBeatTapped(beat) }) {
+                content
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(label)
+            .accessibilityHint(isUntimed ? "Marks this point as selected" : "Jumps the audio to this point")
+        } else {
+            content
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(label)
+        }
+    }
+
+    /// The spoken label for one beat: its title and note, plus
+    /// "Now playing" and "Selected" when they apply.
+    private func beatAccessibilityLabel(for beat: LessonBeat, isNowPlaying: Bool, isSelected: Bool) -> String {
+        var parts = [beat.title]
+        if !beat.note.isEmpty { parts.append(beat.note) }
+        if isNowPlaying { parts.append("Now playing") }
+        if isSelected { parts.append("Selected") }
+        return parts.joined(separator: ". ")
     }
 }
 
 // MARK: - Full-screen lesson visual
 
 /// The lesson visual (flow diagram or beats flow) filling the whole
-/// iPhone screen. The lesson opens into this automatically when the
-/// narration starts; the close button returns to the normal lesson
-/// view. The audio keeps playing: this view only shows the visual,
-/// and the play/pause button below controls the same player.
+/// iPhone screen. Opened from the "How it flows" section of the
+/// lesson view. The audio keeps playing: this view only shows
+/// the visual, and the play/pause button below controls the same player.
 struct LessonVisualFullScreenView: View {
     let svg: String?
     let beats: [LessonBeat]
@@ -1786,7 +2429,7 @@ struct LessonVisualFullScreenView: View {
                                 .background(Color.white)
                                 .cornerRadius(PFSpacing.cardRadius)
                         } else if !beats.isEmpty {
-                            BeatsFlowContent(beats: beats, currentBeatIndex: currentBeatIndex)
+                            BeatsFlowContent(beats: beats, currentBeatIndex: currentBeatIndex, showsFlowArrows: svg?.isEmpty == false, showsNowPlayingBadge: audioService.isPlaying)
                                 .background(Color.white)
                                 .cornerRadius(PFSpacing.cardRadius)
                         } else {

@@ -17,6 +17,12 @@ extension Color {
     static let pfGold = Color(red: 0.79, green: 0.64, blue: 0.15)
     /// A soft gold tint for backgrounds behind gold highlights.
     static let pfGoldSoft = Color(red: 0.79, green: 0.64, blue: 0.15).opacity(0.12)
+    /// A darker gold for small text on light backgrounds, for example
+    /// the text inside a gold-soft pill. pfGold itself is only for
+    /// large icons and accents, never for small text: at caption size
+    /// on white it does not read clearly. Use this colour wherever a
+    /// pill or label needs gold text on a light surface.
+    static let pfGoldText = Color(red: 0.55, green: 0.44, blue: 0.08)
     /// Deep executive navy for headings and authority.
     static let pfNavy = Color(red: 0.05, green: 0.11, blue: 0.22)
     /// Deepest navy, the top of the hero gradient.
@@ -29,7 +35,7 @@ extension Color {
     static let pfCard = Color.white
     /// Hairline border for cards and fields.
     static let pfBorder = Color(red: 0.91, green: 0.93, blue: 0.96)
-    /// Secondary text. Darkened in Phase 7 (was 0.39/0.45/0.55,
+    /// Secondary text. Darkened (was 0.39/0.45/0.55,
     /// about 4.5:1 on white) so body-adjacent secondary text reads
     /// at roughly 7:1 on white and on pfBackground in light mode.
     /// The app's pf surfaces stay light even when the dark-mode
@@ -59,29 +65,29 @@ extension Color {
 
 /// Text-size scaling for the "Larger text" appearance setting.
 /// The toggle in AppearanceSettingsView writes the key below via
-/// @AppStorage("pf.appearance.largerText"). These helpers read that same
-/// key directly from UserDefaults, so every font below scales by 1.2x
-/// when the setting is on and stays at its base size when it is off.
-/// The fonts are computed at each read, so any view whose body is
-/// re-evaluated after the setting changes picks up the new size.
+/// @AppStorage("pf.appearance.largerText"). The semantic pf fonts
+/// below read that same key and step each style up one Dynamic Type
+/// size when the setting is on (for example body becomes title3).
+/// The fonts stay semantic text styles, so they still scale with
+/// the system Dynamic Type setting as well. The fonts are computed
+/// at each read, so any view whose body is re-evaluated after the
+/// setting changes picks up the new size.
 private enum PFFontScale {
     /// The exact UserDefaults key the Appearance toggle writes. Do not
     /// rename it: the toggle and these helpers must stay in sync.
+    /// Deliberately NOT namespaced per account (see
+    /// AccountScopedStorage): larger text is a device-level display
+    /// preference, not personal learning data. It holds no account
+    /// information, it is shared by everyone using this device, and
+    /// the toggle in SideDrawerView reads and writes this same raw
+    /// key through @AppStorage. Namespacing the read here without
+    /// namespacing that toggle would break the setting outright.
     static let largerTextKey = "pf.appearance.largerText"
-
-    /// 1.2 when larger text is on, 1.0 when it is off.
-    static var factor: CGFloat {
-        UserDefaults.standard.bool(forKey: largerTextKey) ? 1.2 : 1.0
-    }
 
     /// True when the "Larger text" appearance setting is on. The
     /// semantic pf fonts step up one text style when this is true.
     static var largerText: Bool {
         UserDefaults.standard.bool(forKey: largerTextKey)
-    }
-
-    static func scaled(_ base: CGFloat) -> CGFloat {
-        base * factor
     }
 }
 
@@ -129,6 +135,12 @@ extension Font {
 
 // MARK: - Spacing
 
+/// The one spacing scale. Layout spacing uses xs (4), sm (8), md (12),
+/// lg (16), xl (24) and xxl (32) only. Corner radii have three roles:
+/// cardRadius (18) for cards, cornerRadius (14) for buttons, pills and
+/// fields, and smallRadius (12) for small tiles and pressed-row
+/// backgrounds. Values outside this scale are local to one component
+/// (for example the weekly chart bars) and are not a second scale.
 enum PFSpacing {
     static let xs: CGFloat = 4
     static let sm: CGFloat = 8
@@ -138,14 +150,40 @@ enum PFSpacing {
     static let xxl: CGFloat = 32
     static let cornerRadius: CGFloat = 14
     static let cardRadius: CGFloat = 18
+    static let smallRadius: CGFloat = 12
+    /// Bottom clearance above the floating tab bar pill, for
+    /// scrollable lists under the tabs. This is not part of the
+    /// xs to xxl layout scale: it is a clearance, like the radii
+    /// above. The value is the LessonView bottom padding that
+    /// already kept lesson content clear of the pill: the pill
+    /// is about 63pt tall and sits about 21pt above the screen
+    /// bottom, so its top is about 84pt above the bottom edge,
+    /// and 112pt clears it with breathing room even where the
+    /// system safe area does not cover the pill. Every tab root
+    /// and pushed list uses this one value through
+    /// pfTabBarClearance(), never a local spacer height.
+    static let tabBarClearance: CGFloat = 112
 }
 
 // MARK: - Reusable components
 
-/// The primary gold call-to-action button.
+/// Pressed feedback for the shared buttons: the button dims slightly
+/// while pressed. No animation and no scale, so it stays correct
+/// when Reduce Motion is on.
+private struct PFPressedButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.85 : 1.0)
+    }
+}
+
+/// The primary royal-blue call-to-action button. Pass isEnabled false
+/// to show the action as unavailable instead of hiding the button;
+/// a disabled button is dimmed and does not respond to taps.
 struct PFPrimaryButton: View {
     let title: String
     let action: () -> Void
+    var isEnabled: Bool = true
 
     var body: some View {
         Button(action: action) {
@@ -158,13 +196,19 @@ struct PFPrimaryButton: View {
                 .cornerRadius(PFSpacing.cornerRadius)
                 .shadow(color: Color.pfRoyal.opacity(0.35), radius: 10, x: 0, y: 4)
         }
+        .buttonStyle(PFPressedButtonStyle())
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1.0 : 0.5)
     }
 }
 
 /// A gold accent button, used sparingly for the single main call to action.
+/// Pass isEnabled false to show the action as unavailable instead of
+/// hiding the button.
 struct PFGoldButton: View {
     let title: String
     let action: () -> Void
+    var isEnabled: Bool = true
 
     var body: some View {
         Button(action: action) {
@@ -177,13 +221,20 @@ struct PFGoldButton: View {
                 .cornerRadius(PFSpacing.cornerRadius)
                 .shadow(color: Color.pfGold.opacity(0.45), radius: 10, x: 0, y: 4)
         }
+        .buttonStyle(PFPressedButtonStyle())
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1.0 : 0.5)
     }
 }
 
-/// A secondary outline button.
+/// A secondary outline button. Same 14-point vertical padding as the
+/// primary and gold buttons, so the three read at the same height
+/// when placed next to each other. Pass isEnabled false to show the
+/// action as unavailable instead of hiding the button.
 struct PFSecondaryButton: View {
     let title: String
     let action: () -> Void
+    var isEnabled: Bool = true
 
     var body: some View {
         Button(action: action) {
@@ -191,10 +242,13 @@ struct PFSecondaryButton: View {
                 .font(.pfBody).fontWeight(.semibold)
                 .foregroundColor(.pfRoyal)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
+                .padding(.vertical, 14)
                 .background(Color.pfRoyal.opacity(0.08))
                 .cornerRadius(PFSpacing.cornerRadius)
         }
+        .buttonStyle(PFPressedButtonStyle())
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1.0 : 0.5)
     }
 }
 
@@ -231,6 +285,10 @@ struct PFSectionHeader: View {
                 Button(actionTitle, action: action)
                     .font(.pfCallout).fontWeight(.semibold)
                     .foregroundColor(.pfRoyal)
+                    // Short actions such as "Show all" still get a
+                    // full 44-point tap height.
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
             }
         }
     }
@@ -282,12 +340,26 @@ struct PFIconTile: View {
 
 /// A button style that gives cards a subtle press: the card shrinks
 /// to 0.98 while pressed, then springs back. Applied to card
-/// NavigationLinks so the app feels responsive.
+/// NavigationLinks so the app feels responsive. The scale change is
+/// instant when Reduce Motion is on.
 struct PFCardButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .animation(.easeInOut(duration: 0.15), value: configuration.isPressed)
+        PFCardPressEffect(isPressed: configuration.isPressed, content: configuration.label)
+    }
+}
+
+/// The press effect for PFCardButtonStyle, as a view so it can read
+/// the Reduce Motion setting, which a button style cannot read
+/// directly.
+private struct PFCardPressEffect<Content: View>: View {
+    let isPressed: Bool
+    let content: Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        content
+            .scaleEffect(isPressed ? 0.98 : 1.0)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isPressed)
     }
 }
 
@@ -312,7 +384,7 @@ struct PFProgressBar: View {
         }
         .frame(height: height)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Progress, \(Int((max(0, min(1, progress)) * 100).rounded())) percent")
+        .accessibilityLabel("Progress")
         .accessibilityValue("\(Int((max(0, min(1, progress)) * 100).rounded())) percent complete")
     }
 }
@@ -371,6 +443,7 @@ struct PFChip: View {
                 )
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
     }
 }
 
@@ -461,6 +534,19 @@ struct PFWeeklyBarChart: View {
 
     private var maxValue: Double { max(values.max() ?? 0, 1) }
 
+    /// The VoiceOver announcement: the week total plus every day's
+    /// count, so the per-day values are available without sight. The
+    /// visual chart shows a blank space for a zero day; the spoken
+    /// version says the zero out loud.
+    private var accessibilityDescription: String {
+        let dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        let parts = (0..<7).map { index in
+            let value = index < values.count ? Int(values[index]) : 0
+            return "\(dayNames[index]) \(value)"
+        }
+        return "Weekly activity, \(Int(values.reduce(0, +))) learning actions in the last 7 days. \(parts.joined(separator: ", "))"
+    }
+
     var body: some View {
         HStack(alignment: .bottom, spacing: PFSpacing.sm) {
             ForEach(0..<7, id: \.self) { index in
@@ -482,7 +568,7 @@ struct PFWeeklyBarChart: View {
         }
         .frame(height: 140)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Weekly activity, \(Int(values.reduce(0, +))) learning actions in the last 7 days")
+        .accessibilityLabel(accessibilityDescription)
     }
 }
 
@@ -491,17 +577,19 @@ struct PFWeeklyBarChart: View {
 /// A shimmer-free skeleton row: a pulsing rounded bar, used while a
 /// list is loading so the screen never shows a blank white page.
 /// The pulse is a simple opacity animation, no decorative effect.
+/// With Reduce Motion on, the bar stays still at full opacity.
 struct PFSkeletonView: View {
     var height: CGFloat = 76
     @State private var pulsing = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         RoundedRectangle(cornerRadius: PFSpacing.cardRadius)
             .fill(Color.pfNavy.opacity(0.08))
             .frame(height: height)
             .opacity(pulsing ? 0.55 : 1.0)
-            .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulsing)
-            .onAppear { pulsing = true }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulsing)
+            .onAppear { pulsing = !reduceMotion }
             .accessibilityLabel("Loading")
     }
 }
@@ -604,5 +692,151 @@ struct PFErrorStateView: View {
                 PFPrimaryButton(title: retryTitle, action: onRetry)
             }
         }
+    }
+}
+
+// MARK: - Accessibility helpers (navigation and search)
+//
+// Additive only. These helpers are used by the navigation,
+// search and accessibility work. They change no existing token,
+// colour, font, spacing value or component behaviour, and no
+// existing component is modified to use them.
+
+extension View {
+    /// Enforces the 44pt minimum touch target: the view grows to
+    /// at least 44 by 44pt in layout, with the full rectangle
+    /// tappable, so a small icon or text button gains a full-size
+    /// tap area. Use on small icon and text buttons whose content
+    /// is smaller than 44pt, for example the search clear button,
+    /// the bookmark toggle and the filter chips. Do not use on
+    /// views that already meet 44pt.
+    func pfMinimumTouchTarget() -> some View {
+        frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+    }
+
+    /// Marks a decorative view as hidden from assistive technology:
+    /// an icon or chevron whose meaning is already carried by
+    /// adjacent text or by an explicit accessibility label on the
+    /// containing control. Never use on an icon that is the only
+    /// carrier of meaning: label that control instead.
+    func pfDecorative() -> some View {
+        accessibilityHidden(true)
+    }
+
+    /// Bottom clearance above the floating tab bar pill, for a
+    /// ScrollView or List that scrolls under the tabs. Adds a
+    /// clear safe area inset of PFSpacing.tabBarClearance, so
+    /// the last row can scroll fully above the pill on every
+    /// iPhone size. Use on every tab root list and on pushed
+    /// lists where the tab bar stays visible; do not use in
+    /// sheets or full screen covers, where there is no tab bar
+    /// to clear. The spacer never intercepts a tap: Color.clear
+    /// hit tests by default, so the strip is marked
+    /// non-interactive, the ProfileView lesson applied app-wide.
+    /// One shared modifier, so the clearance can never drift
+    /// between tabs again: the 24pt local spacers it replaces
+    /// let bottom rows slide under the pill.
+    func pfTabBarClearance() -> some View {
+        safeAreaInset(edge: .bottom) {
+            Color.clear
+                .frame(height: PFSpacing.tabBarClearance)
+                .allowsHitTesting(false)
+        }
+    }
+}
+
+// MARK: - Long-form body text
+//
+// One shared paragraph renderer for long text: lesson bodies,
+// situations, scenarios, insights, FAQ answers, interview
+// answers, test and assessment explanations, studio briefs,
+// descriptions and help text. Long text renders as logical
+// paragraphs with breathing room, never one wall of text, and
+// the wording never changes: splitting only breaks text at
+// line breaks and sentence boundaries. The splitting rule is
+// the LessonView rule, shared: line breaks mark paragraph
+// boundaries first, then a long block splits into sentence
+// groups of at most three sentences (about 480 characters).
+// Short text renders as a single Text, exactly as before, so
+// adopting this renderer is safe for short copy too. The
+// Studio's local StudioParagraphsView already uses these same
+// metrics (md paragraph spacing, 4pt line spacing) for its
+// array-paragraph content and is left unchanged.
+
+/// Splits long text into readable paragraphs without changing
+/// any wording. Line breaks mark paragraph boundaries first; a
+/// long block is then split into sentence groups (at most three
+/// sentences, about 480 characters) so it never renders as one
+/// wall of text. Sentence boundaries come from the system
+/// sentence enumeration, so abbreviations and decimals do not
+/// split sentences.
+enum PFParagraphs {
+    static func split(_ text: String) -> [String] {
+        let blocks = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var paragraphs: [String] = []
+        for block in blocks {
+            paragraphs.append(contentsOf: splitLongBlock(block))
+        }
+        return paragraphs
+    }
+
+    /// Split one long block into sentence groups. Short blocks
+    /// come back unchanged.
+    private static func splitLongBlock(_ block: String) -> [String] {
+        var sentences: [String] = []
+        block.enumerateSubstrings(in: block.startIndex..<block.endIndex, options: [.bySentences]) { substring, _, _, _ in
+            if let sentence = substring?.trimmingCharacters(in: .whitespacesAndNewlines), !sentence.isEmpty {
+                sentences.append(sentence)
+            }
+        }
+        guard sentences.count > 3 || block.count > 480 else { return [block] }
+        guard sentences.count > 1 else { return [block] }
+        var chunks: [String] = []
+        var current = ""
+        var currentCount = 0
+        for sentence in sentences {
+            if !current.isEmpty && (currentCount >= 3 || current.count + 1 + sentence.count > 480) {
+                chunks.append(current)
+                current = ""
+                currentCount = 0
+            }
+            current = current.isEmpty ? sentence : current + " " + sentence
+            currentCount += 1
+        }
+        if !current.isEmpty { chunks.append(current) }
+        return chunks
+    }
+}
+
+/// Renders long text as logical paragraphs: one Text per
+/// paragraph, paragraph spacing from the design scale, and
+/// comfortable line spacing. Defaults match the Studio and
+/// Situations body text (body font, navy, 4pt line spacing,
+/// md paragraph spacing); pass font, color or line spacing to
+/// match a surface that already uses different values, for
+/// example a callout quiz explanation or a secondary
+/// description. Empty text renders nothing.
+struct PFBodyText: View {
+    let text: String
+    var font: Font = .pfBody
+    var textColor: Color = .pfNavy
+    var lineSpacing: CGFloat = 4
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            ForEach(Array(PFParagraphs.split(text).enumerated()), id: \.offset) { _, paragraph in
+                Text(paragraph)
+                    .font(font)
+                    .foregroundColor(textColor)
+                    .lineSpacing(lineSpacing)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
