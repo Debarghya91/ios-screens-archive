@@ -3,18 +3,25 @@
 // credentials (email and password), terms acceptance, then email
 // confirmation. Supabase email confirmation is the only
 // verification: no mobile number is collected and no SMS code is
-// ever sent. The case ID is generated when signup starts, travels
-// in the account metadata, and is shown in the welcome popup and
-// on the profile. An unfinished signup resumes by opening the
-// confirmation link in the email and signing in with email and
-// password: no case ID entry and no code are ever needed. There is
-// no referral code entry here: referral discount redemption is
-// website-only, because Apple In-App Purchase cannot take an
-// external discount. The registration welcome popup shows once,
-// right after the registration completes and the learner signs in;
-// AuthService owns that once-only flag. Sign-in is the mandatory
-// first step: this screen is reached from the sign-in screen when
-// the learner creates an account.
+// ever sent. The confirmation email carries both a link and an
+// 8-digit code: the confirmation step accepts the code, so the
+// learner can finish without leaving the app, and the link still
+// works for a learner who opens the email elsewhere. The case ID
+// is generated when signup starts, travels in the account
+// metadata, and is shown in the welcome popup and on the profile.
+// An unfinished signup resumes by opening the confirmation link
+// in the email or entering the code, then signing in with email
+// and password: no case ID entry is ever needed. A re-signup of
+// an email that already has an account is detected from the
+// signup reply and shown its own guidance: the first password
+// still stands, and nothing implies the password just typed was
+// saved. There is no referral code entry here: referral discount
+// redemption is website-only, because Apple In-App Purchase
+// cannot take an external discount. The registration welcome popup
+// shows once, right after the registration completes and the
+// learner signs in; AuthService owns that once-only flag. Sign-in
+// is the mandatory first step: this screen is reached from the
+// sign-in screen when the learner creates an account.
 // No em dashes in any user-facing text.
 
 import SwiftUI
@@ -38,6 +45,15 @@ struct EmailSignupView: View {
     @State private var confirmPassword = ""
     @State private var termsAccepted = false
     @State private var signupCaseID: String?
+    /// The 8-digit code from the confirmation email, entered on
+    /// the confirmation step to finish without leaving the app.
+    @State private var confirmationCode = ""
+    /// True when the signup reply proved this email already has
+    /// an unconfirmed account: the confirmation step then says
+    /// the first password still stands, and its Sign in button
+    /// opens the sign-in screen instead of retrying the password
+    /// just typed, which was never saved.
+    @State private var isUnconfirmedDuplicate = false
     @State private var errorMessage: String?
     @State private var infoMessage: String?
     @State private var isBusy = false
@@ -319,6 +335,26 @@ struct EmailSignupView: View {
             // website: the signup send counts as the first send.
             resendCooldown.recordSend()
             infoMessage = nil
+            showValidation = false
+            step = .emailConfirmation
+        case .confirmedDuplicate:
+            // The email already has a confirmed account. Stay on
+            // the credentials step: the "Sign in instead" button
+            // below appears for this message.
+            errorMessage = authService.authError ?? PFSignupErrorCode.emailAlreadyRegistered.message
+        case .unconfirmedDuplicate:
+            // The email already has an account that is not
+            // confirmed yet. The re-signup only resent the
+            // confirmation; the first password still stands, so
+            // the confirmation step says so and never retries the
+            // password just typed. The resend control starts on
+            // its cooldown: the re-signup send counts as the
+            // first send.
+            resendCooldown.recordSend()
+            isUnconfirmedDuplicate = true
+            infoMessage = nil
+            errorMessage = nil
+            showValidation = false
             step = .emailConfirmation
         case .none:
             errorMessage = authService.authError ?? PFSignupErrorCode.unknownError.message
@@ -332,15 +368,51 @@ struct EmailSignupView: View {
             Text("Check your email")
                 .font(.pfCaptionBold)
                 .foregroundColor(.pfSecondaryText)
-            Text("Your account is created. Open the confirmation link sent to \(email.trimmingCharacters(in: .whitespacesAndNewlines)) to verify your email address, then sign in below.")
-                .font(.pfBody)
+            if isUnconfirmedDuplicate {
+                Text("This email already has an account that is not confirmed yet. A new confirmation email was sent to \(email.trimmingCharacters(in: .whitespacesAndNewlines)). The password you first used is still the one for this account: signing up again did not change it.")
+                    .font(.pfBody)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Your account is created. Open the confirmation link sent to \(email.trimmingCharacters(in: .whitespacesAndNewlines)), or enter the 8-digit code from that email below, then sign in.")
+                    .font(.pfBody)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("8-digit code from the email")
+                .font(.pfCaptionBold)
                 .foregroundColor(.pfSecondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            PFPrimaryButton(title: isBusy ? "Signing in..." : "Sign in") {
-                Task { await signInAfterConfirmation() }
+            TextField("12345678", text: $confirmationCode)
+                .textFieldStyle(.roundedBorder)
+                .keyboardType(.numberPad)
+                .textContentType(.oneTimeCode)
+                .autocapitalization(.none)
+                .autocorrectionDisabled()
+            if let error = PFFormValidation.codeError(for: confirmationCode, attempted: showValidation) {
+                Text(error)
+                    .font(.pfCaption)
+                    .foregroundColor(.pfError)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            PFPrimaryButton(title: isBusy ? "Checking..." : "Verify code and sign in") {
+                Task { await verifyConfirmationCode() }
             }
             .disabled(isBusy)
             .opacity(isBusy ? 0.5 : 1)
+            if isUnconfirmedDuplicate {
+                // The password just typed was never saved, so this
+                // opens the sign-in screen, where the learner
+                // signs in with the first password or a code.
+                PFSecondaryButton(title: "Sign in") {
+                    showEmailAuth = true
+                }
+            } else {
+                PFPrimaryButton(title: isBusy ? "Signing in..." : "Sign in") {
+                    Task { await signInAfterConfirmation() }
+                }
+                .disabled(isBusy)
+                .opacity(isBusy ? 0.5 : 1)
+            }
             Button {
                 Task { await resendConfirmation() }
             } label: {
@@ -358,12 +430,35 @@ struct EmailSignupView: View {
             }
             Button("Use a different email") {
                 step = .credentials
+                isUnconfirmedDuplicate = false
+                confirmationCode = ""
                 infoMessage = nil
                 errorMessage = nil
             }
             .font(.pfBody.weight(.semibold))
             .foregroundColor(.pfRoyal)
             .buttonStyle(.plain)
+        }
+    }
+
+    /// Verify the 8-digit code from the confirmation email and
+    /// sign in at once. The service tries both token types, so a
+    /// signup-type code from the confirm-signup email works.
+    private func verifyConfirmationCode() async {
+        guard !isBusy else { return }
+        errorMessage = nil
+        showValidation = true
+        guard PFOTPCode.isValid(confirmationCode) else {
+            errorMessage = PFFormValidation.codeError(for: confirmationCode, attempted: true)
+            return
+        }
+        isBusy = true
+        defer { isBusy = false }
+        let ok = await authService.verifyEmailOTP(email: email, code: confirmationCode)
+        if ok {
+            infoMessage = "Signed in."
+        } else {
+            errorMessage = authService.authError ?? PFSignupErrorCode.unknownError.message
         }
     }
 
@@ -423,6 +518,9 @@ struct EmailSignupView: View {
             if step == .credentials {
                 Button("I already created my account, take me to sign in") {
                     step = .emailConfirmation
+                    isUnconfirmedDuplicate = false
+                    confirmationCode = ""
+                    showValidation = false
                     errorMessage = nil
                     infoMessage = nil
                 }

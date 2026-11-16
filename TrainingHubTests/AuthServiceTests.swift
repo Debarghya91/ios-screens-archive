@@ -51,7 +51,7 @@ final class AuthServiceTests: XCTestCase {
         let auth = AuthService()
         let ok = await auth.verifyEmailOTP(email: "learner@example.com", code: "   ")
         XCTAssertFalse(ok)
-        XCTAssertEqual(auth.authError, "Enter the 6-digit code sent to your email.")
+        XCTAssertEqual(auth.authError, "Enter the 8-digit code sent to your email.")
         XCTAssertFalse(auth.isSignedIn)
     }
 
@@ -149,5 +149,55 @@ final class AuthServiceTests: XCTestCase {
         let auth = AuthService()
         XCTAssertFalse(auth.showPasswordReset)
         XCTAssertNil(auth.accountCaseID)
+    }
+
+    // MARK: - v97: emailed-code and password guards (local, no network)
+
+    func testVerifyOTPRejectsShortCodeWithoutNetwork() async {
+        let auth = AuthService()
+        let ok = await auth.verifyEmailOTP(email: "learner@example.com", code: "12345")
+        XCTAssertFalse(ok)
+        XCTAssertEqual(auth.authError, "Enter the 8-digit code sent to your email.")
+        XCTAssertFalse(auth.isSignedIn)
+    }
+
+    func testVerifyOTPRejectsNonDigitCodeWithoutNetwork() async {
+        let auth = AuthService()
+        let ok = await auth.verifyEmailOTP(email: "learner@example.com", code: "1234a678")
+        XCTAssertFalse(ok)
+        XCTAssertEqual(auth.authError, "Enter the 8-digit code sent to your email.")
+    }
+
+    func testVerifyOTPRejectsInvalidEmailWithoutNetwork() async {
+        let auth = AuthService()
+        let ok = await auth.verifyEmailOTP(email: "not-an-email", code: "12345678")
+        XCTAssertFalse(ok)
+        XCTAssertEqual(auth.authError, "Enter a valid email address.")
+    }
+
+    func testSignInRejectsInvalidEmailWithoutNetwork() async {
+        let auth = AuthService()
+        let ok = await auth.signInWithPassword(email: "not-an-email", password: "some-password")
+        XCTAssertFalse(ok)
+        XCTAssertEqual(auth.authError, "Enter a valid email address.")
+    }
+
+    func testSignInRejectsEmptyPasswordWithoutNetwork() async {
+        let auth = AuthService()
+        let ok = await auth.signInWithPassword(email: "learner@example.com", password: "")
+        XCTAssertFalse(ok)
+        XCTAssertEqual(auth.authError, "Enter your password.")
+    }
+
+    func testSignUpRejectsInvalidEmailWithoutNetwork() async {
+        let auth = AuthService()
+        let result = await auth.signUpWithPassword(
+            email: "not-an-email",
+            password: "long-enough-password",
+            caseID: "PF-ABC234",
+            termsAccepted: true
+        )
+        XCTAssertNil(result)
+        XCTAssertEqual(auth.authError, "Enter a valid email address.")
     }
 }

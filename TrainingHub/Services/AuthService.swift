@@ -148,11 +148,21 @@ private enum AuthError: LocalizedError {
 // MARK: - Password signup result
 
 /// The outcome of a password signup: signed in at once (the project
-/// confirms email automatically), or created but waiting for the
-/// learner to open the email confirmation link before signing in.
+/// confirms email automatically), created but waiting for the
+/// learner to open the email confirmation link or enter the code
+/// before signing in, or a re-signup of an email that already has
+/// an account (confirmed or not). The duplicate cases exist
+/// because GoTrue returns HTTP 200 for a re-signup, so the reply
+/// body must be classified (see PFSignupReplyClassifier): the
+/// learner must be told the account already exists, and must
+/// never be led to think the password just typed was saved, since
+/// a re-signup only resends the confirmation and the first
+/// password still stands.
 enum PasswordSignupResult {
     case signedIn
     case needsEmailConfirmation
+    case confirmedDuplicate
+    case unconfirmedDuplicate
 }
 
 /// A registration waiting for its first sign-in, kept in the guest
@@ -467,8 +477,14 @@ final class AuthService: ObservableObject {
 
     // MARK: - Email OTP and magic link
 
-    /// Send a 6-digit sign-in code to the email address. Creates the
+    /// Send an 8-digit sign-in code to the email address. Creates the
     /// account on first use. The code is verified with verifyEmailOTP.
+    /// The request sets email_redirect_to (the app callback) so the
+    /// link button in the email opens the app, and should_create_user
+    /// alongside create_user, so a first-time address always creates
+    /// its account. With Confirm email on, a new address gets the
+    /// confirm-signup email, whose code is a signup-type token:
+    /// verifyEmailOTP tries both token types, so that code works.
     func sendEmailOTP(email: String) async {
         let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmed.isEmpty, trimmed.contains("@") else {
@@ -491,27 +507,52 @@ final class AuthService: ObservableObject {
         struct OTPBody: Encodable {
             let email: String
             let createUser: Bool
+            let shouldCreateUser: Bool
+            let emailRedirectTo: String?
+
             enum CodingKeys: String, CodingKey {
                 case email
                 case createUser = "create_user"
+                case shouldCreateUser = "should_create_user"
+                case emailRedirectTo = "email_redirect_to"
             }
         }
         isBusy = true
         defer { isBusy = false }
         do {
-            _ = try await client.request(url: url, method: "POST", body: OTPBody(email: trimmed, createUser: true))
+            _ = try await client.request(
+                url: url,
+                method: "POST",
+                body: OTPBody(
+                    email: trimmed,
+                    createUser: true,
+                    shouldCreateUser: true,
+                    emailRedirectTo: SupabaseConfig.authRedirectURL?.absoluteString
+                )
+            )
             pendingEmail = trimmed
         } catch {
             authError = friendlyAuthError(error)
         }
     }
 
-    /// Verify the 6-digit code sent by sendEmailOTP and sign in.
+    /// Verify the 8-digit code sent by sendEmailOTP (or the code in
+    /// the signup confirmation email) and sign in. The code is
+    /// normalised first (spaces and dashes stripped, so a paste
+    /// works) and must be 6 to 8 digits. Verification tries type
+    /// "email" first, then falls back to type "signup": with
+    /// Confirm email on, a code sent for a new address is a
+    /// signup-type token, and verifying it as "email" alone always
+    /// fails. The fallback runs only for a 400/422 verification
+    /// failure, never for a network failure or a rate limit, so a
+    /// failed fallback can never burn an extra attempt or mask a
+    /// connection problem. A second call while one is in flight is
+    /// a no-op, so a double tap can never send two verifications.
     func verifyEmailOTP(email: String, code: String) async -> Bool {
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedCode.isEmpty else {
-            authError = "Enter the 6-digit code sent to your email."
+        let normalizedCode = PFOTPCode.normalized(code)
+        guard PFOTPCode.isValid(code) else {
+            authError = "Enter the 8-digit code sent to your email."
             return false
         }
         guard !trimmedEmail.isEmpty, trimmedEmail.contains("@") else {
@@ -527,6 +568,7 @@ final class AuthService: ObservableObject {
             authError = SupabaseError.invalidURL.errorDescription
             return false
         }
+        guard !isBusy else { return false }
         // A fresh attempt clears any error from an earlier one, so a
         // stale message can never survive a later success and surface
         // on the presenting view after sign-in.
@@ -542,18 +584,46 @@ final class AuthService: ObservableObject {
             let data = try await client.request(
                 url: url,
                 method: "POST",
-                body: VerifyBody(email: trimmedEmail, token: trimmedCode, type: "email")
+                body: VerifyBody(email: trimmedEmail, token: normalizedCode, type: "email")
             )
             try await storeSession(from: data)
             return currentUser != nil
         } catch {
             // Each failure kind gets its own wording: a network
             // failure must not be reported as a wrong code, and a
-            // rate limit must say to wait. Wrong and expired codes
-            // still get code-specific wording.
-            authError = friendlyAuthError(error)
+            // rate limit must say to wait. Only a 400/422
+            // verification failure falls back to the signup token
+            // type; anything else is reported as it is.
+            guard Self.isVerificationFailure(error) else {
+                authError = friendlyAuthError(error)
+                return false
+            }
+            do {
+                let data = try await client.request(
+                    url: url,
+                    method: "POST",
+                    body: VerifyBody(email: trimmedEmail, token: normalizedCode, type: "signup")
+                )
+                try await storeSession(from: data)
+                return currentUser != nil
+            } catch {
+                authError = friendlyAuthError(error)
+                return false
+            }
+        }
+    }
+
+    /// True when an error is a GoTrue verification failure (the
+    /// token was wrong, expired, or of the wrong type), as opposed
+    /// to a transport failure, a rate limit, or a server error.
+    /// Only verification failures may fall back to the other token
+    /// type.
+    private static func isVerificationFailure(_ error: Error) -> Bool {
+        guard let supabaseError = error as? SupabaseError,
+              case .http(let status, _) = supabaseError else {
             return false
         }
+        return status == 400 || status == 422
     }
 
     // MARK: - Password sign-up and sign-in (email signup)
@@ -564,15 +634,20 @@ final class AuthService: ObservableObject {
     /// otherwise). No mobile number is collected and no code step
     /// precedes creation: Supabase email confirmation is the only
     /// verification. The terms acceptance time and the signup case
-    /// ID travel in the GoTrue user_metadata. The reply decides the
-    /// outcome: a session means signed in at once, no session means
-    /// email confirmation is required first, and the learner signs
-    /// in with signInWithPassword after opening the confirmation
-    /// link. Either way the pending registration is recorded first,
-    /// so the first session for this email stores the case ID and
-    /// shows the welcome popup. Nil means failure, with authError
-    /// set to a catalog message (EMAIL_ALREADY_REGISTERED when the
-    /// email is taken).
+    /// ID travel in the GoTrue user_metadata, and the confirmation
+    /// link returns to the app callback. The reply decides the
+    /// outcome: a session means signed in at once, a new bare user
+    /// means email confirmation is required first, and a bare
+    /// existing user means the email already has an account
+    /// (confirmed or unconfirmed; see PFSignupReplyClassifier).
+    /// Only a genuinely new account records a pending registration:
+    /// a duplicate must never overwrite the case ID or raise the
+    /// welcome popup, and the caller must never imply the password
+    /// just typed was saved. Either way the pending registration
+    /// is recorded first for a new account, so the first session
+    /// for this email stores the case ID and shows the welcome
+    /// popup. Nil means failure, with authError set to a catalog
+    /// message. A second call while one is in flight is a no-op.
     func signUpWithPassword(email: String, password: String, caseID: String, termsAccepted: Bool) async -> PasswordSignupResult? {
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard termsAccepted else {
@@ -596,6 +671,7 @@ final class AuthService: ObservableObject {
             authError = SupabaseError.invalidURL.errorDescription
             return nil
         }
+        guard !isBusy else { return nil }
         struct SignupMetadata: Encodable {
             let termsAcceptedAt: String
             let signupCaseID: String
@@ -609,6 +685,14 @@ final class AuthService: ObservableObject {
             let email: String
             let password: String
             let data: SignupMetadata
+            let redirectTo: String?
+
+            enum CodingKeys: String, CodingKey {
+                case email
+                case password
+                case data
+                case redirectTo = "redirect_to"
+            }
         }
         let body = SignupBody(
             email: trimmedEmail,
@@ -616,23 +700,35 @@ final class AuthService: ObservableObject {
             data: SignupMetadata(
                 termsAcceptedAt: ISO8601DateFormatter().string(from: Date()),
                 signupCaseID: caseID
-            )
+            ),
+            redirectTo: SupabaseConfig.authRedirectURL?.absoluteString
         )
         authError = nil
         isBusy = true
         defer { isBusy = false }
         do {
             let data = try await client.request(url: url, method: "POST", body: body)
-            let hasSession = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["access_token"] as? String != nil
-            Self.recordPendingRegistration(email: trimmedEmail, caseID: caseID)
-            Self.clearLegacySignupState()
-            if hasSession {
+            switch PFSignupReplyClassifier.classify(data: data) {
+            case .signedIn:
+                Self.recordPendingRegistration(email: trimmedEmail, caseID: caseID)
+                Self.clearLegacySignupState()
                 try await storeSession(from: data)
                 return currentUser != nil ? .signedIn : nil
+            case .newAccount, .unknown:
+                // An unrecognised reply is treated as a new
+                // account, so it can never break signup.
+                Self.recordPendingRegistration(email: trimmedEmail, caseID: caseID)
+                Self.clearLegacySignupState()
+                pendingEmail = trimmedEmail
+                authInfo = "Check your email to confirm your address, then sign in."
+                return .needsEmailConfirmation
+            case .confirmedDuplicate:
+                authError = PFSignupErrorCode.emailAlreadyRegistered.message
+                return .confirmedDuplicate
+            case .unconfirmedDuplicate:
+                pendingEmail = trimmedEmail
+                return .unconfirmedDuplicate
             }
-            pendingEmail = trimmedEmail
-            authInfo = "Check your email to confirm your address, then sign in."
-            return .needsEmailConfirmation
         } catch {
             authError = passwordAuthError(error)
             return nil
@@ -641,13 +737,22 @@ final class AuthService: ObservableObject {
 
     /// Sign in with email and password, the step after email
     /// confirmation when confirmation was required. Failures
-    /// use catalog messages: CREDENTIALS_INVALID for a wrong
-    /// password, EMAIL_NOT_VERIFIED when the confirmation link has
-    /// not been opened yet.
+    /// use catalog messages. GoTrue returns one generic
+    /// invalid-credentials error for a wrong password, an
+    /// unconfirmed account, and an account with no password, so
+    /// CREDENTIALS_INVALID itself carries the combined guidance
+    /// and the next actions; the app never claims the password is
+    /// wrong when the account may simply be unconfirmed, and never
+    /// shows a bare "verify first" message with no action. A
+    /// second call while one is in flight is a no-op.
     func signInWithPassword(email: String, password: String) async -> Bool {
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmedEmail.isEmpty, trimmedEmail.contains("@") else {
             authError = PFSignupErrorCode.emailInvalid.message
+            return false
+        }
+        guard !password.isEmpty else {
+            authError = "Enter your password."
             return false
         }
         guard client.isConfigured else {
@@ -659,6 +764,7 @@ final class AuthService: ObservableObject {
             authError = SupabaseError.invalidURL.errorDescription
             return false
         }
+        guard !isBusy else { return false }
         authError = nil
         struct PasswordTokenBody: Encodable {
             let email: String

@@ -3,10 +3,23 @@
 // step: TrainingHubApp shows this screen until a session exists,
 // and no content is reachable without signing in. It is also
 // reachable from Profile for a signed-out learner.
+// Sign in with Apple is NOT offered here yet, deliberately: the
+// button cannot work until the owner enrols in the Apple
+// Developer Program and adds the Sign in with Apple capability to
+// the Xcode target (the project has no entitlements file, and
+// free Personal Team provisioning cannot carry the capability).
+// The Apple provider is enabled in the Supabase dashboard and the
+// exchange code in AuthService (prepareAppleRequest,
+// completeAppleSignIn, exchangeAppleToken) is wired and ready, so
+// restoring the button is one edit once the capability exists:
+// put the SignInWithAppleButton back at the top of cardSection
+// and re-add the AuthenticationServices import. Note for later:
+// App Store Review Guideline 4.8 requires Apple sign-in alongside
+// any third-party sign-in at submission time, so the button must
+// return before the app is submitted with Google sign-in.
 // No em dashes in any user-facing text.
 
 import SwiftUI
-import AuthenticationServices
 
 /// The welcome and sign-in screen. There is no guest path: every
 /// route into the app goes through a session. When presented as a
@@ -139,23 +152,15 @@ struct WelcomeView: View {
 
     // MARK: - Sign-in card
 
-    /// The single centred card: Apple and Google, an "or"
-    /// divider, then the email path as the one primary button.
-    /// Every action is unchanged; only the presentation moved.
+    /// The single centred card: Google, an "or" divider, then
+    /// the email path as the one primary button. Apple sign-in is
+    /// absent on purpose (see the file header): the button cannot
+    /// work without the Sign in with Apple capability, and no dead
+    /// button ships. Every action is unchanged; only the
+    /// presentation moved.
     private var cardSection: some View {
         PFCard {
             VStack(spacing: PFSpacing.md) {
-                SignInWithAppleButton(.signIn, onRequest: { request in
-                    authService.prepareAppleRequest(request)
-                }, onCompletion: { result in
-                    Task { await authService.completeAppleSignIn(with: result) }
-                })
-                .signInWithAppleButtonStyle(.black)
-                .frame(height: 52)
-                .cornerRadius(PFSpacing.cornerRadius)
-                .disabled(authService.isBusy)
-                .opacity(authService.isBusy ? 0.6 : 1)
-
                 Button {
                     Task { await authService.signInWithGoogle() }
                 } label: {

@@ -13,6 +13,16 @@
 // must not be reworded here. An unknown server code always falls
 // back to UNKNOWN_ERROR, so a new server code can never surface
 // raw text to a learner.
+// v97 parity update: CREDENTIALS_INVALID and EMAIL_NOT_VERIFIED
+// now carry the guiding wording the website adopted in its 16 Nov
+// auth fix (commit 106bd675), because GoTrue returns one generic
+// invalid-credentials error for a wrong password, an unconfirmed
+// account, and an account with no password, so the message itself
+// must offer the next actions. The two messages name the iOS
+// controls ("Resend confirmation email") where the website names
+// its own ("Resume signup"); the meaning is identical. The website
+// doc audit/ERROR-CODE-CATALOG.md still carries the old wording
+// (doc sync owed on a later pass); PA_ERROR_MESSAGES wins.
 // No em dashes in any user-facing text.
 
 import Foundation
@@ -63,7 +73,7 @@ enum PFSignupErrorCode: String, CaseIterable {
         case .emailAlreadyRegistered:
             return "This email already has an account. Sign in instead."
         case .emailNotVerified:
-            return "Verify your email address first."
+            return "Verify your email address first. Check your inbox for the confirmation email, or use Resend confirmation email to send it again."
         case .emailInvalid:
             return "Enter a valid email address."
         case .caseIDInvalid:
@@ -77,7 +87,7 @@ enum PFSignupErrorCode: String, CaseIterable {
         case .termsNotAccepted:
             return "Accept the terms and conditions to continue."
         case .credentialsInvalid:
-            return "Email or password does not match our records."
+            return "Email or password does not match our records. The same message appears when your email is not confirmed yet: resend the confirmation email, sign in with an emailed code, or reset your password."
         case .passwordTooShort:
             return "Your password must be at least 8 characters."
         case .passwordMismatch:
@@ -248,10 +258,13 @@ enum SignupCaseID {
 /// which matches the wording AuthService already uses.
 enum PFFormValidation {
     /// True when the email looks deliverable: trimmed, no spaces,
-    /// one "@" with text on both sides, and a dot in the domain.
+    /// one "@" with text on both sides, a dot in the domain, and
+    /// at most 254 characters (the RFC 5321 limit), so a pasted
+    /// wall of text fails here with the email message instead of
+    /// going to the server.
     static func isValidEmail(_ email: String) -> Bool {
         let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !trimmed.contains(" ") else { return false }
+        guard !trimmed.isEmpty, !trimmed.contains(" "), trimmed.count <= 254 else { return false }
         let parts = trimmed.split(separator: "@", omittingEmptySubsequences: false)
         guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return false }
         return parts[1].contains(".")
@@ -286,10 +299,127 @@ enum PFFormValidation {
         return PFSignupErrorCode.termsNotAccepted.message
     }
 
-    /// The sign-in code error, or nil when the code has at least
-    /// 6 characters or the form has not been attempted yet.
+    /// The sign-in code error, or nil when the code is 6 to 8
+    /// digits after normalisation, or the form has not been
+    /// attempted yet. The dashboard sends 8-digit codes, so the
+    /// wording says 8 digits; 6 and 7 digit codes are still
+    /// accepted, matching the website.
     static func codeError(for code: String, attempted: Bool) -> String? {
-        guard attempted, code.trimmingCharacters(in: .whitespacesAndNewlines).count < 6 else { return nil }
-        return "Enter the 6-digit code sent to your email."
+        guard attempted, !PFOTPCode.isValid(code) else { return nil }
+        return "Enter the 8-digit code sent to your email."
+    }
+}
+
+// MARK: - Emailed sign-in code (v97)
+
+/// Normalisation and validation for the emailed sign-in code.
+/// The dashboard sends 8-digit codes that expire after 1 hour.
+/// A pasted code often carries spaces or dashes ("1234 5678",
+/// "1234-5678"); normalisation strips those before the code is
+/// checked or sent, so a paste works exactly like typing. Only
+/// digits survive: anything else fails validation with the code
+/// message, never a server error.
+enum PFOTPCode {
+    /// The code length the UI promises (dashboard setting).
+    static let displayDigits = 8
+    /// The shortest code accepted, matching the website.
+    static let minimumDigits = 6
+    /// The longest code accepted, matching the website.
+    static let maximumDigits = 8
+
+    /// The code with spaces, dashes and surrounding whitespace
+    /// removed. Letters and other characters are kept here so
+    /// validation can reject them, instead of silently changing
+    /// what the learner typed.
+    static func normalized(_ raw: String) -> String {
+        raw.filter { !$0.isWhitespace && $0 != "-" }
+    }
+
+    /// True when the normalised code is 6 to 8 decimal digits.
+    static func isValid(_ raw: String) -> Bool {
+        let code = normalized(raw)
+        guard (minimumDigits...maximumDigits).contains(code.count) else { return false }
+        return code.allSatisfy { $0.isNumber && $0.isASCII }
+    }
+}
+
+// MARK: - Signup reply classification (v97)
+
+/// What a successful GoTrue signup reply means. GoTrue returns
+/// HTTP 200 for a re-signup of an existing email (a deliberate
+/// fake success, so the reply can never confirm whether an
+/// account exists), so the reply body itself must be classified:
+/// a session means signed in at once, a bare new user means the
+/// confirmation email is on its way, and a bare existing user
+/// means the email already has an account. The classification
+/// uses only the timestamps GoTrue records; it never uses the
+/// `identities` array, because the project's own recorded
+/// new-signup reply carries `"identities": []`, so that signal
+/// would classify every new signup as a duplicate.
+enum PFSignupReplyKind: Equatable {
+    /// The reply carries a session: signed in at once.
+    case signedIn
+    /// A new account was created and the confirmation email was sent.
+    case newAccount
+    /// The email already has a confirmed account.
+    case confirmedDuplicate
+    /// The email already has an account that is not confirmed yet.
+    /// The first signup's password still stands: re-signing up
+    /// only resends the confirmation, it never saves a new one.
+    case unconfirmedDuplicate
+    /// The reply could not be read as any known shape. Callers
+    /// treat this as a new account, so an unrecognised reply can
+    /// never break signup.
+    case unknown
+}
+
+/// Pure classification of a GoTrue signup reply body, so the
+/// duplicate rules are unit-tested without any network call.
+enum PFSignupReplyClassifier {
+    /// A confirmation email sent more than this long after the
+    /// account was created proves the account already existed:
+    /// a first signup sends its confirmation within seconds of
+    /// creation, while a re-signup resends it minutes, hours or
+    /// days later.
+    static let duplicateResendThresholdSeconds: TimeInterval = 120
+
+    /// Classify a signup reply body. Accepts both reply shapes:
+    /// the bare user object GoTrue returns when Confirm email is
+    /// on, and a session reply with a nested `user` object.
+    static func classify(data: Data) -> PFSignupReplyKind {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .unknown
+        }
+        if object["access_token"] as? String != nil {
+            return .signedIn
+        }
+        let user = (object["user"] as? [String: Any]) ?? object
+        guard user["id"] as? String != nil else {
+            return .unknown
+        }
+        if let confirmedAt = user["email_confirmed_at"] as? String, !confirmedAt.isEmpty {
+            return .confirmedDuplicate
+        }
+        if let sentAt = parseGoTrueDate(user["confirmation_sent_at"] as? String),
+           let createdAt = parseGoTrueDate(user["created_at"] as? String),
+           sentAt.timeIntervalSince(createdAt) > duplicateResendThresholdSeconds {
+            return .unconfirmedDuplicate
+        }
+        return .newAccount
+    }
+
+    /// Parse a GoTrue timestamp, with or without fractional
+    /// seconds ("2026-11-16T12:34:56.123456Z" or
+    /// "2026-11-16T12:34:56Z"). Nil for anything else.
+    static func parseGoTrueDate(_ value: String?) -> Date? {
+        guard let value, !value.isEmpty else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: value) {
+            return date
+        }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: value)
     }
 }

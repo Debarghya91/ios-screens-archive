@@ -30,14 +30,14 @@ final class AuthErrorCatalogTests: XCTestCase {
 
     func testCatalogMessagesAreVerbatim() {
         XCTAssertEqual(PFSignupErrorCode.emailAlreadyRegistered.message, "This email already has an account. Sign in instead.")
-        XCTAssertEqual(PFSignupErrorCode.emailNotVerified.message, "Verify your email address first.")
+        XCTAssertEqual(PFSignupErrorCode.emailNotVerified.message, "Verify your email address first. Check your inbox for the confirmation email, or use Resend confirmation email to send it again.")
         XCTAssertEqual(PFSignupErrorCode.emailInvalid.message, "Enter a valid email address.")
         XCTAssertEqual(PFSignupErrorCode.caseIDInvalid.message, "That case ID does not look right. Check it and try again.")
         XCTAssertEqual(PFSignupErrorCode.referralInvalid.message, "That referral code is not valid.")
         XCTAssertEqual(PFSignupErrorCode.referralSelf.message, "You cannot use your own referral code.")
         XCTAssertEqual(PFSignupErrorCode.referralAlreadyUsed.message, "A referral discount was already used on this account.")
         XCTAssertEqual(PFSignupErrorCode.termsNotAccepted.message, "Accept the terms and conditions to continue.")
-        XCTAssertEqual(PFSignupErrorCode.credentialsInvalid.message, "Email or password does not match our records.")
+        XCTAssertEqual(PFSignupErrorCode.credentialsInvalid.message, "Email or password does not match our records. The same message appears when your email is not confirmed yet: resend the confirmation email, sign in with an emailed code, or reset your password.")
         XCTAssertEqual(PFSignupErrorCode.passwordTooShort.message, "Your password must be at least 8 characters.")
         XCTAssertEqual(PFSignupErrorCode.passwordMismatch.message, "The two passwords do not match. Type the same password twice.")
         XCTAssertEqual(PFSignupErrorCode.sessionExpired.message, "Your session expired. Sign in again.")
@@ -136,5 +136,126 @@ final class AuthErrorCatalogTests: XCTestCase {
         let allowed = Set(PFCodeAlphabet.characters)
         XCTAssertTrue(first.allSatisfy { allowed.contains($0) })
         XCTAssertNotEqual(first, ReferralStore.code(forUserID: "user-456"))
+    }
+
+    // MARK: - Emailed code normalisation and validation (v97)
+
+    func testOTPCodeNormalisationStripsSpacesAndDashes() {
+        XCTAssertEqual(PFOTPCode.normalized("1234 5678"), "12345678")
+        XCTAssertEqual(PFOTPCode.normalized("1234-5678"), "12345678")
+        XCTAssertEqual(PFOTPCode.normalized("  1234 5678\n"), "12345678")
+        XCTAssertEqual(PFOTPCode.normalized("12345678"), "12345678")
+    }
+
+    func testOTPCodeValidationAcceptsSixToEightDigits() {
+        XCTAssertTrue(PFOTPCode.isValid("12345678"))
+        XCTAssertTrue(PFOTPCode.isValid("1234567"))
+        XCTAssertTrue(PFOTPCode.isValid("123456"))
+        XCTAssertTrue(PFOTPCode.isValid("1234 5678"))
+        XCTAssertTrue(PFOTPCode.isValid("1234-5678"))
+        XCTAssertFalse(PFOTPCode.isValid("12345"))
+        XCTAssertFalse(PFOTPCode.isValid("123456789"))
+        XCTAssertFalse(PFOTPCode.isValid("1234a678"))
+        XCTAssertFalse(PFOTPCode.isValid(""))
+        XCTAssertFalse(PFOTPCode.isValid("    "))
+        XCTAssertFalse(PFOTPCode.isValid("12 34"))
+    }
+
+    func testCodeErrorUsesEightDigitWording() {
+        XCTAssertEqual(
+            PFFormValidation.codeError(for: "123", attempted: true),
+            "Enter the 8-digit code sent to your email."
+        )
+        XCTAssertNil(PFFormValidation.codeError(for: "1234 5678", attempted: true))
+        XCTAssertNil(PFFormValidation.codeError(for: "123", attempted: false))
+    }
+
+    func testEmailValidationTrimsCaseAndLength() {
+        XCTAssertTrue(PFFormValidation.isValidEmail("  USER@Example.COM  "))
+        XCTAssertTrue(PFFormValidation.isValidEmail("learner@example.com"))
+        XCTAssertFalse(PFFormValidation.isValidEmail("no-at-sign"))
+        XCTAssertFalse(PFFormValidation.isValidEmail("a@b"))
+        XCTAssertFalse(PFFormValidation.isValidEmail("a b@c.com"))
+        XCTAssertFalse(PFFormValidation.isValidEmail(String(repeating: "a", count: 250) + "@b.com"))
+    }
+
+    func testGuidanceMessagesOfferNextActions() {
+        // GoTrue returns one generic error for a wrong password,
+        // an unconfirmed account, and an account with no password,
+        // so both messages must carry the next actions in the text.
+        let credentials = PFSignupErrorCode.credentialsInvalid.message
+        XCTAssertTrue(credentials.contains("resend the confirmation email"))
+        XCTAssertTrue(credentials.contains("emailed code"))
+        XCTAssertTrue(credentials.contains("reset your password"))
+        let notVerified = PFSignupErrorCode.emailNotVerified.message
+        XCTAssertTrue(notVerified.contains("Resend confirmation email"))
+        XCTAssertEqual(
+            PFSignupError.fromGoTrueMessage("Invalid login credentials").code,
+            .credentialsInvalid
+        )
+    }
+
+    // MARK: - Signup reply classification (v97)
+
+    private func signupReplyData(_ json: String) -> Data {
+        json.data(using: .utf8)!
+    }
+
+    func testSignupReplyWithSessionIsSignedIn() {
+        let data = signupReplyData(#"{"access_token":"tok","refresh_token":"ref","expires_in":3600,"user":{"id":"u1","email":"a@b.com"}}"#)
+        XCTAssertEqual(PFSignupReplyClassifier.classify(data: data), .signedIn)
+    }
+
+    func testSignupReplyBareNewUserIsNewAccount() {
+        // The bare user object GoTrue returns when Confirm email
+        // is on: confirmation sent seconds after creation.
+        let data = signupReplyData(#"{"id":"u1","email":"a@b.com","created_at":"2026-11-16T12:00:00Z","confirmation_sent_at":"2026-11-16T12:00:03Z","email_confirmed_at":null,"identities":[]}"#)
+        XCTAssertEqual(PFSignupReplyClassifier.classify(data: data), .newAccount)
+    }
+
+    func testSignupReplyEmptyIdentitiesNeverMeansDuplicate() {
+        // The disproved signal: the project's own recorded
+        // new-signup reply carries "identities": [], so an empty
+        // identities array must never classify as a duplicate.
+        let data = signupReplyData(#"{"id":"u1","email":"a@b.com","created_at":"2026-11-16T12:00:00.123456Z","confirmation_sent_at":"2026-11-16T12:00:02.500000Z","identities":[]}"#)
+        XCTAssertEqual(PFSignupReplyClassifier.classify(data: data), .newAccount)
+    }
+
+    func testSignupReplyConfirmedUserIsConfirmedDuplicate() {
+        let data = signupReplyData(#"{"id":"u1","email":"a@b.com","created_at":"2026-11-10T09:00:00Z","confirmation_sent_at":"2026-11-16T12:00:00Z","email_confirmed_at":"2026-11-10T09:05:00Z"}"#)
+        XCTAssertEqual(PFSignupReplyClassifier.classify(data: data), .confirmedDuplicate)
+    }
+
+    func testSignupReplyLateResendIsUnconfirmedDuplicate() {
+        // Confirmation resent an hour after creation: the account
+        // already existed, and the re-signup only resent the mail.
+        let data = signupReplyData(#"{"id":"u1","email":"a@b.com","created_at":"2026-11-16T11:00:00Z","confirmation_sent_at":"2026-11-16T12:00:00Z","email_confirmed_at":null}"#)
+        XCTAssertEqual(PFSignupReplyClassifier.classify(data: data), .unconfirmedDuplicate)
+    }
+
+    func testSignupReplyResendWithinThresholdIsNewAccount() {
+        // A resend 119 seconds after creation is within the
+        // threshold: treated as a new account, never a duplicate.
+        let data = signupReplyData(#"{"id":"u1","email":"a@b.com","created_at":"2026-11-16T12:00:00Z","confirmation_sent_at":"2026-11-16T12:01:59Z","email_confirmed_at":null}"#)
+        XCTAssertEqual(PFSignupReplyClassifier.classify(data: data), .newAccount)
+    }
+
+    func testSignupReplyNestedUserShapeClassifies() {
+        let data = signupReplyData(#"{"user":{"id":"u1","email":"a@b.com","created_at":"2026-11-16T11:00:00Z","confirmation_sent_at":"2026-11-16T12:00:00Z","email_confirmed_at":null}}"#)
+        XCTAssertEqual(PFSignupReplyClassifier.classify(data: data), .unconfirmedDuplicate)
+    }
+
+    func testSignupReplyGarbageIsUnknown() {
+        XCTAssertEqual(PFSignupReplyClassifier.classify(data: signupReplyData("not json")), .unknown)
+        XCTAssertEqual(PFSignupReplyClassifier.classify(data: signupReplyData("{}")), .unknown)
+        XCTAssertEqual(PFSignupReplyClassifier.classify(data: signupReplyData("[]")), .unknown)
+    }
+
+    func testGoTrueDateParsingHandlesFractionalSeconds() {
+        XCTAssertNotNil(PFSignupReplyClassifier.parseGoTrueDate("2026-11-16T12:00:00.123456Z"))
+        XCTAssertNotNil(PFSignupReplyClassifier.parseGoTrueDate("2026-11-16T12:00:00Z"))
+        XCTAssertNil(PFSignupReplyClassifier.parseGoTrueDate(nil))
+        XCTAssertNil(PFSignupReplyClassifier.parseGoTrueDate(""))
+        XCTAssertNil(PFSignupReplyClassifier.parseGoTrueDate("yesterday"))
     }
 }
