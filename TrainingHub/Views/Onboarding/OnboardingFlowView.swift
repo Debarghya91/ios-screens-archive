@@ -1,21 +1,26 @@
 // OnboardingFlowView.swift
-// Payments Training Hub iOS - Explanation-first first-run screen:
-// one screen that says what you get, who the app is for, how you
-// learn, why it helps, and what is free, then a single Get started
-// button and a Skip this introduction button that does the same.
-// No questions up front: the old seven-step flow asked about role,
-// knowledge, objective, intensity and a diagnostic before the
-// learner had seen anything, and new users dropped out. The
-// profile models, the store, and the diagnostic view all stay in
-// the codebase (Learning Preferences and the assessments still
-// use them); only this flow stops asking.
+// Payments Training Hub iOS - Swipeable first-run introduction:
+// four pages the learner swipes through, answering why this app
+// exists, who it is for, what it can do, and what is free. No
+// Next button and no Back button: swipe moves between pages, the
+// dots below jump straight to a page, and Skip is always visible
+// in the top bar. A small looping swipe hint plays under the
+// pages until the last one, where Get started takes its place
+// and stays fixed and visible. No questions up front: the old
+// seven-step flow asked about role, knowledge, objective,
+// intensity and a diagnostic before the learner had seen
+// anything, and new users dropped out. The profile models, the
+// store, and the diagnostic view all stay in the codebase
+// (Learning Preferences and the assessments still use them);
+// only this flow stops asking.
 //
 // Get started records the skip (markSkipped: onboarding complete
 // with no fabricated profile, weekly goal untouched) and calls
 // onFinish, so the flow can be presented as a fullScreenCover
 // with no other dependencies: the only init argument is
 // onFinish. Onboarding runs after sign-in: the app gate shows
-// the sign-in screen first, and this flow never gates browsing.
+// the sign-in screen first, and this flow never promises that
+// sign-in is optional.
 //
 // Counts come from ContentManifest only. The first lesson and the
 // free case come from the live catalogue, so nothing is shown
@@ -27,6 +32,8 @@
 // ungated. No em dashes in any user-facing text.
 
 import SwiftUI
+import UIKit
+import ImageIO
 
 struct OnboardingFlowView: View {
     let onFinish: () -> Void
@@ -34,101 +41,272 @@ struct OnboardingFlowView: View {
     @ObservedObject private var contentService = ContentService.shared
     @ObservedObject private var onboardingStore = OnboardingStore.shared
 
+    @State private var currentPage = 0
+
+    private static let pageCount = 4
+
+    private var isLastPage: Bool {
+        currentPage == Self.pageCount - 1
+    }
+
     init(onFinish: @escaping () -> Void) {
         self.onFinish = onFinish
     }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: PFSpacing.lg) {
-                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
-                        Text("Learn payments, properly.")
-                            .font(.pfScreenTitle)
-                            .foregroundColor(.pfNavy)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("The full payments course: short lessons, real cases, and practice, in plain language.")
-                            .font(.pfBody)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    PFCard {
-                        VStack(alignment: .leading, spacing: PFSpacing.md) {
-                            Text("What you get")
-                                .font(.pfCardTitle)
-                                .foregroundColor(.pfNavy)
-                            countRow(value: ProductCatalogue.partProducts.count, label: "courses, in reading order")
-                            countRow(value: ContentManifest.chapterCount, label: "chapters")
-                            countRow(value: ContentManifest.lessonCount, label: "lessons")
-                            countRow(value: ContentManifest.situationCount, label: "Payment Cases")
-                            countRow(value: ContentManifest.interviewQuestionCount, label: "interview questions")
-                            countRow(value: ContentManifest.guideCount, label: "guides")
-                            countRow(value: ContentManifest.labCount, label: "labs")
-                            countRow(value: ContentManifest.testCount, label: "tests")
-                            countRow(value: ContentManifest.simulatorCount, label: "simulators")
-                            countRow(value: ContentManifest.faqCount, label: "FAQs")
-                            countRow(value: ContentManifest.weeklyCaseCount, label: "weekly cases")
-                        }
-                    }
-
-                    explanationBlock(
-                        systemImage: "person.2.fill",
-                        title: "Who it is for",
-                        body: "Built for people who work in payments or want to: business analysts, product owners, freshers starting out, and anyone who needs to understand how money moves."
-                    )
-                    explanationBlock(
-                        systemImage: "map.fill",
-                        title: "How you learn",
-                        body: "Pick a learning journey, or start at Course 1 and work in order. Read the lesson, or tap Play and listen. Practise with real payment cases. Your progress saves as you go."
-                    )
-                    explanationBlock(
-                        systemImage: "lightbulb.fill",
-                        title: "Why it helps",
-                        body: "\(ContentManifest.lessonCount) short narrated lessons across \(ProductCatalogue.partProducts.count) courses, \(ContentManifest.situationCount) real-world payment situations, practice labs, simulators, and interview preparation, all in one place, in plain language."
-                    )
-
-                    PFCard {
-                        VStack(alignment: .leading, spacing: PFSpacing.md) {
-                            Text("What is free")
-                                .font(.pfCardTitle)
-                                .foregroundColor(.pfNavy)
-                            freeRow("The first lesson of every chapter is free, with the full content.")
-                            freeRow("A few Payment Cases are free to try.")
-                            freeRow("You can browse the whole catalogue free.")
-                            freeRow("Courses unlock when you buy them, for 1 year.")
-                        }
-                    }
-
-                    firstLessonCard
-                    freeCaseCard
-
-                    PFPrimaryButton(title: "Get started") {
-                        getStarted()
-                    }
-                    .accessibilityLabel("Get started")
-
-                    Button("Skip this introduction") {
-                        getStarted()
-                    }
-                    .font(.pfBody.weight(.semibold))
-                    .foregroundColor(.pfRoyal)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .accessibilityLabel("Skip this introduction")
-                    .accessibilityHint("Skips the introduction and opens the app.")
-
-                    Text("Nothing here locks browsing: you can explore first and come back to a route later.")
-                        .font(.pfBody)
-                        .foregroundColor(.pfSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 0) {
+                TabView(selection: $currentPage) {
+                    whyPage
+                        .tag(0)
+                    whoPage
+                        .tag(1)
+                    capabilitiesPage
+                        .tag(2)
+                    freePage
+                        .tag(3)
                 }
-                .padding(PFSpacing.lg)
-                .id("onboardingTop")
+                .tabViewStyle(.page(indexDisplayMode: .never))
+
+                footer
             }
-            .pfScrollToTopOnAppear("onboardingTop")
             .background(Color.pfBackground)
             .navigationTitle("Get started")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Skip") {
+                        getStarted()
+                    }
+                    .accessibilityLabel("Skip this introduction")
+                    .accessibilityHint("Skips the introduction and opens the app.")
+                }
+            }
+        }
+    }
+
+    // MARK: - Footer: swipe hint or Get started, plus dots
+
+    /// The fixed footer: the looping swipe hint on every page
+    /// except the last, where Get started takes its place so it
+    /// is always visible without scrolling, and the tappable
+    /// dots under both.
+    private var footer: some View {
+        VStack(spacing: PFSpacing.md) {
+            if isLastPage {
+                PFPrimaryButton(title: "Get started") {
+                    getStarted()
+                }
+                .accessibilityLabel("Get started")
+            } else {
+                AnimatedGIFView(assetName: "SwipeNext")
+                    .frame(width: 84, height: 28)
+                    .accessibilityHidden(true)
+            }
+            dotsRow
+        }
+        .padding(.horizontal, PFSpacing.xl)
+        .padding(.top, PFSpacing.md)
+        .padding(.bottom, PFSpacing.lg)
+        .background(Color.pfBackground)
+    }
+
+    /// Tappable dots: one per page, the current page in royal, so
+    /// the length of the introduction is clear and any page is
+    /// one tap away.
+    private var dotsRow: some View {
+        HStack(spacing: PFSpacing.sm) {
+            ForEach(0..<Self.pageCount, id: \.self) { index in
+                Button {
+                    withAnimation {
+                        currentPage = index
+                    }
+                } label: {
+                    Circle()
+                        .fill(index == currentPage ? Color.pfRoyal : Color.pfBorder)
+                        .frame(width: index == currentPage ? 10 : 8, height: index == currentPage ? 10 : 8)
+                }
+                .buttonStyle(.plain)
+                .frame(width: 28, height: 28)
+                .accessibilityLabel("Page \(index + 1) of \(Self.pageCount)")
+            }
+        }
+    }
+
+    // MARK: - Pages
+
+    /// One pager page: a vertical scroll of content, so nothing
+    /// is clipped on small phones. The footer below the pager
+    /// stays fixed.
+    private func pageScroll<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: PFSpacing.lg) {
+                content()
+            }
+            .padding(PFSpacing.lg)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var pageHeading: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.sm) {
+            Text("Learn payments, properly.")
+                .font(.pfScreenTitle)
+                .foregroundColor(.pfNavy)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("The full payments course: short lessons, real cases, and practice, in plain language.")
+                .font(.pfBody)
+                .foregroundColor(.pfSecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Page 1: why this app exists.
+    private var whyPage: some View {
+        pageScroll {
+            pageHeading
+            Text("Why this app")
+                .font(.pfSectionTitle)
+                .foregroundColor(.pfRoyal)
+            Text("Payments move the world's money, but learning how they work is harder than it should be. The knowledge is scattered across bank documents, scheme rulebooks and long threads. This app gathers it into one complete course, in plain language, built from real bank work.")
+                .font(.pfBody)
+                .foregroundColor(.pfSecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            explanationBlock(
+                systemImage: "building.columns.fill",
+                title: "Built from real work",
+                body: "Every lesson comes from real payments work at a large UK bank: real message flows, real failures, and real fixes."
+            )
+            explanationBlock(
+                systemImage: "book.fill",
+                title: "One course, in order",
+                body: "\(ContentManifest.lessonCount) short lessons across \(ProductCatalogue.partProducts.count) courses and \(ContentManifest.chapterCount) chapters, in reading order, so you always know what comes next."
+            )
+            explanationBlock(
+                systemImage: "textformat",
+                title: "Plain language",
+                body: "No jargon without an explanation. Every term is explained where it first appears."
+            )
+        }
+    }
+
+    /// Page 2: who the app is built for.
+    private var whoPage: some View {
+        pageScroll {
+            pageHeading
+            Text("Who it is for")
+                .font(.pfSectionTitle)
+                .foregroundColor(.pfRoyal)
+            Text("Built for people who work in payments or want to, at any stage of their career.")
+                .font(.pfBody)
+                .foregroundColor(.pfSecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            explanationBlock(
+                systemImage: "person.fill",
+                title: "Business analysts",
+                body: "You gather requirements and shape how payments work. Learn the domain properly, so your documents hold up."
+            )
+            explanationBlock(
+                systemImage: "person.2.fill",
+                title: "Product owners and managers",
+                body: "You own a payments product and decide what gets built. Understand the flows, the rules and the risks."
+            )
+            explanationBlock(
+                systemImage: "graduationcap.fill",
+                title: "Freshers starting out",
+                body: "You are starting out and want the foundations first, in order, without guessing what to learn next."
+            )
+            explanationBlock(
+                systemImage: "checkmark.seal.fill",
+                title: "Testers and engineers",
+                body: "You test or build payment systems. Understand the flows, the messages and the failure cases."
+            )
+            explanationBlock(
+                systemImage: "lightbulb.fill",
+                title: "Anyone who needs to understand money movement",
+                body: "Payments touch every business. Learn how money actually moves, step by step."
+            )
+        }
+    }
+
+    /// Page 3: what the app can do.
+    private var capabilitiesPage: some View {
+        pageScroll {
+            pageHeading
+            Text("What it can do")
+                .font(.pfSectionTitle)
+                .foregroundColor(.pfRoyal)
+            PFCard {
+                VStack(alignment: .leading, spacing: PFSpacing.md) {
+                    Text("What you get")
+                        .font(.pfCardTitle)
+                        .foregroundColor(.pfNavy)
+                    countRow(value: ProductCatalogue.partProducts.count, label: "courses, in reading order")
+                    countRow(value: ContentManifest.chapterCount, label: "chapters")
+                    countRow(value: ContentManifest.lessonCount, label: "lessons")
+                    countRow(value: ContentManifest.situationCount, label: "Payment Cases")
+                    countRow(value: ContentManifest.interviewQuestionCount, label: "interview questions")
+                    countRow(value: ContentManifest.guideCount, label: "guides")
+                    countRow(value: ContentManifest.labCount, label: "labs")
+                    countRow(value: ContentManifest.testCount, label: "tests")
+                    countRow(value: ContentManifest.simulatorCount, label: "simulators")
+                    countRow(value: ContentManifest.faqCount, label: "FAQs")
+                    countRow(value: ContentManifest.weeklyCaseCount, label: "weekly cases")
+                }
+            }
+            explanationBlock(
+                systemImage: "headphones",
+                title: "Read or listen",
+                body: "Every lesson has audio. Listen while you travel, read when you sit down."
+            )
+            explanationBlock(
+                systemImage: "map.fill",
+                title: "Follow a journey",
+                body: "Pick a learning journey for one goal, or start at Course 1 and work in order. Home always shows your next lesson."
+            )
+            explanationBlock(
+                systemImage: "briefcase.fill",
+                title: "Practise real cases",
+                body: "Work real payment problems step by step, the way a senior analyst handles them, with labs, simulators and tests."
+            )
+            explanationBlock(
+                systemImage: "questionmark.circle.fill",
+                title: "Prepare for interviews",
+                body: "\(ContentManifest.interviewQuestionCount) interview questions with model answers, plus the situations banks ask about."
+            )
+            explanationBlock(
+                systemImage: "arrow.triangle.2.circlepath",
+                title: "Your progress follows you",
+                body: "Finished lessons, streaks and certificates save to your account and sync across your devices."
+            )
+        }
+    }
+
+    /// Page 4: what is free, plus the first lesson and free case.
+    /// Get started lives in the fixed footer, always visible.
+    private var freePage: some View {
+        pageScroll {
+            pageHeading
+            Text("What is free")
+                .font(.pfSectionTitle)
+                .foregroundColor(.pfRoyal)
+            PFCard {
+                VStack(alignment: .leading, spacing: PFSpacing.md) {
+                    Text("What is free")
+                        .font(.pfCardTitle)
+                        .foregroundColor(.pfNavy)
+                    freeRow("The first lesson of every chapter is free, with the full content.")
+                    freeRow("A few Payment Cases are free to try.")
+                    freeRow("You can browse the whole catalogue free.")
+                    freeRow("Courses unlock when you buy them, for 1 year.")
+                }
+            }
+            firstLessonCard
+            freeCaseCard
+            Text("You can explore first and come back to a journey later.")
+                .font(.pfBody)
+                .foregroundColor(.pfSecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -294,5 +472,59 @@ struct OnboardingFlowView: View {
             }
             .accessibilityLabel("Free Payment Cases will appear once the course list has loaded.")
         }
+    }
+}
+
+// MARK: - Animated GIF hint
+
+/// Renders a looping GIF data asset (SwiftUI has no native GIF
+/// animation). Frames and per-frame delays come from the GIF
+/// itself through ImageIO, so the loop matches the asset. When
+/// the asset is missing, a static chevron pair shows instead, so
+/// the hint never renders empty.
+private struct AnimatedGIFView: UIViewRepresentable {
+    let assetName: String
+
+    func makeUIView(context: Context) -> UIImageView {
+        let view = UIImageView()
+        view.contentMode = .scaleAspectFit
+        view.image = Self.animatedImage(assetName: assetName)
+        view.tintColor = UIColor(red: 0.09, green: 0.25, blue: 0.55, alpha: 1)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIImageView, context: Context) {}
+
+    private static func animatedImage(assetName: String) -> UIImage? {
+        guard let asset = NSDataAsset(name: assetName),
+              let source = CGImageSourceCreateWithData(asset.data as CFData, nil) else {
+            return UIImage(systemName: "chevron.left.2")
+        }
+        let count = CGImageSourceGetCount(source)
+        var images: [UIImage] = []
+        var duration: TimeInterval = 0
+        for index in 0..<count {
+            guard let cgImage = CGImageSourceCreateImageAtIndex(source, index, nil) else { continue }
+            images.append(UIImage(cgImage: cgImage))
+            duration += delayForFrame(at: index, in: source)
+        }
+        guard !images.isEmpty, duration > 0 else {
+            return UIImage(systemName: "chevron.left.2")
+        }
+        return UIImage.animatedImage(with: images, duration: duration)
+    }
+
+    private static func delayForFrame(at index: Int, in source: CGImageSource) -> TimeInterval {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
+              let gif = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any] else {
+            return 0.1
+        }
+        if let unclamped = gif[kCGImagePropertyGIFUnclampedDelayTime] as? TimeInterval, unclamped > 0 {
+            return unclamped
+        }
+        if let clamped = gif[kCGImagePropertyGIFDelayTime] as? TimeInterval, clamped > 0 {
+            return clamped
+        }
+        return 0.1
     }
 }

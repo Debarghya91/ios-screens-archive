@@ -34,20 +34,18 @@ struct WelcomeView: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.pfHeroGradient
-                .ignoresSafeArea()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: PFSpacing.xl) {
-                    brandSection
-                    headingSection
-                    buttonsSection
-                    legalSection
-                }
-                .padding(PFSpacing.xl)
+        ScrollView {
+            VStack(spacing: PFSpacing.xl) {
+                brandSection
+                cardSection
+                signupRow
+                legalSection
             }
+            .padding(PFSpacing.xl)
+            .frame(maxWidth: 400)
+            .frame(maxWidth: .infinity)
         }
+        .background(Color.pfBackground)
         .sheet(isPresented: $showEmailAuth) {
             EmailAuthView()
         }
@@ -121,110 +119,126 @@ struct WelcomeView: View {
 
     // MARK: - Brand
 
+    /// The wordmark and open-book icon, centred, with no
+    /// marketing headline: the sign-in screen leads with the
+    /// brand, the way Instagram and Facebook sign-in screens do.
     private var brandSection: some View {
-        Text("Payments Training Hub")
-            .font(.pfSectionTitle.weight(.bold))
-            .foregroundColor(.white)
-            .padding(.top, PFSpacing.xxl)
+        VStack(spacing: PFSpacing.md) {
+            Image(systemName: "book.open.fill")
+                .font(.system(size: 44))
+                .foregroundColor(.pfRoyal)
+                .accessibilityHidden(true)
+            Text("Payments Training Hub")
+                .font(.pfSectionTitle.weight(.bold))
+                .foregroundColor(.pfNavy)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, PFSpacing.xxl)
     }
 
-    // MARK: - Heading
+    // MARK: - Sign-in card
 
-    private var headingSection: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.md) {
-            Text("Master Banking and Payments")
-                .font(.pfHeroTitle)
-                .foregroundColor(.white)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Learn real-world concepts, processes and scenarios from across the payments ecosystem")
-                .font(.pfBody)
-                .foregroundColor(.white.opacity(0.85))
-                .fixedSize(horizontal: false, vertical: true)
+    /// The single centred card: Apple and Google, an "or"
+    /// divider, then the email path as the one primary button.
+    /// Every action is unchanged; only the presentation moved.
+    private var cardSection: some View {
+        PFCard {
+            VStack(spacing: PFSpacing.md) {
+                SignInWithAppleButton(.signIn, onRequest: { request in
+                    authService.prepareAppleRequest(request)
+                }, onCompletion: { result in
+                    Task { await authService.completeAppleSignIn(with: result) }
+                })
+                .signInWithAppleButtonStyle(.black)
+                .frame(height: 52)
+                .cornerRadius(PFSpacing.cornerRadius)
+                .disabled(authService.isBusy)
+                .opacity(authService.isBusy ? 0.6 : 1)
+
+                Button {
+                    Task { await authService.signInWithGoogle() }
+                } label: {
+                    HStack(spacing: 10) {
+                        Text("G")
+                            .font(.pfBody.weight(.bold))
+                            .foregroundColor(.pfRoyal)
+                        Text("Continue with Google")
+                            .font(.pfBody.weight(.semibold))
+                            .foregroundColor(.pfNavy)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Color.pfCard)
+                    .cornerRadius(PFSpacing.cornerRadius)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: PFSpacing.cornerRadius)
+                            .stroke(Color.pfBorder, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(authService.isBusy)
+
+                orDivider
+
+                PFPrimaryButton(title: "Continue with Email") {
+                    if authService.canSignIn {
+                        showEmailAuth = true
+                    } else {
+                        authService.authError = "Sign-in is not set up yet. Please try again later."
+                    }
+                }
+                .disabled(authService.isBusy)
+
+                if authService.isBusy {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                }
+
+                Text("Sign in to start learning. Your progress syncs across your devices and stays safe if you change phones.")
+                    .font(.pfCaption)
+                    .foregroundColor(.pfSecondaryText)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
-    // MARK: - Buttons
+    private var orDivider: some View {
+        HStack(spacing: PFSpacing.md) {
+            Rectangle()
+                .fill(Color.pfBorder)
+                .frame(height: 1)
+            Text("or")
+                .font(.pfCaption)
+                .foregroundColor(.pfSecondaryText)
+            Rectangle()
+                .fill(Color.pfBorder)
+                .frame(height: 1)
+        }
+        .accessibilityHidden(true)
+    }
 
-    private var buttonsSection: some View {
-        VStack(spacing: PFSpacing.md) {
-            SignInWithAppleButton(.signIn, onRequest: { request in
-                authService.prepareAppleRequest(request)
-            }, onCompletion: { result in
-                Task { await authService.completeAppleSignIn(with: result) }
-            })
-            .signInWithAppleButtonStyle(.white)
-            .frame(height: 52)
-            .cornerRadius(PFSpacing.cornerRadius)
-            .disabled(authService.isBusy)
-            .opacity(authService.isBusy ? 0.6 : 1)
+    // MARK: - Sign up row
 
-            Button {
-                Task { await authService.signInWithGoogle() }
-            } label: {
-                HStack(spacing: 10) {
-                    Text("G")
-                        .font(.pfBody.weight(.bold))
-                        .foregroundColor(.pfRoyal)
-                    Text("Continue with Google")
-                        .font(.pfBody.weight(.semibold))
-                        .foregroundColor(.pfNavy)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(Color.white)
-                .cornerRadius(PFSpacing.cornerRadius)
-            }
-            .buttonStyle(.plain)
-            .disabled(authService.isBusy)
-
-            Button {
-                if authService.canSignIn {
-                    showEmailAuth = true
-                } else {
-                    authService.authError = "Sign-in is not set up yet. Please try again later."
-                }
-            } label: {
-                Label("Continue with Email", systemImage: "envelope.fill")
-                    .font(.pfBody.weight(.semibold))
-                    .foregroundColor(.pfNavy)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.white)
-                    .cornerRadius(PFSpacing.cornerRadius)
-            }
-            .buttonStyle(.plain)
-            .disabled(authService.isBusy)
-
-            Button {
+    private var signupRow: some View {
+        HStack(spacing: PFSpacing.xs) {
+            Text("Don't have an account?")
+                .font(.pfBody)
+                .foregroundColor(.pfSecondaryText)
+            Button("Sign up") {
                 if authService.canSignIn {
                     showEmailSignup = true
                 } else {
                     authService.authError = "Sign-in is not set up yet. Please try again later."
                 }
-            } label: {
-                Label("Create account", systemImage: "person.badge.plus")
-                    .font(.pfBody.weight(.semibold))
-                    .foregroundColor(.pfNavy)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.white)
-                    .cornerRadius(PFSpacing.cornerRadius)
             }
+            .font(.pfBody.weight(.semibold))
+            .foregroundColor(.pfRoyal)
             .buttonStyle(.plain)
             .disabled(authService.isBusy)
-
-            if authService.isBusy {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .tint(.white)
-            }
-
-            Text("Sign in to start learning. Your progress syncs across your devices and stays safe if you change phones.")
-                .font(.pfCaption)
-                .foregroundColor(.white.opacity(0.75))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Legal
@@ -233,11 +247,11 @@ struct WelcomeView: View {
         HStack(spacing: PFSpacing.sm) {
             Link("Terms", destination: SupabaseConfig.termsURL)
             Text("and")
-                .foregroundColor(.white.opacity(0.75))
+                .foregroundColor(.pfSecondaryText)
             Link("Privacy Policy", destination: SupabaseConfig.privacyPolicyURL)
         }
         .font(.pfCaption)
-        .tint(.white)
+        .tint(.pfRoyal)
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.bottom, PFSpacing.xl)
     }

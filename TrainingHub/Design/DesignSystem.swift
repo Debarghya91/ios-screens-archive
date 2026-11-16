@@ -1177,3 +1177,164 @@ private struct PFThumbnailSVGView: UIViewRepresentable {
         }
     }
 }
+
+// MARK: - Numbered pagination
+
+/// One token in a pagination bar: a page number or an ellipsis gap.
+enum PFPageItem: Hashable {
+    case page(Int)
+    case ellipsis
+}
+
+/// Pure pagination rules shared by Search and Payment Cases:
+/// 20 items per page, numbered pages with Previous and Next, and
+/// ellipsis gaps for long ranges, the way learning portals page.
+/// Pure, so the rules are pinned by unit tests. No em dashes in
+/// any user-facing text.
+enum PFPagination {
+    static let pageSize = 20
+
+    /// Total pages for a list: 0 when the list is empty.
+    static func totalPages(totalCount: Int, pageSize: Int = pageSize) -> Int {
+        guard totalCount > 0 else { return 0 }
+        return (totalCount + pageSize - 1) / pageSize
+    }
+
+    /// Clamp a requested page into 1...totalPages (1 when there
+    /// are no pages, so callers never divide by zero).
+    static func clampedPage(_ page: Int, totalPages: Int) -> Int {
+        guard totalPages > 0 else { return 1 }
+        return min(max(page, 1), totalPages)
+    }
+
+    /// The items on one page, in order. An out-of-range page
+    /// clamps to the nearest real page; an empty list stays empty.
+    static func slice<T>(_ items: [T], page: Int, pageSize: Int = pageSize) -> [T] {
+        let total = totalPages(totalCount: items.count, pageSize: pageSize)
+        let current = clampedPage(page, totalPages: total)
+        let start = (current - 1) * pageSize
+        guard start < items.count else { return [] }
+        return Array(items[start..<min(start + pageSize, items.count)])
+    }
+
+    /// The 1-based first and last item numbers shown on one page:
+    /// page 1 of 564 reads (1, 20), the last page reads (561, 564).
+    /// (0, 0) when the list is empty.
+    static func rangeBounds(page: Int, totalCount: Int, pageSize: Int = pageSize) -> (first: Int, last: Int) {
+        guard totalCount > 0 else { return (0, 0) }
+        let total = totalPages(totalCount: totalCount, pageSize: pageSize)
+        let current = clampedPage(page, totalPages: total)
+        let first = (current - 1) * pageSize + 1
+        return (first, min(current * pageSize, totalCount))
+    }
+
+    /// The bar tokens for a page count and current page. Seven or
+    /// fewer pages show every number. Longer ranges show the first
+    /// page, the last page, and a window around the current page,
+    /// with ellipsis gaps: 1 ... 6 7 8 ... 29. Near either end
+    /// the window slides to the edge so a gap never hides exactly
+    /// one page: 1 2 3 4 5 ... 29, never 1 ... 3.
+    static func items(totalPages: Int, currentPage: Int) -> [PFPageItem] {
+        guard totalPages > 0 else { return [] }
+        let current = clampedPage(currentPage, totalPages: totalPages)
+        if totalPages <= 7 {
+            return (1...totalPages).map(PFPageItem.page)
+        }
+        let windowLow: Int
+        let windowHigh: Int
+        if current <= 4 {
+            windowLow = 2
+            windowHigh = 5
+        } else if current >= totalPages - 3 {
+            windowLow = totalPages - 4
+            windowHigh = totalPages - 1
+        } else {
+            windowLow = current - 1
+            windowHigh = current + 1
+        }
+        var tokens: [PFPageItem] = [.page(1)]
+        if windowLow > 2 {
+            tokens.append(.ellipsis)
+        }
+        for page in windowLow...windowHigh {
+            tokens.append(.page(page))
+        }
+        if windowHigh < totalPages - 1 {
+            tokens.append(.ellipsis)
+        }
+        tokens.append(.page(totalPages))
+        return tokens
+    }
+}
+
+/// The numbered pagination bar: Previous, page numbers, Next.
+/// The current page is filled royal with white text; other pages
+/// are bordered chips; gaps read as ellipsis. Previous is
+/// disabled on page 1, Next on the last page. Compact enough for
+/// phone widths: at most seven tokens between the two ends.
+/// Tapping a number jumps straight to that page; the caller owns
+/// the page state and the scroll back to the top.
+struct PFPaginationBar: View {
+    let currentPage: Int
+    let totalPages: Int
+    let onSelectPage: (Int) -> Void
+
+    private var current: Int {
+        PFPagination.clampedPage(currentPage, totalPages: totalPages)
+    }
+
+    var body: some View {
+        HStack(spacing: PFSpacing.xs) {
+            navButton(title: "Previous", enabled: current > 1) {
+                onSelectPage(current - 1)
+            }
+            .accessibilityLabel("Previous page")
+            ForEach(PFPagination.items(totalPages: totalPages, currentPage: current), id: \.self) { item in
+                switch item {
+                case .ellipsis:
+                    Text("...")
+                        .font(.pfCaptionBold)
+                        .foregroundColor(.pfSecondaryText)
+                        .frame(minWidth: 20, minHeight: 44)
+                        .accessibilityHidden(true)
+                case .page(let number):
+                    Button {
+                        onSelectPage(number)
+                    } label: {
+                        Text("\(number)")
+                            .font(.pfCaptionBold)
+                            .foregroundColor(number == current ? .white : .pfNavy)
+                            .frame(width: 34, height: 34)
+                            .background(number == current ? Color.pfRoyal : Color.pfCard)
+                            .cornerRadius(10)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(number == current ? Color.pfRoyal : Color.pfBorder, lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .frame(minWidth: 36, minHeight: 44)
+                    .accessibilityLabel(number == current ? "Page \(number), current page" : "Page \(number)")
+                }
+            }
+            navButton(title: "Next", enabled: current < totalPages) {
+                onSelectPage(current + 1)
+            }
+            .accessibilityLabel("Next page")
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func navButton(title: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.pfCaptionBold)
+                .foregroundColor(.pfRoyal)
+                .padding(.horizontal, PFSpacing.sm)
+                .frame(minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.4)
+    }
+}

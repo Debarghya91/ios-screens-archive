@@ -380,3 +380,139 @@ final class Wave2PaginationTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Numbered pagination rules (v96)
+
+/// The PFPagination rules behind the numbered Search and Payment
+/// Cases bars: 20 per page, ellipsis windows, range bounds, and
+/// page slicing. Pure logic, no UI: the bars themselves are
+/// statically checked only, never compiled or run here.
+final class NumberedPaginationTests: XCTestCase {
+
+    func testTotalPages() {
+        XCTAssertEqual(PFPagination.totalPages(totalCount: 0), 0)
+        XCTAssertEqual(PFPagination.totalPages(totalCount: 1), 1)
+        XCTAssertEqual(PFPagination.totalPages(totalCount: 20), 1)
+        XCTAssertEqual(PFPagination.totalPages(totalCount: 21), 2)
+        XCTAssertEqual(PFPagination.totalPages(totalCount: 564), 29)
+        XCTAssertEqual(PFPagination.totalPages(totalCount: 881), 45)
+    }
+
+    func testClampedPage() {
+        XCTAssertEqual(PFPagination.clampedPage(0, totalPages: 29), 1)
+        XCTAssertEqual(PFPagination.clampedPage(-3, totalPages: 29), 1)
+        XCTAssertEqual(PFPagination.clampedPage(30, totalPages: 29), 29)
+        XCTAssertEqual(PFPagination.clampedPage(7, totalPages: 29), 7)
+        XCTAssertEqual(PFPagination.clampedPage(5, totalPages: 0), 1)
+    }
+
+    func testSliceCoversEveryItemExactlyOnce() {
+        let items = Array(1...564)
+        var seen: [Int] = []
+        let pages = PFPagination.totalPages(totalCount: items.count)
+        XCTAssertEqual(pages, 29)
+        for page in 1...pages {
+            seen += PFPagination.slice(items, page: page)
+        }
+        XCTAssertEqual(seen, items)
+        XCTAssertEqual(PFPagination.slice(items, page: 1).count, 20)
+        XCTAssertEqual(PFPagination.slice(items, page: 29), Array(561...564))
+        XCTAssertEqual(PFPagination.slice(items, page: 99), Array(561...564))
+        XCTAssertEqual(PFPagination.slice(items, page: 0), Array(1...20))
+        XCTAssertTrue(PFPagination.slice([], page: 1).isEmpty)
+    }
+
+    func testRangeBounds() {
+        XCTAssertEqual(PFPagination.rangeBounds(page: 1, totalCount: 564).first, 1)
+        XCTAssertEqual(PFPagination.rangeBounds(page: 1, totalCount: 564).last, 20)
+        XCTAssertEqual(PFPagination.rangeBounds(page: 29, totalCount: 564).first, 561)
+        XCTAssertEqual(PFPagination.rangeBounds(page: 29, totalCount: 564).last, 564)
+        XCTAssertEqual(PFPagination.rangeBounds(page: 2, totalCount: 21).first, 21)
+        XCTAssertEqual(PFPagination.rangeBounds(page: 2, totalCount: 21).last, 21)
+        XCTAssertEqual(PFPagination.rangeBounds(page: 1, totalCount: 0).first, 0)
+        XCTAssertEqual(PFPagination.rangeBounds(page: 1, totalCount: 0).last, 0)
+    }
+
+    func testItemsForShortRangesShowEveryPage() {
+        XCTAssertEqual(
+            PFPagination.items(totalPages: 1, currentPage: 1),
+            [.page(1)]
+        )
+        XCTAssertEqual(
+            PFPagination.items(totalPages: 7, currentPage: 4),
+            [.page(1), .page(2), .page(3), .page(4), .page(5), .page(6), .page(7)]
+        )
+        XCTAssertTrue(PFPagination.items(totalPages: 0, currentPage: 1).isEmpty)
+    }
+
+    func testItemsForLongRangesUseEllipsisWindows() {
+        XCTAssertEqual(
+            PFPagination.items(totalPages: 29, currentPage: 1),
+            [.page(1), .page(2), .page(3), .page(4), .page(5), .ellipsis, .page(29)]
+        )
+        XCTAssertEqual(
+            PFPagination.items(totalPages: 29, currentPage: 7),
+            [.page(1), .ellipsis, .page(6), .page(7), .page(8), .ellipsis, .page(29)]
+        )
+        XCTAssertEqual(
+            PFPagination.items(totalPages: 29, currentPage: 29),
+            [.page(1), .ellipsis, .page(25), .page(26), .page(27), .page(28), .page(29)]
+        )
+        XCTAssertEqual(
+            PFPagination.items(totalPages: 29, currentPage: 28),
+            [.page(1), .ellipsis, .page(25), .page(26), .page(27), .page(28), .page(29)]
+        )
+        XCTAssertEqual(
+            PFPagination.items(totalPages: 8, currentPage: 4),
+            [.page(1), .page(2), .page(3), .page(4), .page(5), .ellipsis, .page(8)]
+        )
+    }
+
+    func testItemsNeverExceedSevenTokens() {
+        for total in 1...60 {
+            for current in 1...total {
+                let tokens = PFPagination.items(totalPages: total, currentPage: current)
+                XCTAssertLessThanOrEqual(tokens.count, 7, "total \(total) page \(current)")
+                XCTAssertTrue(tokens.contains(.page(current)), "current page missing: total \(total) page \(current)")
+                XCTAssertTrue(tokens.contains(.page(1)))
+                XCTAssertTrue(tokens.contains(.page(total)))
+            }
+        }
+    }
+
+    func testItemsNeverShowAGapOfOneHiddenPage() {
+        // An ellipsis must hide at least two pages: 1 ... 3 would
+        // hide only page 2 behind a gap, which reads as broken.
+        // And numbers with no ellipsis between them must be
+        // consecutive, so no page silently disappears.
+        for total in 1...60 {
+            for current in 1...total {
+                let tokens = PFPagination.items(totalPages: total, currentPage: current)
+                var previous: Int?
+                var gapSincePrevious = false
+                for token in tokens {
+                    switch token {
+                    case .ellipsis:
+                        gapSincePrevious = true
+                    case .page(let number):
+                        if let prev = previous {
+                            if gapSincePrevious {
+                                XCTAssertGreaterThanOrEqual(
+                                    number - prev, 3,
+                                    "ellipsis hides one page: total \(total) page \(current)"
+                                )
+                            } else {
+                                XCTAssertEqual(
+                                    number, prev + 1,
+                                    "missing page without ellipsis: total \(total) page \(current)"
+                                )
+                            }
+                        }
+                        previous = number
+                        gapSincePrevious = false
+                    }
+                }
+            }
+        }
+    }
+}

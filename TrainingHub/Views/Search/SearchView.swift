@@ -88,8 +88,8 @@ struct SearchView: View {
     /// restores its offset on Back like a ScrollView does, and a
     /// new query must start at the first result, so each return
     /// and each new query bumps this generation and recreates
-    /// the List at the top. Load more never bumps it: paging
-    /// down keeps the learner where they are.
+    /// the List at the top. Page changes bump it too: jumping
+    /// pages returns to the top of the list.
     @State private var resultsListGeneration = 0
 
     // MARK: - Filter state (difficulty only)
@@ -109,11 +109,22 @@ struct SearchView: View {
         set { storedLevels = newValue.map(\.rawValue).sorted().joined(separator: ",") }
     }
 
-    /// Results shown at first: 20 per page, Load more adds 20.
-    /// Only the shown results are grouped and rendered, so a
+    /// Numbered pagination: 20 results per page, the current page
+    /// in state. Only the shown page is grouped and rendered, so a
     /// filter matching 1,500 entries never builds 1,500 rows.
-    private static let resultsPageSize = 20
-    @State private var visibleResultCount = 20
+    /// Page 1 is restored on any query or filter change.
+    @State private var currentPage = 1
+
+    /// Total pages over the filtered results, and the current
+    /// page clamped into them, so a shrinking result set can
+    /// never strand the learner on a page that no longer exists.
+    private var totalResultPages: Int {
+        PFPagination.totalPages(totalCount: filteredResults.count)
+    }
+
+    private var effectiveResultPage: Int {
+        PFPagination.clampedPage(currentPage, totalPages: totalResultPages)
+    }
 
     /// One fully computed result set for one query, filter and
     /// catalogue state: the level-filtered hits, the per-type
@@ -372,10 +383,10 @@ struct SearchView: View {
         }
     }
 
-    /// The results actually rendered: the first page(s) of the
+    /// The results actually rendered: the current page of the
     /// filtered results. Grouping above runs on this subset only.
     private var visibleResults: [SearchHit] {
-        Array(filteredResults.prefix(visibleResultCount))
+        PFPagination.slice(filteredResults, page: currentPage)
     }
 
     /// Full per-type totals across ALL filtered results, not just
@@ -570,10 +581,12 @@ struct SearchView: View {
                 searchSnapshot = snapshot
                 snapshotKey = key
             }
-            // Any query or filter change: back to the first page of
-            // results, so Load more never shows a stale slice.
+            // Any query or filter change: back to page 1, at the
+            // top of the list, so the new results never show a
+            // stale page.
             .onChange(of: filterSignature) { _, _ in
-                visibleResultCount = Self.resultsPageSize
+                currentPage = 1
+                resultsListGeneration += 1
             }
             // Tab reselect: recreate the results list at the top.
             // The browse list scrolls to its top anchor through
@@ -993,15 +1006,12 @@ struct SearchView: View {
                             }
                         }
                     }
-                    if filteredResults.count > visibleResultCount {
+                    if totalResultPages > 1 {
                         Section {
-                            Button("Load more results") {
-                                visibleResultCount += Self.resultsPageSize
+                            PFPaginationBar(currentPage: effectiveResultPage, totalPages: totalResultPages) { page in
+                                currentPage = page
+                                resultsListGeneration += 1
                             }
-                            .font(.pfBody.weight(.semibold))
-                            .foregroundColor(.pfRoyal)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .pfMinimumTouchTarget()
                             .listRowBackground(Color.pfCard)
                         }
                     }
@@ -1054,9 +1064,9 @@ struct SearchView: View {
         let count = filteredResults.count
         let noun = count == 1 ? "result" : "results"
         let shownQuery = debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let shown = min(visibleResultCount, count)
-        let range = count > visibleResultCount
-            ? "Showing \(shown) of \(count) \(noun)"
+        let bounds = PFPagination.rangeBounds(page: effectiveResultPage, totalCount: count)
+        let range = count > PFPagination.pageSize
+            ? "Showing \(bounds.first)-\(bounds.last) of \(count) \(noun)"
             : "\(count) \(noun)"
         if shownQuery.isEmpty {
             return "\(range) matching your filters"
@@ -1444,25 +1454,40 @@ private struct SearchTypeListView: View {
 
     @State private var sheetEntry: SearchEntry? = nil
 
-    /// Entries shown at first: 20 per page, Load more adds 20.
-    /// A type can hold many entries, so the full list is
-    /// never built at once. The view is created fresh per type,
-    /// so the count starts at page 1 on every navigation.
-    private static let typeListPageSize = 20
-    @State private var visibleCount = 20
+    /// Numbered pagination: 20 entries per page, the current page
+    /// in state. A type can hold many entries, so only one page
+    /// is ever built at once. The view is created fresh per type,
+    /// so the page starts at 1 on every navigation.
+    @State private var currentPage = 1
     /// List identity: the scroll rule for Lists. Back from a
     /// pushed lesson recreates the List at the top instead of
-    /// restoring the old offset. Load more never bumps it.
+    /// restoring the old offset. Page changes bump it too, so
+    /// jumping pages returns to the top of the list.
     @State private var typeListGeneration = 0
+
+    private var totalTypePages: Int {
+        PFPagination.totalPages(totalCount: entries.count)
+    }
+
+    private var effectiveTypePage: Int {
+        PFPagination.clampedPage(currentPage, totalPages: totalTypePages)
+    }
 
     private var entries: [SearchEntry] {
         guard let index = contentService.searchIndex else { return [] }
         return index.entries.filter { $0.type == type }
     }
 
-    /// The entries actually rendered: the first page(s).
+    /// The entries actually rendered: the current page.
     private var visibleEntries: [SearchEntry] {
-        Array(entries.prefix(visibleCount))
+        PFPagination.slice(entries, page: currentPage)
+    }
+
+    /// "Showing 1-20 of 881 lessons": the honest range line for
+    /// the current page.
+    private var typeRangeText: String {
+        let bounds = PFPagination.rangeBounds(page: effectiveTypePage, totalCount: entries.count)
+        return "Showing \(bounds.first)-\(bounds.last) of \(entries.count) \(type.displayName.lowercased())s"
     }
 
     /// The full situations file as a lookup map, first item wins
@@ -1542,19 +1567,16 @@ private struct SearchTypeListView: View {
                     ForEach(visibleEntries) { entry in
                         row(for: entry, situationsByID: situationsByID)
                     }
-                    if entries.count > visibleCount {
+                    if totalTypePages > 1 {
                         Section {
                             VStack(spacing: PFSpacing.xs) {
-                                Text("Showing \(visibleCount) of \(entries.count) \(type.displayName.lowercased())s")
+                                Text(typeRangeText)
                                     .font(.pfCaption)
                                     .foregroundColor(.pfSecondaryText)
-                                Button("Load more") {
-                                    visibleCount += Self.typeListPageSize
+                                PFPaginationBar(currentPage: effectiveTypePage, totalPages: totalTypePages) { page in
+                                    currentPage = page
+                                    typeListGeneration += 1
                                 }
-                                .font(.pfBody.weight(.semibold))
-                                .foregroundColor(.pfRoyal)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .pfMinimumTouchTarget()
                             }
                             .listRowBackground(Color.pfCard)
                         }

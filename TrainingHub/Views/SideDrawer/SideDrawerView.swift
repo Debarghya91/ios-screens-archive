@@ -1036,6 +1036,27 @@ struct AboutTrainingHubView: View {
                     }
 
                     VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text("Why this app")
+                            .font(.pfSectionTitle)
+                            .foregroundColor(.pfNavy)
+                        PFBodyText(text: "Payments move the world's money, but learning how they work is harder than it should be. The knowledge is scattered across bank documents, scheme rulebooks and long threads. This app gathers it into one complete course, in plain language, built from real bank work, so you always know what to learn next.")
+                    }
+
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text("Who it is for")
+                            .font(.pfSectionTitle)
+                            .foregroundColor(.pfNavy)
+                        PFBodyText(text: "Built for people who work in payments or want to: business analysts, product owners, freshers starting out, testers and engineers, and anyone who needs to understand how money moves.")
+                    }
+
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text("What it can do")
+                            .font(.pfSectionTitle)
+                            .foregroundColor(.pfNavy)
+                        PFBodyText(text: "Read or listen to every lesson, follow a learning journey for one goal, practise real payment cases with labs, simulators and tests, prepare with \(ContentManifest.interviewQuestionCount) interview questions, and track your progress as it syncs across your devices.")
+                    }
+
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
                         Text("The curriculum")
                             .font(.pfSectionTitle)
                             .foregroundColor(.pfNavy)

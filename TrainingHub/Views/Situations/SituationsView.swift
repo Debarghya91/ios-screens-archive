@@ -437,13 +437,29 @@ struct SituationsView: View {
     }
     @ObservedObject private var bookmarkStore = PFBookmarkStore.shared
 
-    /// Pagination for the flat case list: 20 cases per page, with
-    /// a Load more button. Only the shown cases are rendered, so
-    /// ContentManifest.situationCount cases never sit in the view
-    /// hierarchy at once. Any filter or category change resets to
-    /// the first page.
-    private static let listPageSize = 20
-    @State private var visibleCount = 20
+    /// Numbered pagination for the flat case list: 20 cases per
+    /// page, the current page in state. Only the shown page is
+    /// rendered, so ContentManifest.situationCount cases never
+    /// sit in the view hierarchy at once. Any filter or category
+    /// change resets to page 1.
+    @State private var currentPage = 1
+
+    /// Scroll-back requests for page jumps: the bar sits inside
+    /// the list section, which has no ScrollViewProxy, so a tap
+    /// bumps this tick and the ScrollView content observes it
+    /// and scrolls the list back to its top. Resets never bump
+    /// it, so typing in the search field never yanks the view.
+    @State private var pageScrollTick = 0
+
+    /// Total pages over the filtered cases, and the current page
+    /// clamped into them.
+    private var totalCasePages: Int {
+        PFPagination.totalPages(totalCount: filteredSituations.count)
+    }
+
+    private var effectiveCasePage: Int {
+        PFPagination.clampedPage(currentPage, totalPages: totalCasePages)
+    }
 
     /// The situations to show. The full data file wins when it has
     /// loaded (full explain, visual and stage); the compact
@@ -534,10 +550,10 @@ struct SituationsView: View {
         }
     }
 
-    /// The cases actually rendered: the first page(s) of the
+    /// The cases actually rendered: the current page of the
     /// filtered list.
     private var visibleSituations: [Situation] {
-        Array(filteredSituations.prefix(visibleCount))
+        PFPagination.slice(filteredSituations, page: currentPage)
     }
 
     /// True when any filter narrows the list: search text, a
@@ -555,14 +571,14 @@ struct SituationsView: View {
         schemeFilter = nil
         levelFilter = nil
         selectedCategory = .all
-        visibleCount = Self.listPageSize
+        currentPage = 1
     }
 
     /// Pick a category from the drawer: filter the list, reset to
     /// the first page, and close the drawer.
     private func selectCategory(_ category: SituationCategory) {
         selectedCategory = category
-        visibleCount = Self.listPageSize
+        currentPage = 1
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
             isCategoryDrawerOpen = false
         }
@@ -623,11 +639,18 @@ struct SituationsView: View {
                     // clears the tab bar on every iPhone size.
                     .pfTabBarClearance()
                     // Any filter change: back to the first page.
-                    .onChange(of: searchText) { _, _ in visibleCount = Self.listPageSize }
-                    .onChange(of: schemeFilter) { _, _ in visibleCount = Self.listPageSize }
-                    .onChange(of: levelFilter) { _, _ in visibleCount = Self.listPageSize }
+                    .onChange(of: searchText) { _, _ in currentPage = 1 }
+                    .onChange(of: schemeFilter) { _, _ in currentPage = 1 }
+                    .onChange(of: levelFilter) { _, _ in currentPage = 1 }
                     .onChange(of: selectedCategory) { _, _ in
-                        visibleCount = Self.listPageSize
+                        currentPage = 1
+                        withAnimation {
+                            proxy.scrollTo("allSituations", anchor: .top)
+                        }
+                    }
+                    // A page jump from the pagination bar: the
+                    // list returns to its top.
+                    .onChange(of: pageScrollTick) { _, _ in
                         withAnimation {
                             proxy.scrollTo("allSituations", anchor: .top)
                         }
@@ -1021,10 +1044,10 @@ struct SituationsView: View {
 
     /// The flat case list for the selected category: the current
     /// category's title and count, the cases in catalogue order,
-    /// twenty at a time with a Load more button and a "Showing X
-    /// of Y" label. Categories live in the drawer, not as
-    /// accordions: the old stage groups duplicated the free
-    /// samples and forced every case through an extra tap.
+    /// twenty per numbered page with a "Showing A-B of N" label.
+    /// Categories live in the drawer, not as accordions: the old
+    /// stage groups duplicated the free samples and forced every
+    /// case through an extra tap.
     private var allSituationsSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
             PFSectionHeader(title: selectedCategory.title)
@@ -1048,13 +1071,15 @@ struct SituationsView: View {
                         .buttonStyle(PFCardButtonStyle())
                         .accessibilityIdentifier(!situation.isFreeSample && !storeManager.isPracticeUnlocked ? "lockedSituationRow" : "situationRow")
                     }
-                    if filteredSituations.count > visibleCount {
-                        Text("Showing \(visibleCount) of \(filteredSituations.count) cases")
+                    if totalCasePages > 1 {
+                        let bounds = PFPagination.rangeBounds(page: effectiveCasePage, totalCount: filteredSituations.count)
+                        Text("Showing \(bounds.first)-\(bounds.last) of \(filteredSituations.count) cases")
                             .font(.pfCaption)
                             .foregroundColor(.pfSecondaryText)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        PFSecondaryButton(title: "Load more cases") {
-                            visibleCount += Self.listPageSize
+                        PFPaginationBar(currentPage: effectiveCasePage, totalPages: totalCasePages) { page in
+                            currentPage = page
+                            pageScrollTick += 1
                         }
                     }
                 }

@@ -44,31 +44,38 @@ struct EmailAuthView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: PFSpacing.xl) {
-                    headerSection
-                    if mode == .code {
-                        if step == .enterEmail {
-                            emailSection
-                        } else {
-                            codeSection
+                VStack(spacing: PFSpacing.xl) {
+                    brandSection
+                    PFCard {
+                        VStack(alignment: .leading, spacing: PFSpacing.xl) {
+                            headerSection
+                            if mode == .code {
+                                if step == .enterEmail {
+                                    emailSection
+                                } else {
+                                    codeSection
+                                }
+                            } else {
+                                passwordSection
+                            }
+                            if let infoMessage {
+                                Text(infoMessage)
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            if let error = authService.authError {
+                                Text(error)
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfError)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
-                    } else {
-                        passwordSection
-                    }
-                    if let infoMessage {
-                        Text(infoMessage)
-                            .font(.pfBody)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let error = authService.authError {
-                        Text(error)
-                            .font(.pfBody)
-                            .foregroundColor(.pfError)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(PFSpacing.xl)
+                .frame(maxWidth: 400)
+                .frame(maxWidth: .infinity)
             }
             .background(Color.pfBackground)
             .navigationTitle("Continue with Email")
@@ -172,19 +179,30 @@ struct EmailAuthView: View {
 
     // MARK: - Header
 
-    private var headerSection: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.sm) {
-            Text("Sign in with your email")
-                .font(.pfScreenTitle)
+    /// The wordmark and open-book icon, centred above the card,
+    /// with no marketing headline.
+    private var brandSection: some View {
+        VStack(spacing: PFSpacing.md) {
+            Image(systemName: "book.open.fill")
+                .font(.system(size: 40))
+                .foregroundColor(.pfRoyal)
+                .accessibilityHidden(true)
+            Text("Payments Training Hub")
+                .font(.pfSectionTitle.weight(.bold))
                 .foregroundColor(.pfNavy)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(mode == .code
-                ? "We send a 6-digit code to your email. Enter it here to sign in or create your account."
-                : "Enter your email and password to sign in.")
-                .font(.pfBody)
-                .foregroundColor(.pfSecondaryText)
-                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.center)
         }
+        .frame(maxWidth: .infinity)
+        .padding(.top, PFSpacing.lg)
+    }
+
+    private var headerSection: some View {
+        Text(mode == .code
+            ? "We send a 6-digit code to your email. Enter it here to sign in or create your account."
+            : "Enter your email and password to sign in.")
+            .font(.pfBody)
+            .foregroundColor(.pfSecondaryText)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - Step 1: email
