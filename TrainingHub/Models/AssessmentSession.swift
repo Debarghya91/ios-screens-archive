@@ -23,8 +23,9 @@
 // ever gained. The end time can be persisted under a caller key so
 // a Final Assessment started earlier can be resumed with the time
 // left. The timer is invalidated when the session finishes, when
-// stop() is called (the view calls stop() in onDisappear), and in
-// deinit, so no timer can leak past the view.
+// pauseTimer() is called (the view pauses in onDisappear and
+// resumes in onAppear, so a popped attempt is kept), and in deinit,
+// so no timer can leak past the view.
 // No em dashes in any user-facing text.
 
 import Foundation
@@ -301,6 +302,43 @@ final class AssessmentSession: ObservableObject {
         isStarted = false
     }
 
+    /// Pause the ticking timer without ending the session, so the
+    /// view can disappear (a pop, a tab switch, or the app going
+    /// to the background) and the attempt resumes instead of
+    /// landing on setup. The wall clock keeps running while
+    /// paused: no extra time is gained while away, exactly as
+    /// for backgrounding.
+    func pauseTimer() {
+        stopTimer()
+    }
+
+    /// Restart the timer after a pause, recomputing the remaining
+    /// time from the wall clock first. Time spent away counts
+    /// against the total limit (recheckTime finishes an expired
+    /// exam at once) and against the current question: questions
+    /// whose time expired while away are marked unanswered,
+    /// exactly as if the timer had kept ticking.
+    func resumeTimer() {
+        guard isStarted, !isFinished else { return }
+        recheckTime()
+        guard !isFinished else { return }
+        if perQuestionTimeoutEnabled, let started = questionStartedAt {
+            var remaining = Self.secondsPerQuestion - max(0, Int(Date().timeIntervalSince(started).rounded()))
+            while remaining <= 0, !isFinished {
+                secondsLeftForQuestion = Self.secondsPerQuestion
+                advanceUnanswered()
+                guard !isFinished, let restarted = questionStartedAt else { break }
+                remaining = Self.secondsPerQuestion - max(0, Int(Date().timeIntervalSince(restarted).rounded()))
+            }
+            if !isFinished {
+                secondsLeftForQuestion = max(1, remaining)
+            }
+        }
+        if isTimed {
+            startTimer()
+        }
+    }
+
     /// Return to the setup screen (for "Change options"): the timer
     /// is stopped and the finished flag cleared. Loaded questions are
     /// kept by the view and can be started again.
@@ -366,5 +404,39 @@ final class AssessmentSession: ObservableObject {
     static func format(seconds: Int) -> String {
         let clamped = max(0, seconds)
         return "\(clamped / 60):\(String(format: "%02d", clamped % 60))"
+    }
+}
+
+// MARK: - Session holder
+
+/// Keeps one live AssessmentSession per assessment key, so
+/// popping out of an assessment and re-entering it resumes the
+/// same attempt (same questions, same answers, same clock)
+/// instead of wiping it. The session object outlives the view;
+/// the view pauses the timer on disappear and resumes it on
+/// appear. Also owns the recorded-result flags, so a finished
+/// attempt is recorded exactly once even across re-entries.
+final class AssessmentSessionHolder {
+    static let shared = AssessmentSessionHolder()
+    private var sessions: [String: AssessmentSession] = [:]
+    private var recordedResults: Set<String> = []
+
+    func session(for key: String) -> AssessmentSession {
+        if let existing = sessions[key] { return existing }
+        let session = AssessmentSession()
+        sessions[key] = session
+        return session
+    }
+
+    func resultRecorded(for key: String) -> Bool {
+        recordedResults.contains(key)
+    }
+
+    func markResultRecorded(for key: String) {
+        recordedResults.insert(key)
+    }
+
+    func clearResultRecorded(for key: String) {
+        recordedResults.remove(key)
     }
 }

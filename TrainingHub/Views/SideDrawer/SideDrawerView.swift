@@ -54,6 +54,13 @@ enum DrawerDestination: String, Identifiable, Hashable {
     case helpAndSupport
     case about
     case startTour
+    case interviewQuestions
+    case certificates
+    case learningHabit
+    case notifications
+    case diagnostics
+    case privacyPolicy
+    case termsOfService
 
     var id: String { rawValue }
 
@@ -74,7 +81,7 @@ enum DrawerDestination: String, Identifiable, Hashable {
             return 2
         case .myProgress:
             return 3
-        case .learn, .myLearning, .practice, .weeklyFreeCase, .communityChallenge, .simulator, .isoExplorer, .exceptionLab, .baStudio, .myPurchases, .profile, .appearance, .helpAndSupport, .about, .startTour:
+        case .learn, .myLearning, .practice, .weeklyFreeCase, .communityChallenge, .simulator, .isoExplorer, .exceptionLab, .baStudio, .myPurchases, .profile, .appearance, .helpAndSupport, .about, .startTour, .interviewQuestions, .certificates, .learningHabit, .notifications, .diagnostics, .privacyPolicy, .termsOfService:
             return nil
         }
     }
@@ -128,23 +135,29 @@ struct SideDrawerView: View {
         }
     }
 
-    /// The rows in the drawer, in display order: first the five tab
-    /// destinations, Practice, the Free Case of the Week and the
-    /// Weekly Challenge, then the four
-    /// practice experiences (Payment Simulator, ISO 20022 Explorer,
-    /// Exception Lab, BA/PO Studio),
-    /// then Profile as its own account destination, then purchases,
-    /// appearance, help and about, and Start Tour last. Practice sits directly after
-    /// Payment Cases, the cases it practises, and before My
-    /// Progress. The Free Case of the Week sits after Practice: it
-    /// is one free case a week, and it opens as a sheet, never a
-    /// tab. The guided tour addresses drawer rows by
-    /// destination through their anchors and scrolls by row id, so
-    /// the extra rows move no tour spotlight: each tour step still
-    /// resolves its own row, and the new rows have no tour step.
-    /// Profile is listed explicitly so
-    /// it is always one tap away, and it routes to the Profile
-    /// sheet, never to the My Progress tab.
+    /// The rows in the drawer, in display order: first the twelve
+    /// navigation rows (Home, Learn, Search, Payment Cases,
+    /// Practice, the Free Case of the Week, the Weekly Challenge,
+    /// the four practice experiences, and Start Tour), then one
+    /// section headed "Everything inside" holding the thirteen
+    /// capability and account rows: Interview Questions, My
+    /// Progress, Certificates, Learning habit, Courses and
+    /// purchases, Profile, Notifications, Help and Support,
+    /// Appearance, About, Diagnostics, Privacy Policy and Terms
+    /// of Service. The section is the drawer's home for the
+    /// capability list that used to sit on the homepage: nothing
+    /// is deleted, everything stays one tap away. Practice sits
+    /// directly after Payment Cases, the cases it practises. The
+    /// Free Case of the Week sits after Practice: it is one free
+    /// case a week, and it opens as a sheet, never a tab. The
+    /// guided tour addresses drawer rows by destination through
+    /// their anchors and scrolls by row id, so the reorder moves
+    /// no tour spotlight: each tour step still resolves its own
+    /// row, and the new rows have no tour step. Profile is
+    /// listed explicitly so it is always one tap away, and it
+    /// routes to the Profile sheet, never to the My Progress tab.
+    /// My Progress keeps its tab active state from inside the
+    /// section: its tabIndex is still 3.
     /// Refer and Win is deliberately not listed: there is no referral
     /// offer for Payments Training Hub, and the brief says to leave the row out
     /// rather than invent one. Referral invites (ReferralInvite)
@@ -196,12 +209,6 @@ struct SideDrawerView: View {
                 subtitle: "One case a week, scored on investigation quality"
             ),
             DrawerRowModel(
-                id: .myProgress,
-                icon: "chart.bar.fill",
-                title: "My Progress",
-                subtitle: "Your learning analytics, streak and quiz scores"
-            ),
-            DrawerRowModel(
                 id: .simulator,
                 icon: "arrow.triangle.2.circlepath",
                 title: "Payment Simulator",
@@ -226,22 +233,52 @@ struct SideDrawerView: View {
                 subtitle: "Draft BA and PO deliverables"
             ),
             DrawerRowModel(
+                id: .startTour,
+                icon: "play.circle.fill",
+                title: "Start Tour",
+                subtitle: "A quick guided tour of the key areas of the app"
+            ),
+            DrawerRowModel(
+                id: .interviewQuestions,
+                icon: "questionmark.bubble.fill",
+                title: "Interview Questions",
+                subtitle: "500 questions with model answers"
+            ),
+            DrawerRowModel(
+                id: .myProgress,
+                icon: "chart.bar.fill",
+                title: "My Progress",
+                subtitle: "Your learning analytics, streak and quiz scores"
+            ),
+            DrawerRowModel(
+                id: .certificates,
+                icon: "checkmark.seal.fill",
+                title: "Certificates",
+                subtitle: "Course and journey certificates you have earned"
+            ),
+            DrawerRowModel(
+                id: .learningHabit,
+                icon: "target",
+                title: "Learning habit",
+                subtitle: "Your daily learning goal and streak"
+            ),
+            DrawerRowModel(
+                id: .myPurchases,
+                icon: "bag.fill",
+                title: "Courses and purchases",
+                subtitle: "Buy a course, renew, see what you own"
+            ),
+            DrawerRowModel(
                 id: .profile,
                 icon: "person.fill",
                 title: "Profile",
                 subtitle: "Your name, privacy and account settings"
             ),
             DrawerRowModel(
-                id: .myPurchases,
-                icon: "bag.fill",
-                title: "My Purchases",
-                subtitle: "Your courses and Payment Situations, payment and access status"
-            ),
-            DrawerRowModel(
-                id: .appearance,
-                icon: "circle.lefthalf.filled",
-                title: "Appearance",
-                subtitle: "Dark mode and display options"
+                id: .notifications,
+                icon: "bell.fill",
+                title: "Notifications",
+                subtitle: "Reminder and notification settings"
             ),
             DrawerRowModel(
                 id: .helpAndSupport,
@@ -250,16 +287,34 @@ struct SideDrawerView: View {
                 subtitle: "Customer support, your queries and FAQs"
             ),
             DrawerRowModel(
+                id: .appearance,
+                icon: "circle.lefthalf.filled",
+                title: "Appearance",
+                subtitle: "Dark mode and display options"
+            ),
+            DrawerRowModel(
                 id: .about,
                 icon: "info.circle.fill",
                 title: "About",
                 subtitle: "About Payments Training Hub, the operator and the curriculum"
             ),
             DrawerRowModel(
-                id: .startTour,
-                icon: "play.circle.fill",
-                title: "Start Tour",
-                subtitle: "A quick guided tour of the key areas of the app"
+                id: .diagnostics,
+                icon: "stethoscope",
+                title: "Diagnostics",
+                subtitle: "Crash reports and recent activity on this device"
+            ),
+            DrawerRowModel(
+                id: .privacyPolicy,
+                icon: "lock.fill",
+                title: "Privacy Policy",
+                subtitle: "How your data is handled"
+            ),
+            DrawerRowModel(
+                id: .termsOfService,
+                icon: "doc.text.fill",
+                title: "Terms of Service",
+                subtitle: "The terms for using the app"
             )
         ]
     }
@@ -291,11 +346,14 @@ struct SideDrawerView: View {
                 ScrollView(showsIndicators: true) {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(rows) { row in
-                            // Account and settings rows sit under their own
-                            // heading, so a settings row does not read as
-                            // just another navigation destination.
-                            if row.id == .profile {
-                                Text("Account and settings")
+                            // The capability and account rows sit
+                            // under one "Everything inside"
+                            // heading, so the section reads as the
+                            // full list of everything the app
+                            // holds, separate from the navigation
+                            // rows above it.
+                            if row.id == .interviewQuestions {
+                                Text("Everything inside")
                                     .font(.pfCaptionBold)
                                     .foregroundColor(.pfSecondaryText)
                                     .padding(.leading, PFSpacing.xl)
@@ -531,45 +589,49 @@ private struct KeepLearningCard: View {
     }
 
     var body: some View {
-        HStack(spacing: PFSpacing.md) {
-            ZStack {
-                Circle()
-                    .fill(Color.pfGoldSoft)
-                    .frame(width: 52, height: 52)
-                Image(systemName: "flame.fill")
-                    .font(.pfSectionTitle.weight(.regular))
-                    .foregroundColor(.pfGold)
-                    .pfDecorative()
-            }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(hasCompletedLesson ? "Keep learning" : "Start learning")
-                    .font(.pfBody.weight(.bold))
-                    .foregroundColor(.pfNavy)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(progressLine)
-                    .font(.pfCaption.weight(.regular))
-                    .foregroundColor(.pfSecondaryText)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                // No progress bar until the learner has completed
-                // a lesson: an empty bar under a starter line
-                // reads as a zero counter.
-                if hasCompletedLesson {
-                    PFProgressBar(progress: progressStore.weeklyProgress, height: 6)
-                        // The progress line above already states the streak
-                        // and the weekly count, so the bar itself stays
-                        // silent for VoiceOver instead of announcing the
-                        // same progress a second time.
-                        .accessibilityHidden(true)
-                        .padding(.top, 4)
+        // The whole card is one button: tapping anywhere on it
+        // continues learning. The Continue/Start pill is styled
+        // text, not a nested button, so the card has exactly one
+        // tap target and VoiceOver reads it as one item.
+        Button(action: onContinue) {
+            HStack(spacing: PFSpacing.md) {
+                ZStack {
+                    Circle()
+                        .fill(Color.pfGoldSoft)
+                        .frame(width: 52, height: 52)
+                    Image(systemName: "flame.fill")
+                        .font(.pfSectionTitle.weight(.regular))
+                        .foregroundColor(.pfGold)
+                        .pfDecorative()
                 }
-            }
 
-            Spacer(minLength: PFSpacing.sm)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(hasCompletedLesson ? "Keep learning" : "Start learning")
+                        .font(.pfBody.weight(.bold))
+                        .foregroundColor(.pfNavy)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(progressLine)
+                        .font(.pfCaption.weight(.regular))
+                        .foregroundColor(.pfSecondaryText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    // No progress bar until the learner has completed
+                    // a lesson: an empty bar under a starter line
+                    // reads as a zero counter.
+                    if hasCompletedLesson {
+                        PFProgressBar(progress: progressStore.weeklyProgress, height: 6)
+                            // The progress line above already states the streak
+                            // and the weekly count, so the bar itself stays
+                            // silent for VoiceOver instead of announcing the
+                            // same progress a second time.
+                            .accessibilityHidden(true)
+                            .padding(.top, 4)
+                    }
+                }
 
-            Button(action: onContinue) {
-                // Short button label on purpose: the drawer is narrow,
+                Spacer(minLength: PFSpacing.sm)
+
+                // Short pill label on purpose: the drawer is narrow,
                 // and the card title already says "Start learning".
                 Text(hasCompletedLesson ? "Continue" : "Start")
                     .font(.pfBody.weight(.semibold))
@@ -584,15 +646,16 @@ private struct KeepLearningCard: View {
                             .stroke(Color.pfRoyal.opacity(0.35), lineWidth: 1)
                     )
             }
-            .buttonStyle(.plain)
+            .padding(PFSpacing.lg)
+            .background(Color.pfBackground)
+            .cornerRadius(PFSpacing.cardRadius)
+            .overlay(
+                RoundedRectangle(cornerRadius: PFSpacing.cardRadius)
+                    .stroke(Color.pfBorder, lineWidth: 1)
+            )
         }
-        .padding(PFSpacing.lg)
-        .background(Color.pfBackground)
-        .cornerRadius(PFSpacing.cardRadius)
-        .overlay(
-            RoundedRectangle(cornerRadius: PFSpacing.cardRadius)
-                .stroke(Color.pfBorder, lineWidth: 1)
-        )
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens your next lesson.")
     }
 
     /// The line under the card title. A fresh learner (no
@@ -694,6 +757,8 @@ struct HelpSupportView: View {
     @State private var emailCopied = false
     /// True while the Purchases sheet is open from a locked FAQ.
     @State private var showCheckout = false
+    /// True while the Diagnostics sheet is open.
+    @State private var showDiagnostics = false
 
     private var faqs: [SearchEntry] {
         contentService.allFAQs
@@ -780,6 +845,37 @@ struct HelpSupportView: View {
                     .listRowBackground(Color.pfCard)
                 } header: {
                     Text("Guided tour")
+                }
+
+                Section {
+                    Button(action: { showDiagnostics = true }) {
+                        HStack(spacing: PFSpacing.md) {
+                            Image(systemName: "stethoscope")
+                                .foregroundColor(.pfRoyal)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Diagnostics")
+                                    .font(.pfCardTitle)
+                                    .foregroundColor(.pfNavy)
+                                Text("Crash reports and recent activity on this device.")
+                                    .font(.pfCallout)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.pfCallout.weight(.semibold))
+                                .foregroundColor(.pfSecondaryText)
+                                .accessibilityHidden(true)
+                        }
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Diagnostics")
+                    .accessibilityHint("Shows crash reports and recent activity on this device.")
+                    .listRowBackground(Color.pfCard)
+                } header: {
+                    Text("Diagnostics")
                 }
 
                 Section {
@@ -883,6 +979,9 @@ struct HelpSupportView: View {
             }
             .sheet(isPresented: $showCheckout) {
                 CheckoutView()
+            }
+            .sheet(isPresented: $showDiagnostics) {
+                DiagnosticsView()
             }
         }
     }

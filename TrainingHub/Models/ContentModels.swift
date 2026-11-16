@@ -9,6 +9,13 @@ import Foundation
 
 /// One entry from the live search index
 /// (https://www.paymentstraininghub.com/assets/search-index.json).
+/// The compact index
+/// (https://www.paymentstraininghub.com/assets/search-index-compact.json)
+/// carries the same document shape but a slimmer entry: lessons
+/// and situations carry tags and an excerpt instead of the full
+/// text, plus the chapter name and domain label when known.
+/// Decoding accepts both shapes: text defaults to empty, tags
+/// default to empty, and the rest default to nil.
 struct SearchEntry: Codable, Identifiable, Hashable {
     let id: String
     let title: String
@@ -26,6 +33,20 @@ struct SearchEntry: Codable, Identifiable, Hashable {
     /// standard icon tile, never a broken image. Resolve with
     /// PFThumbnailURL, which prepends the site base URL.
     let thumbnail: String? = nil
+    /// Keywords for this entry, from the compact index. Empty for
+    /// full-index entries and for types the compact index keeps
+    /// whole (guides, labs, tests, FAQs).
+    let tags: [String] = []
+    /// A short excerpt of the entry text, from the compact index,
+    /// for entries that carry no full text. Nil otherwise.
+    let excerpt: String? = nil
+    /// The chapter name, from the compact index, for lessons that
+    /// carry it. Nil otherwise: the name is then parsed from the
+    /// text, as before.
+    let chapter: String? = nil
+    /// The domain label, from the compact index, for lessons that
+    /// carry it. Nil otherwise.
+    let domain: String? = nil
 
     var isLesson: Bool { type == .lesson }
     var isGuide: Bool { type == .guide }
@@ -35,10 +56,29 @@ struct SearchEntry: Codable, Identifiable, Hashable {
     var isFAQ: Bool { type == .faq }
 
     /// A short preview of the entry text for search results.
+    /// Compact-index entries carry no full text, so the excerpt
+    /// stands in when the text is blank. Truncated at 140
+    /// characters either way, so rows stay one height.
     var preview: String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let source = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = source.isEmpty
+            ? (excerpt ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            : source
         if trimmed.count <= 140 { return trimmed }
         return String(trimmed.prefix(140)) + "..."
+    }
+
+    /// The text search matches against: the full text when
+    /// present, plus the tags and the excerpt, so compact-index
+    /// entries (which carry no full text) still match on their
+    /// tags and excerpt. SearchService uses this as the body
+    /// haystack; title matching is separate and still outranks it.
+    var searchText: String {
+        var parts: [String] = []
+        if !text.isEmpty { parts.append(text) }
+        if !tags.isEmpty { parts.append(tags.joined(separator: " ")) }
+        if let excerpt, !excerpt.isEmpty { parts.append(excerpt) }
+        return parts.joined(separator: " ")
     }
 
     /// True when this entry is a supplemental lesson written for v34
@@ -156,9 +196,14 @@ struct SearchEntry: Codable, Identifiable, Hashable {
         return best
     }
 
-    /// The chapter name: the text between the lesson title and the
-    /// section marker. Nil when the text carries no marker.
+    /// The chapter name: the compact index's chapter field when
+    /// present, else the text between the lesson title and the
+    /// section marker. Nil when neither carries a name.
     var chapterName: String? {
+        if let chapter {
+            let name = chapter.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { return name }
+        }
         let rest = textAfterTitle
         guard let marker = Self.sectionMarkerRange(in: rest) else { return nil }
         let name = String(rest[..<marker.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -220,6 +265,35 @@ struct SearchEntry: Codable, Identifiable, Hashable {
             }
         }
         return rest
+    }
+}
+
+// MARK: - SearchEntry decoding
+
+/// Custom decoding, in an extension so the memberwise initializer
+/// keeps working for tests and for the agenda join. The full index
+/// and the compact index decode through the same init: text is
+/// optional (compact entries omit it), tags default to empty, and
+/// excerpt, chapter and domain default to nil. A missing id, title,
+/// url or type still fails the decode, as before.
+extension SearchEntry {
+    private enum CodingKeys: String, CodingKey {
+        case id, title, url, type, text, agenda, thumbnail, tags, excerpt, chapter, domain
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        url = try container.decode(String.self, forKey: .url)
+        type = try container.decode(SearchEntryType.self, forKey: .type)
+        text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+        agenda = try container.decodeIfPresent(String.self, forKey: .agenda)
+        thumbnail = try container.decodeIfPresent(String.self, forKey: .thumbnail)
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        excerpt = try container.decodeIfPresent(String.self, forKey: .excerpt)
+        chapter = try container.decodeIfPresent(String.self, forKey: .chapter)
+        domain = try container.decodeIfPresent(String.self, forKey: .domain)
     }
 }
 
@@ -543,11 +617,12 @@ struct SituationStackedSegment: Codable, Hashable {
 /// file, all ContentManifest.situationCount items): every item carries `stage` (an integer,
 /// 1 to 6) and `stage_name` (the matching stage name), plus `level`,
 /// `module` and `domain`. Those fields are read directly where they
-/// are present. `stage` is decoded flexibly (integer, or a string
-/// holding an integer) so a future format change cannot break the
-/// whole decode. Where a field is absent, ContentService falls back
-/// to the website stage map and then to the level, and the result is
-/// marked derived, never authoritative.
+/// are present. `stage` and `seq` are decoded flexibly (integer,
+/// or a string holding an integer): the chunked detail files carry
+/// both as strings, while the full data file carries both as
+/// integers, and either shape must decode. Where a field is absent,
+/// ContentService falls back to the website stage map and then to
+/// the level, and the result is marked derived, never authoritative.
 struct FullSituationItem: Decodable {
     let id: String
     let title: String
@@ -603,7 +678,14 @@ struct FullSituationItem: Decodable {
         title = try container.decode(String.self, forKey: .title)
         level = try container.decode(String.self, forKey: .level)
         module = try container.decodeIfPresent(String.self, forKey: .module)
-        seq = try container.decodeIfPresent(Int.self, forKey: .seq)
+        if let intSeq = try? container.decodeIfPresent(Int.self, forKey: .seq) {
+            seq = intSeq
+        } else if let stringSeq = try? container.decodeIfPresent(String.self, forKey: .seq),
+                  let value = Int(stringSeq.trimmingCharacters(in: .whitespaces)) {
+            seq = value
+        } else {
+            seq = nil
+        }
         explain = try container.decode(String.self, forKey: .explain)
         takeaway = try container.decode(String.self, forKey: .takeaway)
         visual = try container.decodeIfPresent(SituationVisual.self, forKey: .visual)
@@ -622,6 +704,65 @@ struct FullSituationItem: Decodable {
         } else {
             stage = nil
         }
+    }
+}
+
+// MARK: - Situations index (paged list)
+
+/// One row of the compact situations index
+/// (https://www.paymentstraininghub.com/assets/situations-index.json).
+/// The list renders from these rows alone, so the full situations
+/// file is never downloaded just to show the list. `stage` is
+/// decoded flexibly (integer, or a string holding an integer), the
+/// same way FullSituationItem decodes it. `chunk` names the detail
+/// chunk file holding the full item, or is nil when the row came
+/// from a source without chunking.
+struct SituationsIndexEntry: Decodable, Identifiable, Hashable {
+    let id: String
+    let title: String
+    let level: String
+    let stage: Int?
+    let stageName: String?
+    let domain: String?
+    let chunk: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, level, stage, domain, chunk
+        case stageName = "stage_name"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        level = try container.decode(String.self, forKey: .level)
+        stageName = try container.decodeIfPresent(String.self, forKey: .stageName)
+        domain = try container.decodeIfPresent(String.self, forKey: .domain)
+        chunk = try container.decodeIfPresent(Int.self, forKey: .chunk)
+        if let intStage = try? container.decodeIfPresent(Int.self, forKey: .stage) {
+            stage = intStage
+        } else if let stringStage = try? container.decodeIfPresent(String.self, forKey: .stage),
+                  let value = Int(stringStage.trimmingCharacters(in: .whitespaces)) {
+            stage = value
+        } else {
+            stage = nil
+        }
+    }
+}
+
+/// The compact situations index document: the total count, the
+/// chunk size the detail files were split at, and one row per case.
+/// The chunk size is informational: chunk file names come from
+/// each row's `chunk` field, never from arithmetic on the row
+/// position.
+struct SituationsIndexDoc: Decodable {
+    let total: Int
+    let chunkSize: Int
+    let items: [SituationsIndexEntry]
+
+    enum CodingKeys: String, CodingKey {
+        case total, items
+        case chunkSize = "chunkSize"
     }
 }
 

@@ -84,7 +84,7 @@ struct EmailSignupView: View {
                 }
                 .background(Color.pfBackground)
 
-                if authService.showRegistrationWelcome,
+                if authService.showRegistrationWelcome, !showEmailAuth,
                    let welcomeCaseID = authService.registrationWelcomeCaseID {
                     RegistrationWelcomePopup(
                         caseID: welcomeCaseID,
@@ -270,6 +270,7 @@ struct EmailSignupView: View {
     }
 
     private func createAccount() async {
+        guard !isBusy else { return }
         errorMessage = nil
         // The button stays tappable while the form is invalid, so
         // tapping it surfaces the inline errors instead of doing
@@ -367,6 +368,7 @@ struct EmailSignupView: View {
     }
 
     private func signInAfterConfirmation() async {
+        guard !isBusy else { return }
         errorMessage = nil
         isBusy = true
         defer { isBusy = false }
@@ -386,6 +388,7 @@ struct EmailSignupView: View {
     }
 
     private func resendConfirmation() async {
+        guard !isBusy else { return }
         if resendCooldown.limitReached {
             infoMessage = EmailResendCooldown.limitMessage
             return

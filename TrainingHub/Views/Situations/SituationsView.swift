@@ -79,6 +79,40 @@ func situation(fromFull item: FullSituationItem) -> Situation {
     )
 }
 
+/// Build a Situation from one compact index row. The level,
+/// stage and stage name come from the row itself: the same
+/// authoritative values as the full data file, so list rows,
+/// filters and category counts are correct without downloading
+/// the full file. Explain and takeaway stay empty until the
+/// detail loads through SituationDetailLoaderView; the row
+/// shows the title, pills and thumbnail only, never a read
+/// time or body text. Thumbnail and agenda come from the
+/// agenda-joined search index entry when one exists, so rows
+/// keep their images.
+func situation(fromIndex entry: SituationsIndexEntry, indexEntry: SearchEntry?) -> Situation {
+    let level: SituationLevel
+    switch entry.level.lowercased() {
+    case "foundation": level = .foundation
+    case "advanced": level = .advanced
+    default: level = .core
+    }
+    let stage = entry.stage ?? 1
+    return Situation(
+        id: entry.id,
+        title: entry.title,
+        stage: stage,
+        stageName: entry.stageName ?? "Stage \(stage)",
+        level: level,
+        explain: "",
+        takeaway: "",
+        isFreeSample: ContentService.freeSampleIDs.contains(entry.id),
+        visual: nil,
+        isStageAuthoritative: entry.stage != nil,
+        agenda: indexEntry?.agenda,
+        thumbnail: indexEntry?.thumbnail
+    )
+}
+
 // MARK: - Scheme derivation (title keywords only)
 //
 // A scheme is shown only when the situation title itself names it.
@@ -362,14 +396,45 @@ struct SituationsView: View {
     /// tab, where the drawer button is the way out.
     var showCloseButton: Bool = false
 
+    /// Reselect tick from the tab bar: bumped when the learner
+    /// taps the Payment Cases tab while already on it. Scrolls
+    /// back to the top of the list.
+    var tabReselectTick: Int = 0
+
     @Environment(\.dismiss) private var dismiss
 
-    @State private var levelFilter: SituationLevel? = nil
+    /// The difficulty filter, preserved across restarts through
+    /// SceneStorage as the level's raw value (empty means no
+    /// filter). The computed bridge keeps every existing read
+    /// and write working.
+    @SceneStorage("situations.levelFilter") private var storedLevelFilter = ""
+    private var levelFilter: SituationLevel? {
+        get { storedLevelFilter.isEmpty ? nil : SituationLevel(rawValue: storedLevelFilter) }
+        set { storedLevelFilter = newValue?.rawValue ?? "" }
+    }
     @State private var selectedCategory: SituationCategory = .all
     @State private var isCategoryDrawerOpen = false
     @State private var showCheckout = false
-    @State private var searchText = ""
-    @State private var schemeFilter: String? = nil
+    /// The list search text, preserved across restarts through
+    /// SceneStorage. The computed bridge keeps every existing
+    /// read and write working; the TextField binds through
+    /// searchTextBinding below.
+    @SceneStorage("situations.searchText") private var storedSearchText = ""
+    private var searchText: String {
+        get { storedSearchText }
+        set { storedSearchText = newValue }
+    }
+    private var searchTextBinding: Binding<String> {
+        Binding(get: { searchText }, set: { searchText = $0 })
+    }
+    /// The scheme filter, preserved across restarts through
+    /// SceneStorage (empty means no filter). The computed
+    /// bridge keeps every existing read and write working.
+    @SceneStorage("situations.schemeFilter") private var storedSchemeFilter = ""
+    private var schemeFilter: String? {
+        get { storedSchemeFilter.isEmpty ? nil : storedSchemeFilter }
+        set { storedSchemeFilter = newValue ?? "" }
+    }
     @ObservedObject private var bookmarkStore = PFBookmarkStore.shared
 
     /// Pagination for the flat case list: 20 cases per page, with
@@ -381,11 +446,17 @@ struct SituationsView: View {
     @State private var visibleCount = 20
 
     /// The situations to show. The full data file wins when it has
-    /// loaded (full explain, visual and stage); the search index
-    /// entries are the fallback so the list never goes empty.
+    /// loaded (full explain, visual and stage); the compact
+    /// situations index is next (authoritative stage and level,
+    /// no body text, detail fetched per case on open); the search
+    /// index entries are the fallback so the list never goes empty.
     private var allSituations: [Situation] {
         if let full = contentService.fullSituations, !full.isEmpty {
             return full.map { situation(fromFull: $0) }
+        }
+        if let index = contentService.situationsIndex, !index.items.isEmpty {
+            let byID = Dictionary(uniqueKeysWithValues: contentService.allSituations.map { ($0.id, $0) })
+            return index.items.map { situation(fromIndex: $0, indexEntry: byID[$0.id]) }
         }
         return contentService.allSituations.map { situation(from: $0) }
     }
@@ -425,14 +496,20 @@ struct SituationsView: View {
     /// applies the category on top of it. The search matches the
     /// title, the explain text, and the takeaway: title-only
     /// matching hid cases whose title never names the search term.
+    /// Index-mode situations carry no body text, so the search
+    /// also matches the backing search index entry (its tags and
+    /// excerpt), which keeps in-list search working without
+    /// downloading the full file.
     private var categoryBase: [Situation] {
         var list = allSituations
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if !query.isEmpty {
+            let entriesByID = Dictionary(uniqueKeysWithValues: contentService.allSituations.map { ($0.id, $0) })
             list = list.filter {
                 $0.title.lowercased().contains(query)
                     || $0.explain.lowercased().contains(query)
                     || $0.takeaway.lowercased().contains(query)
+                    || (entriesByID[$0.id]?.searchText.lowercased().contains(query) ?? false)
             }
         }
         if let schemeFilter {
@@ -509,6 +586,16 @@ struct SituationsView: View {
                                 PFOfflineBanner()
                             }
 
+                            if let error = contentService.indexError, contentService.searchIndex == nil {
+                                PFErrorStateView(
+                                    title: "Could not load the course catalogue",
+                                    message: error,
+                                    retryTitle: "Retry"
+                                ) {
+                                    Task { await contentService.loadSearchIndex() }
+                                }
+                            }
+
                             // The free samples teaser shows only in
                             // the unfiltered browse state. Showing
                             // it alongside the flat list would list
@@ -548,7 +635,20 @@ struct SituationsView: View {
                     .onAppear {
                         // The scroll rule: Back and tab switches land
                         // at the top, never at the restored offset.
-                        proxy.scrollTo("situationsTop", anchor: .top)
+                        // Dispatched async so the scroll lands after
+                        // layout, the same form PFScrollToTopModifier
+                        // uses.
+                        DispatchQueue.main.async {
+                            proxy.scrollTo("situationsTop", anchor: .top)
+                        }
+                    }
+                    .onChange(of: tabReselectTick) { _, _ in
+                        DispatchQueue.main.async {
+                            proxy.scrollTo("situationsTop", anchor: .top)
+                        }
+                    }
+                    .task {
+                        await contentService.loadSituationsIndex()
                     }
                 }
                 .disabled(isCategoryDrawerOpen)
@@ -798,7 +898,7 @@ struct SituationsView: View {
             } else {
                 VStack(spacing: PFSpacing.sm) {
                     ForEach(freeSamples) { situation in
-                        NavigationLink(destination: SituationDetailView(situation: situation)) {
+                        PFGuardedNavigationLink(key: situation.id, destination: { SituationDetailLoaderView(situation: situation) }) {
                             situationRow(situation, showFreePill: true)
                         }
                         .buttonStyle(PFCardButtonStyle())
@@ -817,7 +917,7 @@ struct SituationsView: View {
             Image(systemName: "magnifyingglass")
                 .font(.pfBody.weight(.semibold))
                 .foregroundColor(.pfSecondaryText)
-            TextField("Search situations", text: $searchText)
+            TextField("Search situations", text: searchTextBinding)
                 .font(.pfBody)
                 .foregroundColor(.pfNavy)
                 .autocorrectionDisabled()
@@ -942,7 +1042,7 @@ struct SituationsView: View {
             } else {
                 VStack(spacing: PFSpacing.sm) {
                     ForEach(visibleSituations) { situation in
-                        NavigationLink(destination: SituationDetailView(situation: situation)) {
+                        PFGuardedNavigationLink(key: situation.id, destination: { SituationDetailLoaderView(situation: situation) }) {
                             situationRow(situation, showFreePill: situation.isFreeSample)
                         }
                         .buttonStyle(PFCardButtonStyle())
@@ -966,8 +1066,8 @@ struct SituationsView: View {
     /// A situation row has a distinct case-study identity, different
     /// from a lesson card: a gold leading accent, a thumbnail when
     /// the website exposes one (the briefcase tile otherwise),
-    /// navy heading, and the stage and level pills. Every row
-    /// shows the approximate read time.
+    /// navy heading, and the stage and level pills. No row shows a
+    /// read time.
     private func situationRow(_ situation: Situation, showFreePill: Bool) -> some View {
         HStack(alignment: .top, spacing: PFSpacing.md) {
             Rectangle()
@@ -1018,16 +1118,6 @@ struct SituationsView: View {
                             foreground: Color.pfGoldText
                         )
                     }
-                }
-                if let readLabel = ReadTime.label(for: situation.explain + " " + situation.takeaway) {
-                    HStack(spacing: PFSpacing.xs) {
-                        Image(systemName: "clock")
-                            .font(.pfCaption.weight(.semibold))
-                            .accessibilityHidden(true)
-                        Text(readLabel)
-                            .font(.pfCaption)
-                    }
-                    .foregroundColor(.pfSecondaryText)
                 }
             }
             Spacer()
@@ -1135,6 +1225,85 @@ private struct PillFlow: Layout {
 // carries no excerpt text at all: the opening paragraphs are part
 // of the explain field and never render for a locked situation.
 
+// MARK: - Situation detail loader
+
+/// Loads the full detail for one case before showing it. List and
+/// search rows carry index-mode situations (title, stage and level
+/// only, no body text), so opening one fetches its detail chunk
+/// through ContentService.situationDetail(id:), which falls back
+/// to the full file when the chunk cannot be fetched. Situations
+/// that already carry full text (weekly cases, loaded full data)
+/// pass straight through with no fetch and no loading state.
+/// Locked cases are not fetched: the gate shows from the list
+/// data alone, and unlocking while the detail is open triggers
+/// the load then. When the fetch fails, the loader shows an
+/// error with Retry instead of an empty detail.
+struct SituationDetailLoaderView: View {
+    @EnvironmentObject private var contentService: ContentService
+    @EnvironmentObject private var storeManager: StoreManager
+    let situation: Situation
+    var isWeeklyFreeCase: Bool = false
+
+    @State private var resolvedSituation: Situation? = nil
+    @State private var loadFinished = false
+    @State private var retryTick = 0
+
+    /// The same D101 gate as SituationDetailView: locked when the
+    /// situation is not a free sample, not this week's free case
+    /// on the weekly path, and Practice Experiences is not
+    /// unlocked. Kept in step with the detail's own gate.
+    private var isLocked: Bool {
+        !situation.isFreeSample && !isWeeklyFreeCase && !storeManager.isPracticeUnlocked
+    }
+
+    /// True when the body text still has to be fetched: unlocked,
+    /// and the situation carries no explain text yet.
+    private var needsLoad: Bool {
+        !isLocked && situation.explain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        Group {
+            if let resolvedSituation {
+                SituationDetailView(situation: resolvedSituation, isWeeklyFreeCase: isWeeklyFreeCase)
+            } else if needsLoad && !loadFinished {
+                VStack(spacing: PFSpacing.lg) {
+                    ProgressView()
+                    Text("Loading the case...")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .navigationTitle("Situation")
+                .navigationBarTitleDisplayMode(.inline)
+            } else if needsLoad && loadFinished {
+                PFErrorStateView(
+                    title: "Could not load this case",
+                    message: "Check your connection and try again.",
+                    retryTitle: "Retry"
+                ) {
+                    loadFinished = false
+                    retryTick += 1
+                }
+                .padding(PFSpacing.lg)
+                .navigationTitle("Situation")
+                .navigationBarTitleDisplayMode(.inline)
+            } else {
+                SituationDetailView(situation: situation, isWeeklyFreeCase: isWeeklyFreeCase)
+            }
+        }
+        .task(id: "\(isLocked)-\(retryTick)") {
+            guard needsLoad, resolvedSituation == nil else { return }
+            let item = await contentService.situationDetail(id: situation.id)
+            guard !Task.isCancelled else { return }
+            if let item {
+                resolvedSituation = situation(fromFull: item)
+            }
+            loadFinished = true
+        }
+    }
+}
+
 struct SituationDetailView: View {
     @EnvironmentObject private var storeManager: StoreManager
     @EnvironmentObject private var contentService: ContentService
@@ -1202,7 +1371,7 @@ struct SituationDetailView: View {
                     }
                 }
                 if eligible {
-                    NavigationLink(destination: PracticeModeView(situation: situation, allSituations: allSituations)) {
+                    PFGuardedNavigationLink(key: "practice-\(situation.id)", destination: { PracticeModeView(situation: situation, allSituations: allSituations) }) {
                         HStack {
                             Text("Start Practice Mode")
                                 .font(.pfBody.weight(.semibold))
@@ -1252,14 +1421,14 @@ struct SituationDetailView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                NavigationLink(destination: InvestigationExperienceView(
+                PFGuardedNavigationLink(key: "investigate-\(situation.id)", destination: { InvestigationExperienceView(
                     investigation: investigation,
                     isFreeSample: situation.isFreeSample,
                     isWeeklyFreeCase: isWeeklyFreeCase,
                     onDifficultyChange: { difficulty in
                         InvestigationEngine.caseFor(situation: situation, fullItem: fullItem, difficulty: difficulty)
                     }
-                )) {
+                ) }) {
                     HStack {
                         Text("Investigate this case")
                             .font(.pfBody.weight(.semibold))
@@ -1325,11 +1494,6 @@ struct SituationDetailView: View {
                             .font(.pfSectionTitle)
                             .foregroundColor(.pfNavy)
                             .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let readLabel = ReadTime.label(for: situation.explain + " " + situation.takeaway) {
-                        Label(readLabel, systemImage: "clock")
-                            .font(.pfCaptionBold)
-                            .foregroundColor(.pfSecondaryText)
                     }
                 }
 

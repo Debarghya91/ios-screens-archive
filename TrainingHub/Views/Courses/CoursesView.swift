@@ -57,14 +57,30 @@ enum LearnSection: String, CaseIterable {
 
 /// The course browsing sections embedded in Home: the picker plus the
 /// section content, with no stack or scroll of its own. Home owns the
-/// scroll and the learnTop anchor; switching sections scrolls Home to
-/// that anchor through the shared selected-section binding.
+/// scroll and the top anchor; switching sections scrolls Home to
+/// the top through the shared selected-section binding. `sections`
+/// restricts which sections are offered (Home's Courses tab offers
+/// Courses and Catalogue; the Learning Journey tab offers Learning
+/// Journeys alone, with no picker). `showsLibrary` gates the
+/// Guides/labs/tests rows under the Catalogue; `showsExtras` gates
+/// the interview and practice cards below the non-Courses sections.
 struct LearnSectionsView: View {
     @EnvironmentObject private var contentService: ContentService
     @EnvironmentObject private var progressStore: ProgressStore
     @EnvironmentObject private var storeManager: StoreManager
 
     @Binding var selectedSection: LearnSection
+    var sections: [LearnSection] = LearnSection.allCases
+    var showsLibrary: Bool = true
+    var showsExtras: Bool = true
+
+    /// The section actually shown: the selected one when it is
+    /// offered, else the first offered section, so a stale
+    /// selection (for example Learning Journeys while the Courses
+    /// tab is showing) never renders nothing.
+    private var effectiveSection: LearnSection {
+        sections.contains(selectedSection) ? selectedSection : sections.first ?? .courses
+    }
 
     /// The level filter for the guided journeys on the Learning
     /// Journeys section only. It never filters the sessions or the
@@ -83,13 +99,15 @@ struct LearnSectionsView: View {
         VStack(alignment: .leading, spacing: PFSpacing.xl) {
             loadStateView
 
-            Picker("Browse section", selection: $selectedSection) {
-                ForEach(LearnSection.allCases, id: \.self) { section in
-                    Text(section.rawValue).tag(section)
+            if sections.count > 1 {
+                Picker("Browse section", selection: $selectedSection) {
+                    ForEach(sections, id: \.self) { section in
+                        Text(section.rawValue).tag(section)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .accessibilityLabel("Browse section")
             }
-            .pickerStyle(.segmented)
-            .accessibilityLabel("Browse section")
 
             // The section content comes first, directly under the
             // picker, so switching sections visibly changes the
@@ -105,19 +123,21 @@ struct LearnSectionsView: View {
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Loading chapters")
-            } else if selectedSection == .courses {
+            } else if effectiveSection == .courses {
                 coursesSection
-            } else if selectedSection == .learningPaths {
+            } else if effectiveSection == .learningPaths {
                 learningPathsIntroSection
                 levelFilterSection
                 guidedPathsSection
                 pathwaysSection
             } else {
                 catalogueSection
-                librarySection
+                if showsLibrary {
+                    librarySection
+                }
             }
 
-            if selectedSection != .courses {
+            if showsExtras && effectiveSection != .courses {
                 interviewSection
 
                 practiceSection
@@ -390,7 +410,7 @@ struct LearnSectionsView: View {
                 }
             } else {
                 ForEach(filteredPaths) { path in
-                    NavigationLink(destination: PathDetailView(path: path)) {
+                    PFGuardedNavigationLink(key: path.id, destination: { PathDetailView(path: path) }) {
                         GuidedPathCardView(path: path)
                     }
                     .buttonStyle(PFCardButtonStyle())
@@ -427,7 +447,7 @@ struct LearnSectionsView: View {
                     .foregroundColor(.pfSecondaryText)
             } else {
                 ForEach(Array(ProductCatalogue.partProducts.enumerated()), id: \.element.id) { index, product in
-                    NavigationLink(destination: CourseDetailView(product: product, courseNumber: index + 1, chapterNumbers: PFChapterHelper.readingOrderChapterNumbers(for: product))) {
+                    PFGuardedNavigationLink(key: product.id, destination: { CourseDetailView(product: product, courseNumber: index + 1, chapterNumbers: PFChapterHelper.readingOrderChapterNumbers(for: product)) }) {
                         CourseIndexRow(product: product, courseNumber: index + 1, chapterNumbers: PFChapterHelper.readingOrderChapterNumbers(for: product))
                             .contentShape(Rectangle())
                     }
@@ -452,7 +472,7 @@ struct LearnSectionsView: View {
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                     ForEach(heldOut, id: \.self) { number in
-                        NavigationLink(destination: ChapterDetailView(chapterNumber: number)) {
+                        PFGuardedNavigationLink(key: "chapter-\(number)", destination: { ChapterDetailView(chapterNumber: number) }) {
                             ChapterRow(chapterNumber: number)
                                 .contentShape(Rectangle())
                         }
@@ -476,7 +496,7 @@ struct LearnSectionsView: View {
                 .foregroundColor(.pfSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(ContentService.guidedSessions) { session in
-                NavigationLink(destination: GuidedPathDetailView(session: session)) {
+                PFGuardedNavigationLink(key: "guided-session-\(session.id)", destination: { GuidedPathDetailView(session: session) }) {
                     PathwayCardView(session: session)
                 }
                 .buttonStyle(PFCardButtonStyle())
@@ -573,7 +593,7 @@ struct LearnSectionsView: View {
             ForEach(chapterBundles) { product in
                 catalogueCourseBand(product: product)
                 ForEach(Array(PFChapterHelper.readingOrderChapterNumbers(for: product).enumerated()), id: \.element) { index, number in
-                    NavigationLink(destination: ChapterDetailView(chapterNumber: number)) {
+                    PFGuardedNavigationLink(key: "chapter-\(number)", destination: { ChapterDetailView(chapterNumber: number) }) {
                         CatalogueChapterRow(chapterNumber: number, isAlternate: index % 2 == 1)
                     }
                     .buttonStyle(PFCardButtonStyle())
@@ -966,12 +986,15 @@ struct CourseDetailView: View {
             .map { $0.title }
     }
 
-    /// Who this course is for, from existing content only: the
-    /// journeys it belongs to, or, for the last course in reading
-    /// order (covered by no journey), its position after the
-    /// earlier courses. Nil when neither applies, so no block
+    /// Who this course is for: the catalogue audience line first,
+    /// else the journeys it belongs to, or, for the last course in
+    /// reading order (covered by no journey), its position after
+    /// the earlier courses. Nil when none applies, so no block
     /// renders with invented copy.
     private var audienceText: String? {
+        if !product.audience.isEmpty {
+            return product.audience
+        }
         if !journeyTitles.isEmpty {
             let joined = journeyTitles.joined(separator: ", ")
             let journeyWord = journeyTitles.count == 1 ? "journey" : "journeys"
@@ -1089,7 +1112,7 @@ struct CourseDetailView: View {
                         .foregroundColor(.pfSecondaryText)
                 } else {
                     ForEach(chapterNumbers, id: \.self) { number in
-                        NavigationLink(destination: ChapterDetailView(chapterNumber: number)) {
+                        PFGuardedNavigationLink(key: "chapter-\(number)", destination: { ChapterDetailView(chapterNumber: number) }) {
                             ChapterRow(chapterNumber: number)
                                 .contentShape(Rectangle())
                         }
@@ -1491,7 +1514,7 @@ struct ChapterDetailView: View {
                         .buttonStyle(PFCardButtonStyle())
                         .accessibilityLabel("\(lesson.title), locked. Tap to see the price.")
                     } else {
-                        NavigationLink(destination: LessonView(entry: lesson)) {
+                        PFGuardedNavigationLink(key: lesson.id, destination: { LessonView(entry: lesson) }) {
                             LessonRow(entry: lesson, showsLessonNumber: true)
                                 .contentShape(Rectangle())
                         }
@@ -1659,7 +1682,7 @@ struct GuideListView: View {
                         .foregroundColor(.pfSecondaryText)
                 }
                 ForEach(visibleEntries) { entry in
-                    NavigationLink(destination: EntryDetailView(entry: entry)) {
+                    PFGuardedNavigationLink(key: entry.id, destination: { EntryDetailView(entry: entry) }) {
                         EntryRow(entry: entry)
                     }
                     .buttonStyle(PFCardButtonStyle())
@@ -1714,7 +1737,7 @@ struct LabListView: View {
                         .foregroundColor(.pfSecondaryText)
                 }
                 ForEach(visibleLabs) { entry in
-                    NavigationLink(destination: EntryDetailView(entry: entry)) {
+                    PFGuardedNavigationLink(key: entry.id, destination: { EntryDetailView(entry: entry) }) {
                         EntryRow(entry: entry)
                     }
                     .buttonStyle(PFCardButtonStyle())
@@ -1773,7 +1796,7 @@ struct TestListView: View {
                         .foregroundColor(.pfSecondaryText)
                 }
                 ForEach(visibleTests) { entry in
-                    NavigationLink(destination: TestQuizView(entry: entry)) {
+                    PFGuardedNavigationLink(key: entry.id, destination: { TestQuizView(entry: entry) }) {
                         TestRow(entry: entry)
                     }
                     .buttonStyle(PFCardButtonStyle())
@@ -1907,7 +1930,11 @@ struct TestRow: View {
     var body: some View {
         PFCard {
             HStack(spacing: PFSpacing.md) {
-                PFIconTile(systemImage: "checkmark.circle.fill", size: 44)
+                if entry.thumbnail != nil {
+                    PFThumbnailView(thumbnailPath: entry.thumbnail, size: 44, cornerRadius: 12)
+                } else {
+                    PFIconTile(systemImage: "checkmark.circle.fill", size: 44)
+                }
                 VStack(alignment: .leading, spacing: PFSpacing.xs) {
                     Text(entry.title)
                         .font(.pfCardTitle)

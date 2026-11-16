@@ -609,6 +609,16 @@ private struct StudioExerciseDetailView: View {
             await loadDraftIfNeeded()
             await loadSourceIfNeeded()
         }
+        .task(id: draftText) {
+            // Autosave: typed text is saved 1 second after the
+            // last keystroke, so a crash never loses it. The
+            // keyed task cancels and restarts on every keystroke;
+            // saveCurrentDraft itself refuses to run before the
+            // stored draft has loaded.
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            saveCurrentDraft()
+        }
         .onDisappear {
             saveCurrentDraft()
         }
@@ -1616,6 +1626,16 @@ private struct StudioLessonWorkspaceView: View {
         }
         .task {
             await loadDraftIfNeeded()
+        }
+        .task(id: draftText) {
+            // Autosave: typed text is saved 1 second after the
+            // last keystroke, so a crash never loses it. The
+            // keyed task cancels and restarts on every keystroke;
+            // saveCurrentDraft itself refuses to run before the
+            // stored draft has loaded.
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            saveCurrentDraft()
         }
         .onDisappear {
             saveCurrentDraft()

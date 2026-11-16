@@ -297,11 +297,6 @@ struct WeeklyFreeCaseView: View {
                         .font(.pfSectionTitle)
                         .foregroundColor(.pfNavy)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let readLabel = ReadTime.label(for: situation.explain + " " + situation.takeaway) {
-                        Label(readLabel, systemImage: "clock")
-                            .font(.pfCaptionBold)
-                            .foregroundColor(.pfSecondaryText)
-                    }
                     HStack {
                         Text("Open this week's case")
                             .font(.pfBody.weight(.semibold))

@@ -13,6 +13,16 @@ import AVFoundation
 import Combine
 import MediaPlayer
 import UIKit
+import os
+
+/// Posted when access changes in a way that must stop playback
+/// everywhere: sign-out and account entitlement clearing. Every
+/// live AudioPlayerService stops on it, including players owned
+/// by views that are not on screen, so narration never keeps
+/// playing after a lock flip or a sign-out.
+extension Notification.Name {
+    static let pfStopAudioForAccessChange = Notification.Name("pf.audio.stopForAccessChange")
+}
 
 /// Plays lesson narration with automatic failover between audio hosts.
 final class AudioPlayerService: ObservableObject {
@@ -124,6 +134,29 @@ final class AudioPlayerService: ObservableObject {
     private var didFireFinished = false
     /// True if playback was active when an interruption began.
     private var wasPlayingBeforeInterruption = false
+    /// Increments on every stop(), so delayed work captured for an
+    /// older session can prove it is stale before acting.
+    private var playbackGeneration = 0
+    /// The playback generation captured when an interruption
+    /// began. An interruption that ends after a stop and a fresh
+    /// play must not resume the new session.
+    private var interruptionGeneration = 0
+    /// The instance that last published Now Playing info. The
+    /// lock-screen info is shared, and several per-view services
+    /// can exist across the navigation stack, so only the owning
+    /// instance may clear it.
+    private static var nowPlayingOwner: ObjectIdentifier?
+
+    /// Structured audio log, visible in Console and sysdiagnose.
+    /// One line per playback transition, with the generation and
+    /// the lesson id, so a crash report's breadcrumbs can be
+    /// matched against the playback sequence.
+    private let audioLog = Logger(subsystem: "PaymentsTrainingHub", category: "Audio")
+
+    private func logAudio(_ event: String, detail: String = "") {
+        let message = "gen=\(playbackGeneration) lesson=\(currentLessonID ?? "-") \(event)\(detail.isEmpty ? "" : " \(detail)")"
+        audioLog.info("\(message, privacy: .public)")
+    }
 
     var progress: Double {
         guard duration > 0 else { return 0 }
@@ -144,6 +177,18 @@ final class AudioPlayerService: ObservableObject {
             self,
             selector: #selector(handleInterruption(_:)),
             name: AVAudioSession.interruptionNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteChange(_:)),
+            name: AVAudioSession.routeChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAccessChange(_:)),
+            name: .pfStopAudioForAccessChange,
             object: nil
         )
     }
@@ -218,32 +263,68 @@ final class AudioPlayerService: ObservableObject {
             try session.setActive(true)
         } catch {
             // Without the category the silent switch may mute narration,
-            // but playback is still attempted.
+            // but playback is still attempted. The failure is logged:
+            // a silent session failure used to be undiagnosable.
+            logAudio("SESSION_CONFIG_FAILED", detail: error.localizedDescription)
         }
     }
 
     /// Pause on interruption begin (for example a phone call) and resume
-    /// on interruption end if playback was active before it.
+    /// on interruption end if playback was active before it. The
+    /// handler hops to the main thread first: notification delivery
+    /// has no thread guarantee, and it mutates published state.
+    /// An interruption that ends in a newer generation than the one
+    /// it began in never resumes: the learner stopped and started
+    /// something else in between.
     @objc private func handleInterruption(_ notification: Notification) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.handleInterruption(notification) }
+            return
+        }
         guard let userInfo = notification.userInfo,
               let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
         switch type {
         case .began:
+            interruptionGeneration = playbackGeneration
             wasPlayingBeforeInterruption = isPlaying
+            logAudio("INTERRUPTION_BEGAN")
             if isPlaying {
                 pause()
             }
         case .ended:
+            let wasPlaying = wasPlayingBeforeInterruption
+            let generationMatches = interruptionGeneration == playbackGeneration
+            wasPlayingBeforeInterruption = false
+            logAudio("INTERRUPTION_ENDED")
             guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else { return }
             let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
-            if options.contains(.shouldResume) && wasPlayingBeforeInterruption {
-                wasPlayingBeforeInterruption = false
+            if options.contains(.shouldResume), wasPlaying, generationMatches {
                 resume()
             }
         @unknown default:
             break
         }
+    }
+
+    /// Pause when the audio route loses its output device, for
+    /// example when headphones are unplugged. Without this,
+    /// narration keeps playing out loud through the speaker.
+    @objc private func handleRouteChange(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue),
+              reason == .oldDeviceUnavailable,
+              let previousRoute = userInfo[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription,
+              previousRoute.outputs.contains(where: { $0.portType == .headphones || $0.portType == .bluetoothA2DP || $0.portType == .bluetoothLE || $0.portType == .bluetoothHFP }),
+              isPlaying else { return }
+        DispatchQueue.main.async { [weak self] in self?.pause() }
+    }
+
+    /// Stop on an access change (sign-out, entitlement clearing),
+    /// even when this service's view is not on screen.
+    @objc private func handleAccessChange(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in self?.stop() }
     }
 
     // MARK: - Now Playing and remote commands
@@ -264,9 +345,15 @@ final class AudioPlayerService: ObservableObject {
     /// once a second while playing.
     func updateNowPlayingInfo() {
         guard player?.currentItem != nil else {
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            // The info dictionary is shared across the app, so
+            // only the instance that last published may clear it.
+            if Self.nowPlayingOwner == ObjectIdentifier(self) {
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+                Self.nowPlayingOwner = nil
+            }
             return
         }
+        Self.nowPlayingOwner = ObjectIdentifier(self)
         lastNowPlayingUpdate = Date()
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: currentLessonTitle ?? "Payments Training Hub lesson",
@@ -292,78 +379,102 @@ final class AudioPlayerService: ObservableObject {
     /// and playback rate. Each handler is a no-op returning
     /// .commandFailed when there is nothing to act on, so a command
     /// never fires twice or on a torn-down player.
+    /// Register remote commands with target/action, not closures:
+    /// teardown can then remove only this instance's targets.
+    /// Closure targets removed with removeTarget(nil) would strip
+    /// every other live service's targets too, and several
+    /// per-view services can exist across the navigation stack.
     private func setupRemoteCommands() {
         guard !remoteCommandsSetup else { return }
         remoteCommandsSetup = true
         let centre = MPRemoteCommandCenter.shared()
-        centre.playCommand.addTarget { [weak self] _ in
-            guard let self, self.player?.currentItem != nil else { return .commandFailed }
-            self.resume()
-            return .success
-        }
-        centre.pauseCommand.addTarget { [weak self] _ in
-            guard let self, self.isPlaying else { return .commandFailed }
-            self.pause()
-            return .success
-        }
-        centre.togglePlayPauseCommand.addTarget { [weak self] _ in
-            guard let self, self.player?.currentItem != nil else { return .commandFailed }
-            self.togglePlayPause()
-            return .success
-        }
-        centre.nextTrackCommand.addTarget { [weak self] _ in
-            guard let self, let next = self.onNextLesson else { return .commandFailed }
-            next()
-            return .success
-        }
-        centre.previousTrackCommand.addTarget { [weak self] _ in
-            guard let self, let previous = self.onPreviousLesson else { return .commandFailed }
-            previous()
-            return .success
-        }
+        centre.playCommand.addTarget(self, action: #selector(handleRemotePlay))
+        centre.pauseCommand.addTarget(self, action: #selector(handleRemotePause))
+        centre.togglePlayPauseCommand.addTarget(self, action: #selector(handleRemoteTogglePlayPause))
+        centre.nextTrackCommand.addTarget(self, action: #selector(handleRemoteNextTrack))
+        centre.previousTrackCommand.addTarget(self, action: #selector(handleRemotePreviousTrack))
         centre.skipForwardCommand.preferredIntervals = [15]
-        centre.skipForwardCommand.addTarget { [weak self] event in
-            guard let self, self.player?.currentItem != nil else { return .commandFailed }
-            let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 15
-            self.seekForward(interval)
-            return .success
-        }
+        centre.skipForwardCommand.addTarget(self, action: #selector(handleRemoteSkipForward(_:)))
         centre.skipBackwardCommand.preferredIntervals = [15]
-        centre.skipBackwardCommand.addTarget { [weak self] event in
-            guard let self, self.player?.currentItem != nil else { return .commandFailed }
-            let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 15
-            self.seekBackward(interval)
-            return .success
-        }
-        centre.changePlaybackPositionCommand.addTarget { [weak self] event in
-            guard let self, let positionEvent = event as? MPChangePlaybackPositionCommandEvent,
-                  self.player?.currentItem != nil else { return .commandFailed }
-            self.seek(to: positionEvent.positionTime)
-            return .success
-        }
+        centre.skipBackwardCommand.addTarget(self, action: #selector(handleRemoteSkipBackward(_:)))
+        centre.changePlaybackPositionCommand.addTarget(self, action: #selector(handleRemoteChangePosition(_:)))
         centre.changePlaybackRateCommand.supportedPlaybackRates = Self.playbackSpeeds.map { NSNumber(value: $0) }
-        centre.changePlaybackRateCommand.addTarget { [weak self] event in
-            guard let self, let rateEvent = event as? MPChangePlaybackRateCommandEvent else { return .commandFailed }
-            self.setSpeed(rateEvent.playbackRate)
-            return .success
-        }
+        centre.changePlaybackRateCommand.addTarget(self, action: #selector(handleRemoteChangeRate(_:)))
     }
 
-    /// Remove every remote-command target. Called once from deinit;
-    /// setupRemoteCommands() guards against adding them twice.
+    @objc private func handleRemotePlay() -> MPRemoteCommandHandlerStatus {
+        guard player?.currentItem != nil else { return .commandFailed }
+        resume()
+        return .success
+    }
+
+    @objc private func handleRemotePause() -> MPRemoteCommandHandlerStatus {
+        guard isPlaying else { return .commandFailed }
+        pause()
+        return .success
+    }
+
+    @objc private func handleRemoteTogglePlayPause() -> MPRemoteCommandHandlerStatus {
+        guard player?.currentItem != nil else { return .commandFailed }
+        togglePlayPause()
+        return .success
+    }
+
+    @objc private func handleRemoteNextTrack() -> MPRemoteCommandHandlerStatus {
+        guard let next = onNextLesson else { return .commandFailed }
+        next()
+        return .success
+    }
+
+    @objc private func handleRemotePreviousTrack() -> MPRemoteCommandHandlerStatus {
+        guard let previous = onPreviousLesson else { return .commandFailed }
+        previous()
+        return .success
+    }
+
+    @objc private func handleRemoteSkipForward(_ event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
+        guard player?.currentItem != nil else { return .commandFailed }
+        let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 15
+        seekForward(interval)
+        return .success
+    }
+
+    @objc private func handleRemoteSkipBackward(_ event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
+        guard player?.currentItem != nil else { return .commandFailed }
+        let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 15
+        seekBackward(interval)
+        return .success
+    }
+
+    @objc private func handleRemoteChangePosition(_ event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
+        guard let positionEvent = event as? MPChangePlaybackPositionCommandEvent,
+              player?.currentItem != nil else { return .commandFailed }
+        seek(to: positionEvent.positionTime)
+        return .success
+    }
+
+    @objc private func handleRemoteChangeRate(_ event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
+        guard let rateEvent = event as? MPChangePlaybackRateCommandEvent else { return .commandFailed }
+        setSpeed(rateEvent.playbackRate)
+        return .success
+    }
+
+    /// Remove this instance's remote-command targets only. Called
+    /// once from deinit; setupRemoteCommands() guards against
+    /// adding them twice.
     private func teardownRemoteCommands() {
         guard remoteCommandsSetup else { return }
         remoteCommandsSetup = false
         let centre = MPRemoteCommandCenter.shared()
-        centre.playCommand.removeTarget(nil)
-        centre.pauseCommand.removeTarget(nil)
-        centre.togglePlayPauseCommand.removeTarget(nil)
-        centre.nextTrackCommand.removeTarget(nil)
-        centre.previousTrackCommand.removeTarget(nil)
-        centre.skipForwardCommand.removeTarget(nil)
-        centre.skipBackwardCommand.removeTarget(nil)
-        centre.changePlaybackPositionCommand.removeTarget(nil)
-        centre.changePlaybackRateCommand.removeTarget(nil)
+        centre.playCommand.removeTarget(self)
+        centre.pauseCommand.removeTarget(self)
+        centre.togglePlayPauseCommand.removeTarget(self)
+        centre.nextTrackCommand.removeTarget(self)
+        centre.previousTrackCommand.removeTarget(self)
+        centre.skipForwardCommand.removeTarget(self)
+        centre.skipBackwardCommand.removeTarget(self)
+        centre.changePlaybackPositionCommand.removeTarget(self)
+        centre.changePlaybackRateCommand.removeTarget(self)
     }
 
     // MARK: - Loading
@@ -387,12 +498,15 @@ final class AudioPlayerService: ObservableObject {
         currentLessonTitle = title
         currentChapterTitle = chapterTitle
         failoverAttempted = false
+        wasPlayingBeforeInterruption = false
         isUsingFallback = false
         isPlayingDownloadedCopy = false
         errorMessage = nil
         isLoading = true
         resumePosition = 0
         resumedFromPosition = nil
+        logAudio("PLAY_REQUESTED", detail: fileName)
+        CrashBreadcrumbs.record("audio play \(lessonID ?? fileName)")
         if let lessonID {
             let saved = Self.savedPosition(for: lessonID)
             if saved > 0 {
@@ -430,11 +544,17 @@ final class AudioPlayerService: ObservableObject {
         self.player = player
         player.isMuted = isMuted
         didFireFinished = false
+        isLoading = true
+        // Delayed work below (failover timer, KVO) captures this
+        // generation and refuses to act when it has moved on, so a
+        // stop and a fresh play can never be undone by stale work
+        // from the session that came before.
+        let generation = playbackGeneration
 
         // Fail over if no playable data arrives within 8 seconds.
         failoverTimer?.invalidate()
         failoverTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: false) { [weak self] _ in
-            guard let self else { return }
+            guard let self, generation == self.playbackGeneration, self.currentItem === item else { return }
             if self.duration <= 0 && self.currentTime <= 0 {
                 self.tryFailover()
             }
@@ -461,6 +581,7 @@ final class AudioPlayerService: ObservableObject {
         statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] observedItem, _ in
             guard let self else { return }
             DispatchQueue.main.async {
+                guard generation == self.playbackGeneration else { return }
                 self.handleItemStatus(observedItem)
             }
         }
@@ -470,9 +591,14 @@ final class AudioPlayerService: ObservableObject {
             queue: .main
         ) { [weak self] time in
             guard let self else { return }
-            self.currentTime = time.seconds
+            // NaN/Infinity from a not-yet-loaded item would poison
+            // the seek slider and the position display: ignore it.
+            let seconds = time.seconds
+            guard seconds.isFinite else { return }
+            self.currentTime = seconds
             if let itemDuration = self.player?.currentItem?.duration, itemDuration.isNumeric {
-                self.duration = itemDuration.seconds
+                let durationSeconds = itemDuration.seconds
+                if durationSeconds.isFinite { self.duration = durationSeconds }
             }
             if self.duration > 0 {
                 self.failoverTimer?.invalidate()
@@ -506,11 +632,15 @@ final class AudioPlayerService: ObservableObject {
     /// Called whenever the item status changes. Starts playback the moment
     /// the item is ready, and fails over if the item cannot be played.
     private func handleItemStatus(_ item: AVPlayerItem) {
+        // A stale item's status change (dispatched before a stop)
+        // must never fail over the session that replaced it.
+        guard item === currentItem else { return }
         switch item.status {
         case .readyToPlay:
             let itemDuration = item.duration
             if itemDuration.isNumeric {
-                duration = itemDuration.seconds
+                let seconds = itemDuration.seconds
+                if seconds.isFinite { duration = seconds }
             }
             if pendingPlay {
                 beginPlayback()
@@ -529,18 +659,25 @@ final class AudioPlayerService: ObservableObject {
     private func beginPlayback() {
         guard pendingPlay, let player else { return }
         pendingPlay = false
+        let generation = playbackGeneration
         let start: () -> Void = { [weak self] in
-            guard let self, let player = self.player else { return }
+            guard let self, let player = self.player, generation == self.playbackGeneration else { return }
             player.rate = self.playbackRate
             self.isPlaying = true
             self.isLoading = false
             self.updateNowPlayingInfo()
+            self.logAudio("PLAY_STARTED")
         }
         if resumePosition > 0 {
             let position = resumePosition
             resumePosition = 0
-            player.seek(to: CMTime(seconds: position, preferredTimescale: 600)) { _ in
-                DispatchQueue.main.async { start() }
+            let upper = duration > 0 ? duration : max(0, position)
+            let clamped = min(max(0, position), upper)
+            player.seek(to: CMTime(seconds: clamped, preferredTimescale: 600)) { finished in
+                DispatchQueue.main.async {
+                    guard finished else { return }
+                    start()
+                }
             }
         } else {
             start()
@@ -550,15 +687,23 @@ final class AudioPlayerService: ObservableObject {
     // MARK: - Failover
 
     @objc private func playerItemFailed(_ notification: Notification) {
-        tryFailover()
+        // Notification delivery has no thread guarantee, and the
+        // item may belong to a session that has been replaced.
+        guard let item = notification.object as? AVPlayerItem, item === currentItem else { return }
+        DispatchQueue.main.async { [weak self] in self?.tryFailover() }
     }
 
     private func tryFailover() {
+        guard currentItem != nil else { return }
         guard let fileName = currentFileName, !failoverAttempted else {
             pendingPlay = false
             errorMessage = "Audio could not be loaded from either audio host. Check your connection and try again, or read the transcript below."
             isPlaying = false
             isLoading = false
+            logAudio("FAILOVER_EXHAUSTED")
+            if let lessonID = currentLessonID {
+                AnalyticsService.shared.recordAudioPlaybackFailed(lessonID: lessonID, failureCategory: "bothHostsFailed")
+            }
             return
         }
         if isPlayingDownloadedCopy {
@@ -569,6 +714,7 @@ final class AudioPlayerService: ObservableObject {
             // exactly as if both hosts had failed.
             isPlayingDownloadedCopy = false
             resumePosition = currentTime
+            logAudio("FAILOVER", detail: "downloaded to primary")
             if let url = ContentService.primaryAudioURL(fileName: fileName) {
                 startPlayback(url: url)
                 return
@@ -577,16 +723,25 @@ final class AudioPlayerService: ObservableObject {
             errorMessage = "Audio could not be loaded from either audio host. Check your connection and try again, or read the transcript below."
             isPlaying = false
             isLoading = false
+            logAudio("FAILOVER_EXHAUSTED")
+            if let lessonID = currentLessonID {
+                AnalyticsService.shared.recordAudioPlaybackFailed(lessonID: lessonID, failureCategory: "bothHostsFailed")
+            }
             return
         }
         failoverAttempted = true
         isUsingFallback = true
         resumePosition = currentTime
+        logAudio("FAILOVER", detail: "primary to fallback")
         guard let fallbackURL = ContentService.fallbackAudioURL(fileName: fileName) else {
             pendingPlay = false
             errorMessage = "Audio could not be loaded from either audio host. Check your connection and try again, or read the transcript below."
             isPlaying = false
             isLoading = false
+            logAudio("FAILOVER_EXHAUSTED")
+            if let lessonID = currentLessonID {
+                AnalyticsService.shared.recordAudioPlaybackFailed(lessonID: lessonID, failureCategory: "bothHostsFailed")
+            }
             return
         }
         startPlayback(url: fallbackURL)
@@ -599,6 +754,9 @@ final class AudioPlayerService: ObservableObject {
         pendingPlay = false
         player?.pause()
         isPlaying = false
+        isLoading = false
+        logAudio("PAUSE", detail: "at \(Int(currentTime))s")
+        CrashBreadcrumbs.record("audio pause \(currentLessonID ?? "") at \(Int(currentTime))s")
         updateNowPlayingInfo()
     }
 
@@ -610,6 +768,7 @@ final class AudioPlayerService: ObservableObject {
             seek(to: 0)
         }
         pendingPlay = true
+        logAudio("RESUME")
         if player?.currentItem?.status == .readyToPlay {
             beginPlayback()
         } else {
@@ -622,7 +781,11 @@ final class AudioPlayerService: ObservableObject {
     }
 
     func seek(to seconds: Double) {
-        let upper = duration > 0 ? duration : seconds
+        // A non-finite or negative seek is ignored: with no known
+        // duration the old upper bound could itself be negative,
+        // and a negative CMTime is meaningless to the player.
+        guard seconds.isFinite else { return }
+        let upper = duration > 0 ? duration : max(0, seconds)
         let clamped = min(max(0, seconds), upper)
         let time = CMTime(seconds: clamped, preferredTimescale: 600)
         player?.seek(to: time)
@@ -714,6 +877,11 @@ final class AudioPlayerService: ObservableObject {
     }
 
     func stop() {
+        // The generation moves first: every delayed callback
+        // captured for the session being torn down becomes stale
+        // before any other state changes.
+        playbackGeneration += 1
+        logAudio("STOP")
         savePosition()
         failoverTimer?.invalidate()
         failoverTimer = nil
@@ -731,37 +899,53 @@ final class AudioPlayerService: ObservableObject {
         currentLessonID = nil
         currentLessonTitle = nil
         currentChapterTitle = nil
+        currentFileName = nil
+        failoverAttempted = false
+        wasPlayingBeforeInterruption = false
+        isUsingFallback = false
         isPlaying = false
         isLoading = false
         isPlayingDownloadedCopy = false
         currentTime = 0
         duration = 0
         errorMessage = nil
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        if Self.nowPlayingOwner == ObjectIdentifier(self) {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            Self.nowPlayingOwner = nil
+        }
     }
 
     @objc private func playerItemFinished(_ notification: Notification) {
-        guard !didFireFinished else { return }
-        didFireFinished = true
-        pendingPlay = false
-        isPlaying = false
-        if let lessonID = currentLessonID {
-            clearSavedPosition(for: lessonID)
-            // Narration played to the end: record the real listening
-            // time (only a finished listen counts; partial listens
-            // are not recorded, so learning hours are never estimated).
-            if currentTime > 0 {
-                ProgressStore.shared.recordAudioListened(lessonID: lessonID, seconds: Int(currentTime))
-            }
-        }
-        updateNowPlayingInfo()
+        // Notification delivery has no thread guarantee, and the
+        // item may belong to a session that has been replaced.
+        // The generation is captured so the delayed finish
+        // callback never fires for a session that has moved on.
+        guard let item = notification.object as? AVPlayerItem, item === currentItem else { return }
+        let generation = playbackGeneration
         DispatchQueue.main.async { [weak self] in
-            self?.onFinished?()
+            guard let self, generation == self.playbackGeneration, !self.didFireFinished else { return }
+            self.didFireFinished = true
+            self.pendingPlay = false
+            self.isPlaying = false
+            if let lessonID = self.currentLessonID {
+                self.clearSavedPosition(for: lessonID)
+                // Narration played to the end: record the real listening
+                // time (only a finished listen counts; partial listens
+                // are not recorded, so learning hours are never estimated).
+                if self.currentTime > 0 {
+                    ProgressStore.shared.recordAudioListened(lessonID: lessonID, seconds: Int(self.currentTime))
+                }
+            }
+            self.logAudio("FINISHED")
+            self.updateNowPlayingInfo()
+            self.onFinished?()
         }
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self, name: AVAudioSession.interruptionNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: AVAudioSession.routeChangeNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .pfStopAudioForAccessChange, object: nil)
         teardownRemoteCommands()
         sleepTimer?.invalidate()
         sleepTimer = nil

@@ -335,7 +335,7 @@ struct PathDetailView: View {
                                 .font(.pfCaptionBold)
                                 .foregroundColor(.pfRoyal)
                                 .fixedSize(horizontal: false, vertical: true)
-                            Text("\(chapterLabel) in the \(path.title) sequence, step \(index + 1) of \(chapterBlocks.count) in this path.")
+                            Text("\(chapterLabel) in the \(path.title) sequence, step \(index + 1) of \(chapterBlocks.count) in this journey.")
                                 .font(.pfCaption)
                                 .foregroundColor(.pfSecondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -365,7 +365,7 @@ struct PathDetailView: View {
                 ProgressView("Loading exercises...")
             } else if labs.isEmpty {
                 PFCard {
-                    Text("No simulator exercises are listed for this path in the course catalogue.")
+                    Text("No simulator exercises are listed for this journey in the course catalogue.")
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -388,7 +388,7 @@ struct PathDetailView: View {
             PFSectionHeader(title: "Assessment checkpoints")
             PFCard {
                 VStack(alignment: .leading, spacing: PFSpacing.md) {
-                    Text("A 5-question quiz drawn from the real lesson quizzes in this path, scored against \(path.assessmentDimension.rawValue).")
+                    Text("A 5-question quiz drawn from the real lesson quizzes in this journey, scored against \(path.assessmentDimension.rawValue).")
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -401,7 +401,7 @@ struct PathDetailView: View {
                             .font(.pfCaptionBold)
                             .foregroundColor(.pfSecondaryText)
                     }
-                    Text("Checkpoints are optional practice. Completing this path does not require them.")
+                    Text("Checkpoints are optional practice. Completing this journey does not require them.")
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -432,7 +432,7 @@ struct PathDetailView: View {
                     .foregroundColor(.pfSecondaryText)
             } else {
                 ForEach(situations) { situation in
-                    NavigationLink(destination: SituationDetailView(situation: situation)) {
+                    PFGuardedNavigationLink(key: situation.id, destination: { SituationDetailLoaderView(situation: situation) }) {
                         SituationRow(situation: situation)
                     }
                     .buttonStyle(PFCardButtonStyle())
@@ -447,7 +447,7 @@ struct PathDetailView: View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
             PFSectionHeader(title: "Capstone")
             if let capstone = path.capstone(in: contentService) {
-                NavigationLink(destination: SituationDetailView(situation: capstone)) {
+                NavigationLink(destination: SituationDetailLoaderView(situation: capstone)) {
                     PFCard {
                         VStack(alignment: .leading, spacing: PFSpacing.sm) {
                             HStack(spacing: PFSpacing.sm) {
@@ -465,7 +465,7 @@ struct PathDetailView: View {
                                 Image(systemName: "chevron.right")
                                     .foregroundColor(.pfSecondaryText)
                             }
-                            Text("Work this real situation end to end. It is the final check for this path.")
+                            Text("Work this real situation end to end. It is the final check for this journey.")
                                 .font(.pfBody)
                                 .foregroundColor(.pfSecondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -485,7 +485,7 @@ struct PathDetailView: View {
 
     private var completionCriteriaSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: "How to complete this path")
+            PFSectionHeader(title: "How to complete this journey")
             PFCard {
                 VStack(alignment: .leading, spacing: PFSpacing.sm) {
                     Text(path.completionCriteria)
@@ -493,7 +493,7 @@ struct PathDetailView: View {
                         .foregroundColor(.pfNavy)
                         .fixedSize(horizontal: false, vertical: true)
                     if let weeks = estimatedWeeks {
-                        Text("At your weekly goal of \(progressStore.weeklyGoal) \(progressStore.weeklyGoal == 1 ? "lesson" : "lessons") a week, the \(lessons.count) lessons in this path take \(weeks) \(weeks == 1 ? "week" : "weeks").")
+                        Text("At your weekly goal of \(progressStore.weeklyGoal) \(progressStore.weeklyGoal == 1 ? "lesson" : "lessons") a week, the \(lessons.count) lessons in this journey take \(weeks) \(weeks == 1 ? "week" : "weeks").")
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -510,7 +510,7 @@ struct PathDetailView: View {
             PFSectionHeader(title: "Certificate")
             if path.certificateTitle == nil {
                 PFCard {
-                    Text("This path has no certificate. It prepares you for interviews; the five certificate paths are listed under Certificates on the Dashboard.")
+                    Text("This journey has no certificate. It prepares you for interviews; the five certificate journeys are listed under Certificates.")
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -538,7 +538,7 @@ struct PathDetailView: View {
                 .buttonStyle(PFCardButtonStyle())
             } else {
                 PFCard {
-                    Text("Complete all \(lessons.count) lessons in this path to earn the \(path.certificateTitle ?? "") certificate.")
+                    Text("Complete all \(lessons.count) lessons in this journey to earn the \(path.certificateTitle ?? "") certificate.")
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)

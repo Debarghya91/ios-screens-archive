@@ -298,7 +298,7 @@ enum SearchService {
         return messageCodeScore(
             title: entry.title.lowercased(),
             id: entry.id.lowercased(),
-            text: entry.text.lowercased(),
+            text: entry.searchText.lowercased(),
             codes: codes
         )
     }
@@ -369,7 +369,10 @@ enum SearchService {
         hits.reserveCapacity(64)
         for entry in entries {
             let title = entry.title.lowercased()
-            let text = entry.text.lowercased()
+            // The body haystack is the searchable text: full text
+            // plus tags and excerpt, so compact-index entries
+            // (no full text) still match on their tags.
+            let text = entry.searchText.lowercased()
             let lowerID = entry.id.lowercased()
             // Built once per entry, shared by every needle below.
             // The body list is the first 300 words only, exactly
@@ -461,7 +464,8 @@ enum SearchService {
     /// Situations use the full data file level first, then a text
     /// hint, defaulting to Core the same way situation(from:) does.
     /// Other types only get a level when their text names one.
-    /// Title and text only, never invented. The situations map is
+    /// Title and searchable text only (full text plus tags and
+    /// excerpt), never invented. The situations map is
     /// prebuilt by the caller, so this is one dictionary lookup
     /// instead of a linear scan of the full situations file per
     /// entry. Moved here from SearchView so the filter rule is
@@ -475,12 +479,12 @@ enum SearchService {
                 default: return .core
                 }
             }
-            let lower = entry.text.lowercased()
+            let lower = entry.searchText.lowercased()
             if lower.contains("foundation") { return .foundation }
             if lower.contains("advanced") { return .advanced }
             return .core
         }
-        let lower = entry.text.lowercased()
+        let lower = entry.searchText.lowercased()
         if lower.contains("foundation") { return .foundation }
         if lower.contains("advanced") { return .advanced }
         return nil
@@ -705,7 +709,7 @@ enum SearchService {
     /// names none. Whole-word matching, so a short rail never matches
     /// inside another word. Title and text only, never invented.
     static func rail(for entry: SearchEntry) -> String? {
-        let haystack = entry.title + " " + entry.text
+        let haystack = entry.title + " " + entry.searchText
         let range = NSRange(haystack.startIndex..., in: haystack)
         for rail in railRegexes {
             for regex in rail.regexes where regex.firstMatch(in: haystack, options: [], range: range) != nil {

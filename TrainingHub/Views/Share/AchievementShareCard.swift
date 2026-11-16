@@ -213,7 +213,7 @@ struct AchievementShareContent: Hashable {
     /// cards carry no certificate claim and no footer.
     var certificateDisclaimer: String? {
         guard kind == .certificate else { return nil }
-        return "Certificate of Completion. This certifies completion of the named course or path. It is not an accredited qualification."
+        return "Certificate of Completion. This certifies completion of the named course or journey. It is not an accredited qualification."
     }
 
     /// The plain-text share: heading, title, name, date, score,

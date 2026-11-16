@@ -227,6 +227,55 @@ private func investigationLedgerSide(for line: String) -> String? {
 /// lets the learner pick another difficulty before starting, and the
 /// rebuild callback rebuilds the case through the engine. Without a
 /// callback the case is returned unchanged, so the briefing keeps
+// MARK: - Run retention
+
+/// A saved in-progress investigation run, keyed by case id. The
+/// view's journey state lives in @State, which dies when the view
+/// is popped; the holder keeps the run alive in memory so popping
+/// out and re-entering the same case resumes where the learner
+/// left off instead of restarting at the briefing. Completed
+/// runs (a report exists) are never restored: re-entering a
+/// finished case starts fresh.
+private struct InvestigationRunSnapshot {
+    let caseID: String
+    let currentCase: InvestigationCase
+    let step: InvestigationJourneyStep
+    let run: InvestigationRun
+    let selectedEvidenceID: String?
+    let statusRequested: Bool
+    let leadingHypothesisID: String?
+    let decisionIndex: Int
+    let solvedDecisionIDs: Set<String>
+    let pickedOption: Int?
+    let pickedWasBest: Bool
+    let triedWrong: Set<Int>
+    let wrongPickSummaries: [String]
+    let diagnosisHypothesisID: String?
+    let citedEvidenceIDs: Set<String>
+    let report: InvestigationReport?
+    let didRecordCompletion: Bool
+}
+
+private final class InvestigationRunHolder {
+    static let shared = InvestigationRunHolder()
+    private var snapshots: [String: InvestigationRunSnapshot] = [:]
+
+    /// The saved run for a case, or nil when there is none or the
+    /// saved run completed (a report exists).
+    func snapshot(for caseID: String) -> InvestigationRunSnapshot? {
+        guard let stored = snapshots[caseID], stored.report == nil else { return nil }
+        return stored
+    }
+
+    func save(_ snapshot: InvestigationRunSnapshot) {
+        snapshots[snapshot.caseID] = snapshot
+    }
+
+    func clear(for caseID: String) {
+        snapshots.removeValue(forKey: caseID)
+    }
+}
+
 /// showing the difficulty the case was built with.
 struct InvestigationExperienceView: View {
     @EnvironmentObject private var storeManager: StoreManager
@@ -274,11 +323,28 @@ struct InvestigationExperienceView: View {
         isWeeklyFreeCase: Bool,
         onDifficultyChange: @escaping (InvestigationDifficulty) -> InvestigationCase
     ) {
-        _currentCase = State(initialValue: investigation)
+        // Resume an in-progress run for this case when the holder
+        // has one; a fresh entry starts at the briefing.
+        let snapshot = InvestigationRunHolder.shared.snapshot(for: investigation.id)
+        _currentCase = State(initialValue: snapshot?.currentCase ?? investigation)
         self.isFreeSample = isFreeSample
         self.isWeeklyFreeCase = isWeeklyFreeCase
         self.onDifficultyChange = onDifficultyChange
-        _run = State(initialValue: investigationEmptyRun())
+        _step = State(initialValue: snapshot?.step ?? .briefing)
+        _run = State(initialValue: snapshot?.run ?? investigationEmptyRun())
+        _selectedEvidenceID = State(initialValue: snapshot?.selectedEvidenceID ?? nil)
+        _statusRequested = State(initialValue: snapshot?.statusRequested ?? false)
+        _leadingHypothesisID = State(initialValue: snapshot?.leadingHypothesisID ?? nil)
+        _decisionIndex = State(initialValue: snapshot?.decisionIndex ?? 0)
+        _solvedDecisionIDs = State(initialValue: snapshot?.solvedDecisionIDs ?? [])
+        _pickedOption = State(initialValue: snapshot?.pickedOption ?? nil)
+        _pickedWasBest = State(initialValue: snapshot?.pickedWasBest ?? false)
+        _triedWrong = State(initialValue: snapshot?.triedWrong ?? [])
+        _wrongPickSummaries = State(initialValue: snapshot?.wrongPickSummaries ?? [])
+        _diagnosisHypothesisID = State(initialValue: snapshot?.diagnosisHypothesisID ?? nil)
+        _citedEvidenceIDs = State(initialValue: snapshot?.citedEvidenceIDs ?? [])
+        _report = State(initialValue: snapshot?.report ?? nil)
+        _didRecordCompletion = State(initialValue: snapshot?.didRecordCompletion ?? false)
     }
 
     /// The Investigation Lab gate, re-checked on every render
@@ -392,11 +458,29 @@ struct InvestigationExperienceView: View {
                 // at the top, never at the restored offset.
                 proxy.scrollTo(journeyTopID, anchor: .top)
             }
+            .onDisappear {
+                saveSnapshot()
+            }
             .pfProtectedContent()
             .background(Color.pfBackground)
             .pfTabBarClearance()
             .navigationTitle("Investigation")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(step != .briefing)
+            .toolbar {
+                if step != .briefing {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button {
+                            previousStep()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "chevron.left")
+                                Text("Back")
+                            }
+                        }
+                    }
+                }
+            }
             .sheet(isPresented: $showCheckout) {
                 CheckoutView()
             }
@@ -659,12 +743,63 @@ struct InvestigationExperienceView: View {
         step = .report
     }
 
+    /// Save the in-progress run to the holder, so popping out and
+    /// re-entering the same case resumes it. @State survives
+    /// in-stack disappearances, so saving on disappear covers the
+    /// pop case without any extra write path.
+    private func saveSnapshot() {
+        InvestigationRunHolder.shared.save(InvestigationRunSnapshot(
+            caseID: currentCase.id,
+            currentCase: currentCase,
+            step: step,
+            run: run,
+            selectedEvidenceID: selectedEvidenceID,
+            statusRequested: statusRequested,
+            leadingHypothesisID: leadingHypothesisID,
+            decisionIndex: decisionIndex,
+            solvedDecisionIDs: solvedDecisionIDs,
+            pickedOption: pickedOption,
+            pickedWasBest: pickedWasBest,
+            triedWrong: triedWrong,
+            wrongPickSummaries: wrongPickSummaries,
+            diagnosisHypothesisID: diagnosisHypothesisID,
+            citedEvidenceIDs: citedEvidenceIDs,
+            report: report,
+            didRecordCompletion: didRecordCompletion
+        ))
+    }
+
+    /// Step back within the journey, preserving all run state.
+    /// Used by the navigation-bar Back control while the learner
+    /// is past the briefing; the system back button is hidden
+    /// there, so Back can never pop the whole experience and
+    /// lose the run.
+    private func previousStep() {
+        switch step {
+        case .briefing:
+            break
+        case .evidence:
+            step = .briefing
+        case .hypotheses:
+            step = .evidence
+        case .decisions:
+            step = .hypotheses
+        case .diagnosis:
+            step = .decisions
+        case .report:
+            step = .diagnosis
+        }
+    }
+
     /// Record the completion once. The store owns the merge: the
     /// best overall score is kept and the completion count grows
     /// by one.
     private func recordCompletion(report: InvestigationReport) {
         guard !didRecordCompletion else { return }
         didRecordCompletion = true
+        // A completed run is never restored: clear the saved run
+        // so re-entering this case starts fresh.
+        InvestigationRunHolder.shared.clear(for: currentCase.id)
         InvestigationStore.shared.recordCompletion(result: report)
     }
 }

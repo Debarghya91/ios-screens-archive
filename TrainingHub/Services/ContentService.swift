@@ -26,7 +26,25 @@ final class ContentService: ObservableObject {
 
     static let siteBase = URL(string: "https://www.paymentstraininghub.com")!
     static let searchIndexURL = URL(string: "https://www.paymentstraininghub.com/assets/search-index.json")!
+    /// The compact search index: the same document shape at about
+    /// half the size, with tags and excerpts instead of full text
+    /// for lessons and situations. Tried first by loadSearchIndex;
+    /// any failure falls back to the full index, so the app works
+    /// before and after this file deploys.
+    static let compactSearchIndexURL = URL(string: "https://www.paymentstraininghub.com/assets/search-index-compact.json")!
     static let situationsDataURL = URL(string: "https://www.paymentstraininghub.com/assets/situations-data.js")!
+    /// The compact situations index: one row per case (id, title,
+    /// level, stage, chunk), no full text. The Payment Cases list
+    /// renders from this alone; full case detail comes from one
+    /// chunk file per case, fetched only when the case opens.
+    static let situationsIndexURL = URL(string: "https://www.paymentstraininghub.com/assets/situations-index.json")!
+
+    /// The detail chunk file for one chunk number: a bare JSON
+    /// array of full situation items. Chunk numbers come from the
+    /// index rows, never from arithmetic on the row position.
+    static func situationsChunkURL(chunk: Int) -> URL {
+        siteBase.appendingPathComponent("assets/situations-chunks/chunk-\(String(format: "%02d", chunk)).json")
+    }
     static let weeklyCasesDataURL = URL(string: "https://www.paymentstraininghub.com/assets/weekly-cases-data.js")!
     static let agendasURL = URL(string: "https://www.paymentstraininghub.com/assets/agendas.json")!
     static let primaryAudioBase = "https://paymentforge-audio.pages.dev/audio/"
@@ -76,6 +94,7 @@ final class ContentService: ObservableObject {
     /// no downloads, no audio, no user data.
     static let searchIndexCacheFile = "pf-search-index.json"
     static let situationsCacheFile = "pf-situations-data.js"
+    static let situationsIndexCacheFile = "pf-situations-index.json"
     static let weeklyCasesCacheFile = "pf-weekly-cases-data.js"
     static let agendasCacheFile = "pf-agendas.json"
 
@@ -138,6 +157,20 @@ final class ContentService: ObservableObject {
     @Published private(set) var fullSituations: [FullSituationItem]? = nil
     @Published private(set) var isLoadingSituations = false
 
+    /// The compact situations index (one row per case, no full
+    /// text), when it has loaded. Nil until the fetch succeeds;
+    /// the list falls back to the search index entries so it
+    /// never goes empty. Full case detail is fetched per case
+    /// through situationDetail(id:), never by downloading the
+    /// whole file first.
+    @Published private(set) var situationsIndex: SituationsIndexDoc? = nil
+    @Published private(set) var isLoadingSituationsIndex = false
+
+    /// Fetched detail chunks, by chunk number, for this launch
+    /// only. Chunks are small (28 cases each) and re-fetching one
+    /// is cheap, so they are not written to the disk cache.
+    private var chunkCache: [Int: [FullSituationItem]] = [:]
+
     /// The dedicated weekly-case list (52 items, in week order),
     /// when it has loaded. Nil until the fetch succeeds; the
     /// weekly view falls back to the catalogue pick while it is
@@ -159,8 +192,14 @@ final class ContentService: ObservableObject {
 
     // MARK: - Search index
 
-    /// Load the search index (1,625 entries). Call once at launch.
-    /// Bounded retry (3 attempts, exponential backoff). When every
+    /// Load the search index (1,835 entries). Call once at launch.
+    /// The compact index is tried first, once, with no retry: it
+    /// is about half the size and carries everything the lists
+    /// and search need. Any failure (404 before deployment,
+    /// network, decode) falls through to the full index with the
+    /// bounded retry below, so the app works before and after the
+    /// compact file deploys, with no rebuild. Bounded retry (3
+    /// attempts, exponential backoff) on the full file. When every
     /// attempt fails, the last cached catalogue is used instead, so
     /// the app shows saved content with an offline note rather than
     /// a blank screen; only when there is no cache at all does the
@@ -168,7 +207,7 @@ final class ContentService: ObservableObject {
     /// once: the guard below means a loaded index is never fetched
     /// or decoded again. Decoding, the supplemental merge and the
     /// cache read and write all run off the main thread: this
-    /// function is MainActor, and decoding 1,625 entries inline
+    /// function is MainActor, and decoding 1,835 entries inline
     /// used to freeze the interface at launch and on every Retry.
     /// Only the published-state assignments happen on the main
     /// actor, after each background step suspends back here.
@@ -177,6 +216,25 @@ final class ContentService: ObservableObject {
         if searchIndex != nil || isLoadingIndex { return }
         isLoadingIndex = true
         indexError = nil
+        do {
+            let (data, response) = try await URLSession.shared.data(from: Self.compactSearchIndexURL)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                throw ContentError.badResponse
+            }
+            let decoded = try await Self.decodeSearchIndexOffMainThread(data)
+            searchIndex = decoded
+            applyAgendasToIndex()
+            await Self.saveCacheOffMainThread(data, fileName: Self.searchIndexCacheFile)
+            isShowingCachedContent = false
+            isLoadingIndex = false
+            return
+        } catch {
+            if Task.isCancelled {
+                isLoadingIndex = false
+                return
+            }
+            // Fall through to the full index below.
+        }
         for attempt in 0..<3 {
             do {
                 let (data, response) = try await URLSession.shared.data(from: Self.searchIndexURL)
@@ -191,6 +249,10 @@ final class ContentService: ObservableObject {
                 isLoadingIndex = false
                 return
             } catch {
+                if Task.isCancelled {
+                    isLoadingIndex = false
+                    return
+                }
                 if attempt < 2 {
                     try? await Task.sleep(nanoseconds: UInt64(500_000_000 * (1 << attempt)))
                 }
@@ -692,6 +754,97 @@ final class ContentService: ObservableObject {
         // to the search-index entries, as in the public-file path.
     }
 
+    // MARK: - Situations index and detail chunks
+
+    /// Load the compact situations index (one row per case, no
+    /// full text). The Payment Cases list renders from this alone,
+    /// so the full situations file is never downloaded just to
+    /// show the list. Mirrors loadSearchIndex: bounded retry (3
+    /// attempts, exponential backoff) with a disk-cache fallback.
+    /// On failure situationsIndex stays nil and callers fall back
+    /// to the search index entries, so the list never goes empty.
+    /// The guard below means a loaded index is never fetched or
+    /// decoded again; a second caller while a load is in flight
+    /// returns at once and reads the published state, exactly as
+    /// loadSearchIndex behaves.
+    @MainActor
+    func loadSituationsIndex() async {
+        if situationsIndex != nil || isLoadingSituationsIndex { return }
+        isLoadingSituationsIndex = true
+        defer { isLoadingSituationsIndex = false }
+        for attempt in 0..<3 {
+            do {
+                let (data, response) = try await URLSession.shared.data(from: Self.situationsIndexURL)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    throw ContentError.badResponse
+                }
+                let decoded = try JSONDecoder().decode(SituationsIndexDoc.self, from: data)
+                situationsIndex = decoded
+                Self.saveCache(data, fileName: Self.situationsIndexCacheFile)
+                return
+            } catch {
+                if Task.isCancelled { return }
+                if attempt < 2 {
+                    try? await Task.sleep(nanoseconds: UInt64(500_000_000 * (1 << attempt)))
+                }
+            }
+        }
+        if let cached = Self.loadCache(fileName: Self.situationsIndexCacheFile),
+           let decoded = try? JSONDecoder().decode(SituationsIndexDoc.self, from: cached) {
+            situationsIndex = decoded
+            isShowingCachedContent = true
+        }
+    }
+
+    /// The full detail for one case, fetched only when the case is
+    /// opened. Order: the already-loaded full list when present;
+    /// the case's detail chunk, found through the situations
+    /// index; the full situations file as a last resort (index
+    /// missing, chunk missing, or the case not in its chunk).
+    /// Returns nil when the case is found nowhere, so the caller
+    /// shows its error state instead of an empty detail.
+    @MainActor
+    func situationDetail(id: String) async -> FullSituationItem? {
+        if let found = fullSituations?.first(where: { $0.id == id }) { return found }
+        await loadSituationsIndex()
+        if let entry = situationsIndex?.items.first(where: { $0.id == id }),
+           let chunk = entry.chunk,
+           let items = await loadSituationChunk(chunk),
+           let found = items.first(where: { $0.id == id }) {
+            return found
+        }
+        await loadFullSituations()
+        return fullSituations?.first(where: { $0.id == id })
+    }
+
+    /// One detail chunk file: a bare JSON array of full situation
+    /// items. Bounded retry (3 attempts, exponential backoff).
+    /// Fetched chunks are kept in memory for this launch only.
+    /// Nil when the chunk cannot be fetched or decoded; the
+    /// caller (situationDetail) falls back to the full file.
+    @MainActor
+    private func loadSituationChunk(_ chunk: Int) async -> [FullSituationItem]? {
+        if let cached = chunkCache[chunk] { return cached }
+        for attempt in 0..<3 {
+            do {
+                let (data, response) = try await URLSession.shared.data(from: Self.situationsChunkURL(chunk: chunk))
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    throw ContentError.badResponse
+                }
+                let decoded = try JSONDecoder().decode([FullSituationItem].self, from: data)
+                let items = Self.dedupedSituations(decoded)
+                chunkCache[chunk] = items
+                return items
+            } catch {
+                if Task.isCancelled { return nil }
+                if attempt < 2 {
+                    try? await Task.sleep(nanoseconds: UInt64(500_000_000 * (1 << attempt)))
+                }
+            }
+        }
+        return nil
+    }
+
     /// Load the dedicated weekly-case list (52 items in week
     /// order, with the full explain text and visual). Mirrors
     /// loadFullSituations: the file is a JS assignment
@@ -833,7 +986,11 @@ final class ContentService: ObservableObject {
                 type: entry.type,
                 text: entry.text,
                 agenda: agenda,
-                thumbnail: thumbnail
+                thumbnail: thumbnail,
+                tags: entry.tags,
+                excerpt: entry.excerpt,
+                chapter: entry.chapter,
+                domain: entry.domain
             )
         }
         guard changed else { return }

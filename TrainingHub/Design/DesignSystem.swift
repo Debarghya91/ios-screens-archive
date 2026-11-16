@@ -827,6 +827,61 @@ struct PFScrollToTopModifier<Value: Equatable>: ViewModifier {
 // metrics (md paragraph spacing, 4pt line spacing) for its
 // array-paragraph content and is left unchanged.
 
+// MARK: - Guarded navigation
+
+/// One shared navigation debouncer: a second tap on the same
+/// destination within half a second is ignored, so a rapid double
+/// tap never pushes the same screen twice. The key is the
+/// destination identity (a content id or a unique row title), so
+/// tapping two different rows in quick succession still works.
+/// Main-actor confined: every check runs on the main thread, so
+/// the check and the record cannot interleave.
+@MainActor
+final class PFNavigationDebouncer: ObservableObject {
+    static let shared = PFNavigationDebouncer()
+    private var lastKey: String?
+    private var lastFire = Date.distantPast
+
+    func allow(key: String) -> Bool {
+        let now = Date()
+        if key == lastKey, now.timeIntervalSince(lastFire) < 0.5 { return false }
+        lastKey = key
+        lastFire = now
+        return true
+    }
+}
+
+/// A NavigationLink that ignores double taps: the visible control
+/// is a Button guarded by PFNavigationDebouncer, and the push
+/// itself runs through a hidden link driven by isActive. Call
+/// sites keep their existing buttonStyle on this wrapper: the
+/// style propagates to the inner Button, so card rows keep their
+/// press effect and text rows keep theirs. This gives the 500ms
+/// debounce; true single-top (one destination instance per stack)
+/// needs path-based stacks and is a larger refactor.
+struct PFGuardedNavigationLink<Destination: View, Label: View>: View {
+    let key: String
+    let destination: Destination
+    let label: Label
+    @State private var isActive = false
+
+    init(key: String, @ViewBuilder destination: () -> Destination, @ViewBuilder label: () -> Label) {
+        self.key = key
+        self.destination = destination()
+        self.label = label()
+    }
+
+    var body: some View {
+        Button {
+            guard PFNavigationDebouncer.shared.allow(key: key) else { return }
+            isActive = true
+        } label: { label }
+        .background(
+            NavigationLink(destination: destination, isActive: $isActive) { EmptyView() }
+        )
+    }
+}
+
 /// Splits long text into readable paragraphs without changing
 /// any wording. Line breaks mark paragraph boundaries first; a
 /// long block is then split into sentence groups (at most three

@@ -137,10 +137,16 @@ struct LearningPath: Identifiable, Hashable {
     }
 }
 
-/// Resolve one situation by id: full data first, search index fallback.
+/// Resolve one situation by id: full data first, compact index
+/// row second (authoritative stage and level, no body text),
+/// search index fallback last.
 func pfSituation(id: String, in service: ContentService) -> Situation? {
     if let full = service.fullSituations?.first(where: { $0.id == id }) {
         return situation(fromFull: full)
+    }
+    if let row = service.situationsIndex?.items.first(where: { $0.id == id }) {
+        let entry = service.allSituations.first(where: { $0.id == id })
+        return situation(fromIndex: row, indexEntry: entry)
     }
     if let entry = service.allSituations.first(where: { $0.id == id }) {
         return situation(from: entry)

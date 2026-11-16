@@ -399,7 +399,7 @@ struct DailyChallengeView: View {
                         // shows the locked gate in the detail, which
                         // is the conservative option. Free samples
                         // open fully, as they do everywhere.
-                        NavigationLink(destination: SituationDetailView(situation: situation)) {
+                        NavigationLink(destination: SituationDetailLoaderView(situation: situation)) {
                             Text("Open the full situation")
                                 .font(.pfBody.weight(.semibold))
                                 .foregroundColor(.pfRoyal)

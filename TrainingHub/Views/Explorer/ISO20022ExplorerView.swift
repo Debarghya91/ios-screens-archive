@@ -36,7 +36,14 @@ enum ISO20022ExplorerCopy {
 struct ISO20022ExplorerView: View {
     @EnvironmentObject private var contentService: ContentService
 
-    @State private var selectedFamily: ISO20022Family? = nil
+    /// The selected family, kept in scene storage so the filter
+    /// survives process death and relaunch. Stored as the raw
+    /// family string; an empty string means all families.
+    @SceneStorage("iso20022.selectedFamily") private var selectedFamilyRaw: String = ""
+    private var selectedFamily: ISO20022Family? {
+        get { ISO20022Family(rawValue: selectedFamilyRaw) }
+        set { selectedFamilyRaw = newValue?.rawValue ?? "" }
+    }
     @State private var initialDetailActive = false
     @State private var didOpenInitialMessage = false
 

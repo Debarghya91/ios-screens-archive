@@ -76,9 +76,27 @@ struct PaymentLifecycleSimulatorView: View {
     init() {}
 
     @EnvironmentObject private var storeManager: StoreManager
-    @State private var mode: SimulatorMode = .guided
-    @State private var selectedSample: SamplePayment = SamplePaymentCatalogue.defaultSample
-    @State private var currentStage: PaymentLifecycleStage = .initiation
+    /// Mode, sample and stage live in scene storage, so the
+    /// simulator setup survives process death and relaunch. The
+    /// journey itself stays in @State: it is a live run, and a
+    /// restored stage over a fresh journey would mislead. The
+    /// summary sheet stays in @State for the same reason: it is
+    /// only meaningful with the journey it summarises.
+    @SceneStorage("simulator.mode") private var modeRaw: String = SimulatorMode.guided.rawValue
+    private var mode: SimulatorMode {
+        get { SimulatorMode(rawValue: modeRaw) ?? .guided }
+        set { modeRaw = newValue.rawValue }
+    }
+    @SceneStorage("simulator.selectedSampleID") private var selectedSampleID: String = SamplePaymentCatalogue.defaultSample.id
+    private var selectedSample: SamplePayment {
+        get { SamplePaymentCatalogue.samples.first { $0.id == selectedSampleID } ?? SamplePaymentCatalogue.defaultSample }
+        set { selectedSampleID = newValue.id }
+    }
+    @SceneStorage("simulator.currentStage") private var currentStageRaw: Int = PaymentLifecycleStage.initiation.rawValue
+    private var currentStage: PaymentLifecycleStage {
+        get { PaymentLifecycleStage(rawValue: currentStageRaw) ?? .initiation }
+        set { currentStageRaw = newValue.rawValue }
+    }
     @State private var journey = LifecycleJourney()
     @State private var showingSummary: Bool = false
     @State private var showCheckout = false
@@ -222,7 +240,7 @@ struct PaymentLifecycleSimulatorView: View {
     private var modePicker: some View {
         VStack(alignment: .leading, spacing: PFSpacing.sm) {
             PFSectionHeader(title: "How to run it")
-            Picker("Simulator mode", selection: $mode) {
+            Picker("Simulator mode", selection: Binding(get: { mode }, set: { mode = $0 })) {
                 ForEach(SimulatorMode.allCases) { mode in
                     Text(mode.title).tag(mode)
                 }

@@ -59,32 +59,33 @@ struct DashboardView: View {
     /// pushed detail views have no menu button and keep a clean back button.
     @Binding var isDrawerOpen: Bool
 
-    /// Optional tab selection, for the empty-state action. MainTabView
-    /// always passes $selectedTab, so the action switches to Home.
-    var selectedTab: Binding<Int>?
+    /// Called when the empty-state "Start learning" action is
+    /// tapped. MainTabView routes it through the central tab
+    /// navigation (switch to Home, land on the course
+    /// browsing), so this view never writes the tab selection
+    /// itself. Nil when no route is wired, in which case the
+    /// action button is not shown.
+    var onStartLearning: (() -> Void)? = nil
 
-    /// The Home section the empty-state action lands on. MainTabView
-    /// passes its target binding, so "Start learning" switches to
-    /// Home and lands on the course browsing below the Continue
-    /// learning block. There is no Learn tab any more.
-    var homeSectionTarget: Binding<HomeSectionTarget?>?
+    /// Reselect tick from the tab bar: bumped when the learner
+    /// taps the My Progress tab while already on it. Scrolls
+    /// back to the top.
+    var tabReselectTick: Int = 0
 
-    /// The empty-state action: switch to Home and land on the
-    /// course browsing. Both bindings are set together, so Home
-    /// scrolls to the browsing section on arrival.
+    /// The empty-state action: ask the parent to switch to Home
+    /// and land on the course browsing.
     private func startLearning() {
-        selectedTab?.wrappedValue = 0
-        homeSectionTarget?.wrappedValue = .learn(.courses)
+        onStartLearning?()
     }
 
     init(
         isDrawerOpen: Binding<Bool>,
-        selectedTab: Binding<Int>? = nil,
-        homeSectionTarget: Binding<HomeSectionTarget?>? = nil
+        onStartLearning: (() -> Void)? = nil,
+        tabReselectTick: Int = 0
     ) {
         self._isDrawerOpen = isDrawerOpen
-        self.selectedTab = selectedTab
-        self.homeSectionTarget = homeSectionTarget
+        self.onStartLearning = onStartLearning
+        self.tabReselectTick = tabReselectTick
     }
 
     @State private var showCheckout = false
@@ -479,7 +480,17 @@ struct DashboardView: View {
             .onAppear {
                 // The scroll rule: Back and tab switches land
                 // at the top, never at the restored offset.
-                proxy.scrollTo("dashboardTop", anchor: .top)
+                // Dispatched async so the scroll lands after
+                // layout, the same form PFScrollToTopModifier
+                // uses.
+                DispatchQueue.main.async {
+                    proxy.scrollTo("dashboardTop", anchor: .top)
+                }
+            }
+            .onChange(of: tabReselectTick) { _, _ in
+                DispatchQueue.main.async {
+                    proxy.scrollTo("dashboardTop", anchor: .top)
+                }
             }
             .navigationTitle("My Progress")
             .navigationBarTitleDisplayMode(.inline)
@@ -610,7 +621,11 @@ struct DashboardView: View {
                     PFCard {
                         VStack(alignment: .leading, spacing: PFSpacing.md) {
                             HStack(spacing: PFSpacing.md) {
-                                PFIconTile(systemImage: "play.fill", size: 52)
+                                if recommendation.lesson.thumbnail != nil {
+                                    PFThumbnailView(thumbnailPath: recommendation.lesson.thumbnail, size: 52, cornerRadius: 12)
+                                } else {
+                                    PFIconTile(systemImage: "play.fill", size: 52)
+                                }
                                 VStack(alignment: .leading, spacing: PFSpacing.xs) {
                                     Text(recommendation.lesson.title)
                                         .font(.pfCardTitle)
@@ -664,7 +679,7 @@ struct DashboardView: View {
             PFSectionHeader(title: "Your journey")
             if contentService.searchIndex == nil {
                 PFCard {
-                    PFLoadingView(message: "Loading your pathway...")
+                    PFLoadingView(message: "Loading your journey...")
                 }
             } else if pathwayLessons.source == .none {
                 PFCard {
@@ -1015,7 +1030,7 @@ struct DashboardView: View {
                                 .foregroundColor(.pfSecondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        Text("Certificates of Completion certify completion of the named course or path. They are not accredited qualifications and carry no bank endorsement.")
+                        Text("Certificates of Completion certify completion of the named course or journey. They are not accredited qualifications and carry no bank endorsement.")
                             .font(.pfCaption)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1060,7 +1075,7 @@ struct DashboardView: View {
                                 .font(.pfBody)
                                 .foregroundColor(.pfSecondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
-                            if let tabBinding = selectedTab {
+                            if onStartLearning != nil {
                                 PFPrimaryButton(title: "Start learning") {
                                     startLearning()
                                 }
@@ -1860,7 +1875,7 @@ struct DashboardView: View {
             NavigationLink(destination: CertificatesListView()) {
                 toolRow(
                     title: "Certificates",
-                    subtitle: "Path certificates and course certificates from Final Assessments",
+                    subtitle: "Journey certificates and course certificates from Final Assessments",
                     systemImage: "seal.fill"
                 )
             }
@@ -1993,13 +2008,13 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - Recommended next lessons
+    // MARK: - Up next
 
     private var recommendedSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {
-            PFSectionHeader(title: "Recommended next lessons")
+            PFSectionHeader(title: "Up next")
             if contentService.isLoadingIndex && recommendedLessons.isEmpty && contentService.searchIndex == nil {
-                PFLoadingView(message: "Loading recommendations...")
+                PFLoadingView(message: "Loading lessons...")
             } else if recommendedLessons.isEmpty {
                 PFCard {
                     Text(contentService.searchIndex == nil ? "Lessons will appear here once the course catalogue has loaded." : "You have completed every lesson in the catalogue.")

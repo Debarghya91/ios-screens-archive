@@ -303,6 +303,11 @@ final class StoreManager: ObservableObject {
     /// True while the product list could not be loaded at all.
     @Published private(set) var productLoadFailed = false
 
+    /// True when fewer products loaded than the catalogue holds:
+    /// some prices are missing even though the fetch succeeded.
+    /// The Checkout Retry row shows for either flag.
+    @Published private(set) var productLoadIncomplete = false
+
     /// The last user-facing purchase status message, shown in Checkout.
     @Published private(set) var statusMessage: String?
 
@@ -466,10 +471,17 @@ final class StoreManager: ObservableObject {
 
     private var updatesTask: Task<Void, Never>?
 
-    /// True while a product fetch is in flight, so concurrent
-    /// loadProducts() calls do not stack duplicate fetches. A failed
-    /// or partial fetch can always be retried once it finishes.
-    private var isLoadingProducts = false
+    /// The in-flight product fetch, so concurrent loadProducts()
+    /// calls join the same fetch instead of stacking duplicates or
+    /// proceeding with no products. A failed or partial fetch can
+    /// always be retried once it finishes.
+    private var productsLoadTask: Task<Void, Never>?
+
+    /// True while a purchase or a restore is running. Two Buy
+    /// surfaces share this manager (the lesson card and the
+    /// checkout sheet), so the flag, not the disabled button,
+    /// is the guard against overlapping purchases.
+    private var purchaseInFlight = false
 
     init() {
         // The retired bypass key and the retired legacy Situations
@@ -535,27 +547,34 @@ final class StoreManager: ObservableObject {
     /// Fetch all catalogue products from the App Store (or the local
     /// .storekit file while there are no App Store Connect products
     /// yet). Always refetches, so a failed or partial load can be
-    /// retried; concurrent calls share the in-flight fetch.
+    /// retried; concurrent calls join the in-flight fetch and wait
+    /// for it, so no caller proceeds with an empty product list.
     func loadProducts() async {
-        guard !isLoadingProducts else { return }
-        isLoadingProducts = true
-        isBusy = true
-        defer {
-            isBusy = false
-            isLoadingProducts = false
+        if let task = productsLoadTask {
+            await task.value
+            return
         }
+        let task = Task { await fetchProducts() }
+        productsLoadTask = task
+        await task.value
+        productsLoadTask = nil
+    }
+
+    /// The fetch body. Load failures set the published flags only:
+    /// the Checkout Retry row is their surface, and writing a
+    /// status message here used to pop a Purchase alert over the
+    /// first lesson opened, unprompted.
+    private func fetchProducts() async {
+        isBusy = true
+        defer { isBusy = false }
         do {
             let fetched = try await Product.products(for: Self.allStoreProductIDs)
             products = fetched.sorted { $0.id < $1.id }
             productLoadFailed = fetched.isEmpty
-            if fetched.isEmpty {
-                statusMessage = "The products could not be loaded. Check your connection and try again."
-            } else if fetched.count < Self.allStoreProductIDs.count {
-                statusMessage = "Some course prices could not be loaded. Check your connection and try again."
-            }
+            productLoadIncomplete = fetched.count < Self.allStoreProductIDs.count
         } catch {
             productLoadFailed = true
-            statusMessage = "The products could not be loaded. Check your connection and try again."
+            productLoadIncomplete = true
         }
     }
 
@@ -634,8 +653,15 @@ final class StoreManager: ObservableObject {
     /// handle every outcome. Shared by purchase(productID:) and
     /// purchaseRenewal(for:).
     private func buyStoreProduct(_ product: Product) async {
+        // Atomic on the main actor: no suspension sits between the
+        // guard and the set, so a second Buy tap cannot slip in.
+        guard !purchaseInFlight else { return }
+        purchaseInFlight = true
         isBusy = true
-        defer { isBusy = false }
+        defer {
+            isBusy = false
+            purchaseInFlight = false
+        }
         do {
             let result = try await product.purchase()
             switch result {
@@ -659,8 +685,15 @@ final class StoreManager: ObservableObject {
     /// server for the signed-in user, so they sync across devices,
     /// and retries any pending server revoke.
     func restorePurchases() async {
+        // Same guard as a purchase: a restore must not overlap a
+        // purchase, or two restores overlap each other.
+        guard !purchaseInFlight else { return }
+        purchaseInFlight = true
         isBusy = true
-        defer { isBusy = false }
+        defer {
+            isBusy = false
+            purchaseInFlight = false
+        }
         do {
             try await AppStore.sync()
         } catch {
@@ -787,6 +820,10 @@ final class StoreManager: ObservableObject {
         serverEntitledProductIDs = []
         serverEntitlementExpiries = [:]
         serverEntitlementSyncPending = false
+        // Sign-out and account deletion both route through here:
+        // every live audio service must stop, including players
+        // owned by views that are not on screen.
+        NotificationCenter.default.post(name: .pfStopAudioForAccessChange, object: nil)
     }
 
     /// Retry recording on-device purchases on the server after a
@@ -1338,11 +1375,26 @@ final class StoreManager: ObservableObject {
         guard Self.allStoreProductIDs.contains(transaction.productID) else { return }
         guard transaction.revocationDate == nil else {
             await handleRevokedTransaction(transaction)
+            // A refund or revocation on another device must not be
+            // silent: the learner sees why the content locked.
+            if let name = ProductCatalogue.productForStoreID(transaction.productID)?.name {
+                statusMessage = "That purchase was refunded or revoked, so \(name) is no longer unlocked."
+            }
             return
         }
+        let wasOwned = purchasedProductIDs.contains(transaction.productID)
         await transaction.finish()
         await refreshEntitlement()
         if purchasedProductIDs.contains(transaction.productID) {
+            // A purchase made on another device unlocks here too:
+            // say so, once, only when it newly unlocked.
+            if !wasOwned, let name = ProductCatalogue.productForStoreID(transaction.productID)?.name {
+                if let expiry = expiryDate(for: transaction.productID) {
+                    statusMessage = "Thank you. \(name) is unlocked until \(Self.displayDateFormatter.string(from: expiry))."
+                } else {
+                    statusMessage = "Thank you. \(name) is unlocked on this device."
+                }
+            }
             // Best effort, detached: see handlePurchaseSuccess.
             Task { await syncPurchaseEntitlementToServer(transaction) }
         }

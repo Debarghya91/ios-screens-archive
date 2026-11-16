@@ -422,6 +422,14 @@ struct PracticeModeView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Practise a free case instead")
+                } else if let error = contentService.indexError, contentService.searchIndex == nil {
+                    PFErrorStateView(
+                        title: "Could not load the course catalogue",
+                        message: error,
+                        retryTitle: "Retry"
+                    ) {
+                        Task { await contentService.loadSearchIndex() }
+                    }
                 } else if allSituations.isEmpty {
                     Text("The free cases will appear here once the course list has loaded.")
                         .font(.pfBody)

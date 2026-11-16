@@ -48,6 +48,11 @@ struct DrawerContainer<Content: View>: View {
     let content: Content
 
     @State private var dragOffset: CGFloat = 0
+    /// True from the first row tap until its delayed navigation
+    /// fires, so a double tap on a row (or two fast taps on
+    /// different rows) cannot queue two navigations behind the
+    /// 0.3s close delay. Cleared when the navigation fires.
+    @State private var drawerSelectionInFlight = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The slide animation for opening and closing the drawer. No
@@ -107,10 +112,13 @@ struct DrawerContainer<Content: View>: View {
 
                 // The drawer panel.
                 SideDrawerView(onSelect: { destination in
+                    guard !drawerSelectionInFlight else { return }
+                    drawerSelectionInFlight = true
                     close()
                     // Wait for the close animation before navigating.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         onSelect(destination)
+                        drawerSelectionInFlight = false
                     }
                 }, selectedTab: selectedTab, tourScrollTarget: tourScrollTarget)
                 .frame(width: drawerWidth)

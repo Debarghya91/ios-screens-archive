@@ -151,10 +151,22 @@ final class TrainingHubDeepLinkRouter: ObservableObject {
     /// The link waiting to be routed, nil when none is pending.
     @Published private(set) var pendingLink: TrainingHubDeepLink? = nil
 
+    /// Monotonic sequence for pending links, bumped on every
+    /// receive. MainTabView records the sequence it routed and
+    /// rejects a second routing attempt for the same sequence,
+    /// so a link can never open twice.
+    private(set) var pendingSequence: Int = 0
+
+    /// When the pending link arrived, for the routing TTL.
+    /// MainTabView drops a link older than 30 minutes.
+    private(set) var pendingReceivedAt: Date? = nil
+
     /// Record an incoming link, replacing any link still waiting.
     /// The newest tap wins: a stale link must never open after a
     /// newer one.
     func receive(_ link: TrainingHubDeepLink) {
+        pendingSequence += 1
+        pendingReceivedAt = Date()
         pendingLink = link
     }
 
@@ -162,6 +174,7 @@ final class TrainingHubDeepLinkRouter: ObservableObject {
     /// cannot be routed.
     func clear() {
         pendingLink = nil
+        pendingReceivedAt = nil
     }
 }
 

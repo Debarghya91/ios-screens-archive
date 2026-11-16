@@ -94,6 +94,17 @@ struct SearchFieldAnchorKey: PreferenceKey {
     }
 }
 
+/// The anchor of the Search page's difficulty pill strip, for
+/// the tour's filter demo on the Search step: after the typing
+/// demo, the spotlight frames the pills while the hand points
+/// at them, so the step's filter copy has a visible highlight.
+struct SearchPillsAnchorKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? = nil
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+
 /// The tour's search demo messages, posted by the overlay and
 /// received by SearchView. Type carries the cumulative text and
 /// the full demo query; submit carries the query to run; reset
@@ -481,6 +492,39 @@ private struct TourHandCursor: View {
     }
 }
 
+/// The anchor of the Home page's Continue learning block, for
+/// the Home step: after the tab switch, the spotlight frames
+/// the block while the hand points at it, so the step's "next
+/// lesson first" copy has a visible highlight on the real block.
+struct ContinueLearningAnchorKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? = nil
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+
+/// The arrow marker beside the spotlight ring: a chevron pointing
+/// at the highlighted element, in the tour highlight colour.
+/// Tab steps point down from above the capsule; drawer and card
+/// steps point left from the space right of the target when at
+/// least 44pt is free there, else down from above the target.
+/// Visual only: it never intercepts taps.
+private struct TourArrowMarker: View {
+    let systemImage: String
+    let position: CGPoint
+    let color: Color
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.title3.weight(.bold))
+            .foregroundColor(color)
+            .shadow(color: color.opacity(0.6), radius: 6, x: 0, y: 0)
+            .position(position)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
 // MARK: - The tour overlay
 
 /// The interactive navigation tour: a start card, seven steps, and
@@ -525,19 +569,29 @@ struct NavigationTourOverlay: View {
     /// The anchor of the Search page's search field, for the
     /// typing demo on the Search step. Nil until Search lays out.
     private let searchFieldAnchor: Anchor<CGRect>?
+    /// The anchor of the Search page's difficulty pill strip,
+    /// for the filter demo on the Search step. Nil until Search
+    /// lays out.
+    private let searchPillsAnchor: Anchor<CGRect>?
+    /// The anchor of the Home page's Continue learning block,
+    /// for the block demo on the Home step. Nil until Home lays
+    /// out.
+    private let continueLearningAnchor: Anchor<CGRect>?
     /// Opens a drawer destination from a tour step, or closes
     /// any destination the tour opened when passed nil. The
     /// parent owns the sheet/tab state: this overlay only asks.
-    /// Every tour step opens its target, so drawer steps call
-    /// this after the drawer settles, and tab, card, and
-    /// completion steps pass nil so a sheet opened by an
-    /// earlier step never covers the next step.
+    /// Tour steps only highlight their targets and never open
+    /// them, so this is called with nil on every step entry:
+    /// a sheet opened by an earlier step, or by a tap through
+    /// the overlay, never covers the next step.
     private let onOpenDestination: (DrawerDestination?) -> Void
-    /// Opens the Keep Learning card's target (the top of Home)
-    /// from the final step. Kept separate from
-    /// onOpenDestination because the card is a tab switch, not
-    /// a drawer destination.
-    private let onOpenKeepLearning: () -> Void
+    /// Logs the tour's tab writes for the parent's centralised
+    /// tab navigation log. The overlay keeps the selectedTab
+    /// binding (it must both read and write the tab for its
+    /// sequencing), so its writes are reported through this
+    /// closure instead of the parent's navigate function. Nil
+    /// when the parent does not log.
+    private let onTabWrite: ((Int, String) -> Void)?
     private let onFinish: () -> Void
 
     /// The bar frame for tooltip clearance and the segment
@@ -586,6 +640,19 @@ struct NavigationTourOverlay: View {
     /// The Search demo's hand phase. Idle except while the
     /// demo types and taps.
     @State private var searchDemoPhase: SearchDemoPhase = .idle
+    /// True while the Home step's block demo runs: the
+    /// spotlight frames the Continue learning block instead of
+    /// the tab capsule.
+    @State private var homeBlockActive = false
+    /// True from a programmatic tab write until its change
+    /// handler runs, so the handler can tell the tour's own
+    /// tab switches from manual taps: a manual tap bumps the
+    /// transition generation and invalidates a pending switch.
+    @State private var programmaticTabChange = false
+    /// The last step advance, for the 0.25s lock in goToStep:
+    /// rapid Next/Back taps never queue overlapping step
+    /// transitions.
+    @State private var lastStepAdvance = Date.distantPast
     @AccessibilityFocusState private var accessibilityFocus: TourFocus?
 
     init(
@@ -598,9 +665,11 @@ struct NavigationTourOverlay: View {
         keepLearningAnchor: Anchor<CGRect>?,
         keepLearningFrame: CGRect?,
         searchFieldAnchor: Anchor<CGRect>?,
+        searchPillsAnchor: Anchor<CGRect>?,
+        continueLearningAnchor: Anchor<CGRect>?,
         onOpenDestination: @escaping (DrawerDestination?) -> Void,
-        onOpenKeepLearning: @escaping () -> Void,
-        onFinish: @escaping () -> Void
+        onFinish: @escaping () -> Void,
+        onTabWrite: ((Int, String) -> Void)? = nil
     ) {
         self._selectedTab = selectedTab
         self._isDrawerOpen = isDrawerOpen
@@ -611,9 +680,11 @@ struct NavigationTourOverlay: View {
         self.keepLearningAnchor = keepLearningAnchor
         self.keepLearningFrame = keepLearningFrame
         self.searchFieldAnchor = searchFieldAnchor
+        self.searchPillsAnchor = searchPillsAnchor
+        self.continueLearningAnchor = continueLearningAnchor
         self.onOpenDestination = onOpenDestination
-        self.onOpenKeepLearning = onOpenKeepLearning
         self.onFinish = onFinish
+        self.onTabWrite = onTabWrite
     }
 
     /// The demo query the tour types on the Search step. A
@@ -622,13 +693,15 @@ struct NavigationTourOverlay: View {
     private static let searchDemoQuery = "ISO 20022"
 
     /// The Search demo's hand phase: idle on the tab, typing at
-    /// the field's text position, or tapping the search icon.
-    /// The hand position derives from this in the spotlight
-    /// layer, so the hand glides to the live field frame.
+    /// the field's text position, tapping the search icon, or
+    /// pointing at the difficulty pills. The hand position
+    /// derives from this in the spotlight layer, so the hand
+    /// glides to the live field and pill frames.
     private enum SearchDemoPhase {
         case idle
         case typing
         case tapping
+        case pills
     }
 
     /// The tour phases: the start card, one of the seven steps
@@ -657,8 +730,8 @@ struct NavigationTourOverlay: View {
     }
 
     /// One tour step: copy plus its target: a tab index (steps
-    /// 1 to 5), a drawer destination (steps 6 and 7), or the
-    /// Keep Learning card at the bottom of the drawer (step 8).
+    /// 1 to 4), a drawer destination (steps 5 and 6), or the
+    /// Keep Learning card at the bottom of the drawer (step 7).
     /// Exactly one target is set for every step.
     private struct TourStep {
         let title: String
@@ -693,30 +766,30 @@ struct NavigationTourOverlay: View {
     private static let steps: [TourStep] = [
         TourStep(
             title: "Home",
-            body: "Home is your starting point and your course browser. It shows your next lesson first, so you can pick up where you left off. Scroll down for the full course: 10 courses, 100 chapters, 881 lessons, and the learning journeys.",
+            body: "Home is your starting point. It shows your next lesson first, so you can pick up where you left off. The tabs at the top switch between your learning journey, the full course, and practice.",
             symbol: "house.fill",
-            tabIndex: 0,
+            tabIndex: DrawerDestination.home.tabIndex ?? 0,
             destination: nil
         ),
         TourStep(
             title: "Search",
             body: "Search finds any lesson, guide or case. Type a word like MT103 or chargeback. Use the difficulty pills above the search box to narrow the results.",
             symbol: "magnifyingglass",
-            tabIndex: 1,
+            tabIndex: DrawerDestination.search.tabIndex ?? 1,
             destination: nil
         ),
         TourStep(
             title: "Payment Cases",
             body: "Payment Cases are real payment problems, worked step by step. Read the case, see what went wrong, and learn the fix. A few cases are free to try.",
             symbol: "briefcase.fill",
-            tabIndex: 2,
+            tabIndex: DrawerDestination.paymentCases.tabIndex ?? 2,
             destination: nil
         ),
         TourStep(
             title: "My Progress",
             body: "My Progress shows what you finished, your streak and your quiz scores. Your progress appears here once you finish your first chapter.",
             symbol: "chart.bar.fill",
-            tabIndex: 3,
+            tabIndex: DrawerDestination.myProgress.tabIndex ?? 3,
             destination: nil
         ),
         TourStep(
@@ -728,7 +801,7 @@ struct NavigationTourOverlay: View {
         ),
         TourStep(
             title: "Profile and Purchases",
-            body: "Profile holds your account and settings. My Purchases sits just below Profile in the menu. To take a course, scroll down on Home, open the course, and buy it with your App Store account. Buying unlocks its lessons for 1 year. To follow a set order of chapters, choose a learning journey on Home.",
+            body: "Profile holds your account and settings. Courses and purchases, just above it, shows the courses you bought. To buy a course, open it from Home and pay with your App Store account. Buying unlocks its lessons for 1 year.",
             symbol: "person.fill",
             tabIndex: nil,
             destination: .profile
@@ -742,6 +815,14 @@ struct NavigationTourOverlay: View {
             highlightsCard: true
         )
     ]
+
+    /// The tour step titles and tab targets, exposed for the
+    /// uniqueness test: the tour must never show the same page
+    /// twice, so the titles must be unique and the tab steps
+    /// must each target a different tab. Internal, not private,
+    /// so the test target can read them through @testable import.
+    static var tourStepTitles: [String] { steps.map(\.title) }
+    static var tourStepTabIndices: [Int?] { steps.map(\.tabIndex) }
 
     /// The corner radius shared by the spotlight hole and the gold
     /// ring, so the ring traces the hole exactly.
@@ -837,6 +918,16 @@ struct NavigationTourOverlay: View {
                     accessibilityFocus = .tooltip
                 }
             }
+            .onChange(of: selectedTab) { _, _ in
+                if programmaticTabChange {
+                    programmaticTabChange = false
+                } else {
+                    // A manual tab tap during a sequenced glide:
+                    // invalidate the pending switch so it never
+                    // fires after the tap.
+                    transitionGeneration += 1
+                }
+            }
         }
         .ignoresSafeArea()
         .onDisappear {
@@ -874,33 +965,51 @@ struct NavigationTourOverlay: View {
         }
     }
 
-    /// The dim, the highlight ring, and the pointing hand,
-    /// animated together when the spotlight rect changes. Tab
-    /// steps use a capsule hole and ring (radius half the
-    /// capsule height), matching the pill and the system
-    /// selection capsule, except while the Search demo runs,
-    /// when the hole frames the search field instead. Drawer
-    /// and card steps use a circle hole and ring on the icon
-    /// alone, the same 64pt circle for Payment Simulator, Profile
-    /// and Start Learning. The hand sits on the tab on tab
+    /// The dim, the highlight ring, the arrow marker, and the
+    /// pointing hand, animated together when the spotlight rect
+    /// changes. Tab steps use a capsule hole and ring (radius
+    /// half the capsule height), matching the pill and the
+    /// system selection capsule, except while the Search demo
+    /// runs, when the hole frames the search field or the
+    /// difficulty pills instead, and while the Home step's
+    /// block demo runs, when the hole frames the Continue
+    /// learning block. Drawer steps use a rounded-rect hole
+    /// framing the whole row, and the card step frames the
+    /// whole card. The arrow marker points at the spotlight
+    /// target on every step. The hand sits on the tab on tab
     /// steps, follows its drag point while a scroll showcase
-    /// runs, and sits at the search field while the Search
-    /// demo types and taps. On drawer and card steps the hand
-    /// sits on the circled icon from the live target frame and
-    /// tracks it while the drawer slides and scrolls, with no
-    /// press, and stays hidden while the target is off screen.
-    /// The animation is nil when Reduce
-    /// Motion is on, so the spotlight jumps instantly.
+    /// runs, sits at the search field and the pills while the
+    /// Search demo types, taps and points, and sits on the
+    /// Continue learning block while the Home demo runs. On
+    /// drawer and card steps the hand sits on the row or card
+    /// icon from the live target frame and tracks it while
+    /// the drawer slides and scrolls, with no press, and stays
+    /// hidden while the target is off screen. The animation
+    /// is nil when Reduce Motion is on, so the spotlight jumps
+    /// instantly.
     private func spotlightLayer(proxy: GeometryProxy, stepIndex: Int) -> some View {
         let spotlight = currentSpotlightRect(proxy: proxy, stepIndex: stepIndex)
         let isTabStep = Self.steps.indices.contains(stepIndex) && Self.steps[stepIndex].tabIndex != nil
-        let isSearchStep = Self.steps.indices.contains(stepIndex) && Self.steps[stepIndex].tabIndex == 1
+        let isSearchStep = Self.steps.indices.contains(stepIndex) && Self.steps[stepIndex].tabIndex == DrawerDestination.search.tabIndex
+        let isHomeStep = Self.steps.indices.contains(stepIndex) && Self.steps[stepIndex].tabIndex == DrawerDestination.home.tabIndex
         let isCircleStep = Self.steps.indices.contains(stepIndex) && (Self.steps[stepIndex].destination != nil || Self.steps[stepIndex].highlightsCard)
+        let isCardStep = Self.steps.indices.contains(stepIndex) && Self.steps[stepIndex].highlightsCard
         let showingFieldDemo = isSearchStep && searchDemoFieldActive && searchFieldSpotlightRect(proxy: proxy) != nil
-        let radius = showingFieldDemo ? spotlightCornerRadius : (spotlight?.height ?? 0) / 2
+        let showingPillsDemo = isSearchStep && searchDemoPhase == .pills && searchPillsSpotlightRect(proxy: proxy) != nil
+        let showingHomeBlock = isHomeStep && homeBlockActive && homeBlockSpotlightRect(proxy: proxy) != nil
+        let radius: CGFloat = {
+            if showingFieldDemo || showingPillsDemo || showingHomeBlock { return spotlightCornerRadius }
+            if isCardStep { return PFSpacing.cardRadius }
+            if isCircleStep { return PFSpacing.smallRadius }
+            return (spotlight?.height ?? 0) / 2
+        }()
         let tabTip: CGPoint? = spotlight.map { CGPoint(x: $0.midX - 2, y: $0.midY - 7) }
         let fieldTip: CGPoint? = {
-            guard isSearchStep, searchDemoPhase != .idle, let anchor = searchFieldAnchor else { return nil }
+            guard isSearchStep, searchDemoPhase != .idle else { return nil }
+            if searchDemoPhase == .pills, let pills = searchPillsSpotlightRect(proxy: proxy) {
+                return CGPoint(x: pills.minX + 100, y: pills.midY)
+            }
+            guard let anchor = searchFieldAnchor else { return nil }
             let field = proxy[anchor]
             guard !field.isNull, field.width > 0, field.height > 0 else { return nil }
             switch searchDemoPhase {
@@ -908,29 +1017,52 @@ struct NavigationTourOverlay: View {
                 return CGPoint(x: field.minX + 44, y: field.midY)
             case .tapping:
                 return CGPoint(x: field.minX + 22, y: field.midY)
-            case .idle:
+            case .idle, .pills:
                 return nil
             }
         }()
-        // Circle steps point at the circled icon only, from the
-        // live spotlight rect: no delayed flag, no fallback to
-        // a stale drag point. When the target is off screen the
-        // spotlight is nil, so there is no hand at all until
-        // the drawer scroll brings the row into view: the hand
-        // never sits on a guessed position.
+        let blockTip: CGPoint? = {
+            guard showingHomeBlock, let block = homeBlockSpotlightRect(proxy: proxy) else { return nil }
+            return CGPoint(x: block.minX + 44, y: block.midY)
+        }()
+        // Drawer and card steps point at the row or card icon,
+        // from the live target frame: the spotlight now frames
+        // the whole row or card, so the icon centre is computed
+        // from the frame itself. The row icon sits past the
+        // row's sm press padding, the xl content padding, and
+        // half the 40pt icon frame; the card icon sits past
+        // the lg card padding and half the 52pt icon circle.
+        // The Profile step highlights two rows, and the hand
+        // points at the Profile row's icon: the destination
+        // row frame is the Profile row. When the target is off
+        // screen there is no hand at all until the drawer
+        // scroll brings the row into view: the hand never sits
+        // on a guessed position.
         let circleTip: CGPoint? = {
             guard isCircleStep else { return nil }
-            return spotlight.map { CGPoint(x: $0.midX - 2, y: $0.midY - 7) }
+            let step = Self.steps[stepIndex]
+            if step.highlightsCard {
+                guard let frame = cardFrame(proxy: proxy), isTargetVisible(frame, in: proxy) else { return nil }
+                return CGPoint(x: frame.minX + PFSpacing.lg + 26 - 2, y: frame.midY - 7)
+            }
+            guard let destination = step.destination,
+                  let frame = rowFrame(for: destination, proxy: proxy),
+                  isTargetVisible(frame, in: proxy) else { return nil }
+            return CGPoint(x: frame.minX + PFSpacing.sm + PFSpacing.xl + 20 - 2, y: frame.midY - 7)
         }()
-        let handTip = isCircleStep ? circleTip : (fieldTip ?? handPoint ?? (isTabStep ? tabTip : nil))
+        let handTip = isCircleStep ? circleTip : (fieldTip ?? blockTip ?? handPoint ?? (isTabStep ? tabTip : nil))
+        let ripplePoint = isCircleStep ? circleTip : (fieldTip ?? blockTip ?? handPoint ?? (isTabStep ? tabTip : nil))
         return ZStack {
             dimView(hole: spotlight, cornerRadius: radius)
             ringView(hole: spotlight, cornerRadius: radius)
+            if let marker = arrowMarker(for: stepIndex, proxy: proxy) {
+                marker
+            }
             if let handTip {
                 handCursorView(tip: handTip)
                     .animation(.easeInOut(duration: 0.35), value: searchDemoPhase)
             }
-            if clickRippleID != 0, let ripplePoint = isCircleStep ? circleTip : (fieldTip ?? handPoint ?? (isTabStep ? tabTip : nil)) {
+            if clickRippleID != 0, let ripplePoint {
                 Circle()
                     .stroke(Self.tourHighlight, lineWidth: 2.5)
                     .frame(width: 44, height: 44)
@@ -942,6 +1074,25 @@ struct NavigationTourOverlay: View {
             }
         }
         .animation(isTabStep ? tabSpotlightAnimation : spotlightAnimation, value: spotlight)
+    }
+
+    /// The arrow marker for a step, or nil when the step has no
+    /// spotlight rect to point at. Tab steps point down from
+    /// above the capsule; drawer and card steps point left from
+    /// the space right of the target when at least 44pt is free
+    /// there, else down from above the target.
+    private func arrowMarker(for stepIndex: Int, proxy: GeometryProxy) -> TourArrowMarker? {
+        guard Self.steps.indices.contains(stepIndex),
+              let spotlight = currentSpotlightRect(proxy: proxy, stepIndex: stepIndex) else { return nil }
+        let step = Self.steps[stepIndex]
+        if step.tabIndex != nil {
+            return TourArrowMarker(systemImage: "arrow.down", position: CGPoint(x: spotlight.midX, y: spotlight.minY - 20), color: Self.tourHighlight)
+        }
+        let roomRight = proxy.size.width - spotlight.maxX
+        if roomRight >= 44 {
+            return TourArrowMarker(systemImage: "arrow.left", position: CGPoint(x: spotlight.maxX + 22, y: spotlight.midY), color: Self.tourHighlight)
+        }
+        return TourArrowMarker(systemImage: "arrow.down", position: CGPoint(x: spotlight.midX, y: spotlight.minY - 20), color: Self.tourHighlight)
     }
 
     /// The pointing hand with its fingertip at the given point:
@@ -1023,16 +1174,27 @@ struct NavigationTourOverlay: View {
         guard Self.steps.indices.contains(stepIndex) else { return nil }
         let step = Self.steps[stepIndex]
         if let tabIndex = step.tabIndex {
-            if tabIndex == 1, searchDemoFieldActive, let fieldRect = searchFieldSpotlightRect(proxy: proxy) {
-                return fieldRect
+            if tabIndex == (DrawerDestination.home.tabIndex ?? 0), homeBlockActive, let blockRect = homeBlockSpotlightRect(proxy: proxy) {
+                return blockRect
+            }
+            if tabIndex == (DrawerDestination.search.tabIndex ?? 1), searchDemoFieldActive {
+                if searchDemoPhase == .pills, let pillsRect = searchPillsSpotlightRect(proxy: proxy) {
+                    return pillsRect
+                }
+                if let fieldRect = searchFieldSpotlightRect(proxy: proxy) {
+                    return fieldRect
+                }
             }
             return tabSpotlightRect(tabIndex: tabIndex, proxy: proxy)
         }
         if let destination = step.destination {
-            return rowIconSpotlightRect(for: destination, proxy: proxy)
+            if destination == .profile {
+                return profilePurchasesSpotlightRect(proxy: proxy)
+            }
+            return rowSpotlightRect(for: destination, proxy: proxy)
         }
         if step.highlightsCard {
-            return cardIconSpotlightRect(proxy: proxy)
+            return cardFullSpotlightRect(proxy: proxy)
         }
         return nil
     }
@@ -1042,11 +1204,11 @@ struct NavigationTourOverlay: View {
     /// device (iPhone 17 Pro Max screenshot, 12 Nov 2026): the
     /// system selection capsule is 82pt wide and 57pt tall
     /// inside a 401pt wide, 63pt tall pill. Every tab gets the
-    /// SAME capsule: one width for all five, never narrower
+    /// SAME capsule: one width for all four, never narrower
     /// than the measured 82pt, so a long label is never cut
     /// on a narrow phone and the highlights never vary in
     /// size. The capsule centre comes from the measured
-    /// button when the reader found all five, else from the
+    /// button when the reader found all four, else from the
     /// screenshot centre fractions. The capsule is never the
     /// raw button rect: a button spans its whole segment, and
     /// a box that size reads as a square highlight that does
@@ -1090,50 +1252,102 @@ struct NavigationTourOverlay: View {
         return visible
     }
 
-    /// The drawer row spotlight: a circle on the row's icon
-    /// alone, the same 64pt circle for Payment Simulator, Profile
-    /// and every other drawer step. The icon is a 40pt frame
-    /// starting 24pt into the row, so the circle is centred on
-    /// the icon centre. The row frame comes from the live frame
-    /// feed first, falling back to the resolved anchor; either
-    /// way the circle follows the row while the list scrolls.
-    /// Nil when the row is not actually on screen: a row below
-    /// the fold, or a drawer still slid shut, must not produce
-    /// a spotlight clamped to the screen edge, which is what
-    /// parked the hand at the bottom-left. The drawer scroll
-    /// brings the row into view, and the spotlight and hand
-    /// appear on the real row once it is visible.
-    private func rowIconSpotlightRect(for destination: DrawerDestination, proxy: GeometryProxy) -> CGRect? {
-        let resolved: CGRect
+    /// The live frame of a drawer row, from the live frame feed
+    /// first, falling back to the resolved anchor. Nil when
+    /// neither has arrived yet.
+    private func rowFrame(for destination: DrawerDestination, proxy: GeometryProxy) -> CGRect? {
         if let frame = drawerRowFrames[destination] {
-            resolved = frame
-        } else if let anchor = drawerRowAnchors[destination] {
-            resolved = proxy[anchor]
-        } else {
-            return nil
+            return frame
         }
-        guard isTargetVisible(resolved, in: proxy) else { return nil }
-        return iconCircleRect(rowFrame: resolved, iconCenterXOffset: PFSpacing.xl + 20, proxy: proxy)
+        guard let anchor = drawerRowAnchors[destination] else { return nil }
+        return proxy[anchor]
     }
 
-    /// The Start Learning spotlight: the same 64pt circle on
-    /// the card's flame icon. The icon is a 52pt circle
-    /// starting 16pt into the card, so the ring sits centred
-    /// on it with 6pt to spare on each side. The card frame
-    /// comes from the live frame feed first, falling back to
-    /// the resolved anchor, and the spotlight stays hidden
-    /// until the card is actually on screen, like the rows.
-    private func cardIconSpotlightRect(proxy: GeometryProxy) -> CGRect? {
-        let resolved: CGRect
+    /// The live frame of the Keep Learning card, from the live
+    /// frame feed first, falling back to the resolved anchor.
+    /// Nil when neither has arrived yet.
+    private func cardFrame(proxy: GeometryProxy) -> CGRect? {
         if let frame = keepLearningFrame {
-            resolved = frame
-        } else if let anchor = keepLearningAnchor {
-            resolved = proxy[anchor]
-        } else {
-            return nil
+            return frame
         }
+        guard let anchor = keepLearningAnchor else { return nil }
+        return proxy[anchor]
+    }
+
+    /// The Profile and Purchases spotlight: the union of the
+    /// Profile row and the Courses and purchases row, expanded
+    /// by 4pt, so the step highlights both rows it describes.
+    /// Falls back to the Profile row alone when the purchases
+    /// row has not laid out yet or is off screen. Nil when the
+    /// Profile row itself is not on screen.
+    private func profilePurchasesSpotlightRect(proxy: GeometryProxy) -> CGRect? {
+        guard let profile = rowFrame(for: .profile, proxy: proxy), isTargetVisible(profile, in: proxy) else { return nil }
+        guard let purchases = rowFrame(for: .myPurchases, proxy: proxy), isTargetVisible(purchases, in: proxy) else {
+            return profile.insetBy(dx: -4, dy: -4)
+        }
+        return profile.union(purchases).insetBy(dx: -4, dy: -4)
+    }
+
+    /// The difficulty pills spotlight, used only while the
+    /// Search step's filter demo runs: the pill strip rect
+    /// expanded by 6pt, so the pills light up while the hand
+    /// points at them. Nil when the pills anchor has not
+    /// arrived yet; the field rect stays the spotlight then.
+    private func searchPillsSpotlightRect(proxy: GeometryProxy) -> CGRect? {
+        guard let anchor = searchPillsAnchor else { return nil }
+        let resolved = proxy[anchor]
+        guard !resolved.isNull, resolved.width > 0, resolved.height > 0 else { return nil }
+        let expanded = resolved.insetBy(dx: -6, dy: -6)
+        let containerRect = CGRect(origin: .zero, size: proxy.size)
+        let visible = expanded.intersection(containerRect)
+        guard !visible.isNull, visible.width > 0, visible.height > 0 else { return nil }
+        return visible
+    }
+
+    /// The Continue learning block spotlight, used only while
+    /// the Home step's block demo runs: the block rect
+    /// expanded by 6pt, so the block lights up while the hand
+    /// points at it. Nil when the block anchor has not arrived
+    /// yet; the tab capsule stays the spotlight then.
+    private func homeBlockSpotlightRect(proxy: GeometryProxy) -> CGRect? {
+        guard let anchor = continueLearningAnchor else { return nil }
+        let resolved = proxy[anchor]
+        guard !resolved.isNull, resolved.width > 0, resolved.height > 0 else { return nil }
+        let expanded = resolved.insetBy(dx: -6, dy: -6)
+        let containerRect = CGRect(origin: .zero, size: proxy.size)
+        let visible = expanded.intersection(containerRect)
+        guard !visible.isNull, visible.width > 0, visible.height > 0 else { return nil }
+        return visible
+    }
+
+    /// The drawer row spotlight: the full row frame expanded by
+    /// 4pt on each side, so the ring frames the whole row the
+    /// step describes, not just its icon. The row frame comes
+    /// from the live frame feed first, falling back to the
+    /// resolved anchor; either way the ring follows the row
+    /// while the list scrolls. Nil when the row is not actually
+    /// on screen: a row below the fold, or a drawer still slid
+    /// shut, must not produce a spotlight clamped to the screen
+    /// edge, which is what parked the hand at the bottom-left.
+    /// The drawer scroll brings the row into view, and the
+    /// spotlight and hand appear on the real row once it is
+    /// visible.
+    private func rowSpotlightRect(for destination: DrawerDestination, proxy: GeometryProxy) -> CGRect? {
+        guard let resolved = rowFrame(for: destination, proxy: proxy) else { return nil }
         guard isTargetVisible(resolved, in: proxy) else { return nil }
-        return iconCircleRect(rowFrame: resolved, iconCenterXOffset: PFSpacing.lg + 26, proxy: proxy)
+        return resolved.insetBy(dx: -4, dy: -4)
+    }
+
+    /// The Start Learning spotlight: the full card frame
+    /// expanded by 4pt on each side, so the ring frames the
+    /// whole card. The card frame comes from the live frame
+    /// feed first, falling back to the resolved anchor, and
+    /// the spotlight stays hidden until the card is actually
+    /// on screen, like the rows.
+    private func cardFullSpotlightRect(proxy: GeometryProxy) -> CGRect? {
+        guard let resolved = cardFrame(proxy: proxy) else { return nil }
+        guard isTargetVisible(resolved, in: proxy) else { return nil }
+        return resolved.insetBy(dx: -4, dy: -4)
     }
 
     /// True when a drawer target frame is genuinely on screen:
@@ -1151,85 +1365,6 @@ struct NavigationTourOverlay: View {
             && frame.maxX <= size.width + tolerance
             && frame.minY >= -tolerance
             && frame.maxY <= size.height + tolerance
-    }
-
-    /// The 64pt circle centred on a drawer target's icon: the
-    /// icon centre is the given offset into the target frame,
-    /// vertically centred on the frame. The circle itself is
-    /// shifted only enough to stay on screen, which moves it
-    /// off the icon by at most a few points when the target
-    /// sits at an extreme edge; the target frame is already
-    /// verified visible, so this never fabricates a position
-    /// for an off-screen row.
-    private func iconCircleRect(rowFrame: CGRect, iconCenterXOffset: CGFloat, proxy: GeometryProxy) -> CGRect {
-        let diameter: CGFloat = 64
-        let centerX = rowFrame.minX + iconCenterXOffset
-        let centerY = min(max(rowFrame.midY, diameter / 2 + 8), proxy.size.height - diameter / 2 - 8)
-        return CGRect(x: centerX - diameter / 2, y: centerY - diameter / 2, width: diameter, height: diameter)
-    }
-
-    /// The drawer row spotlight: the one uniform drawer box,
-    /// centred on the row. The row's anchor supplies only the
-    /// vertical centre; the size is the same for every drawer
-    /// step, so the highlights never vary. Nil when the anchor
-    /// is missing (the row has not laid out yet), when the
-    /// resolved rect is empty, or when the row is fully off
-    /// screen.
-    private func drawerSpotlightRect(for destination: DrawerDestination, proxy: GeometryProxy) -> CGRect? {
-        guard let anchor = drawerRowAnchors[destination] else { return nil }
-        let resolved = proxy[anchor]
-        guard !resolved.isNull, resolved.width > 0, resolved.height > 0 else { return nil }
-        let center = CGPoint(x: drawerWidth(for: proxy.size) / 2, y: resolved.midY)
-        return uniformSpotlightRect(center: center, proxy: proxy)
-    }
-
-    /// The Keep Learning card spotlight: the same uniform
-    /// drawer box, centred on the card. The card's anchor
-    /// supplies only the vertical centre, like the rows, so
-    /// the Start Learning box is exactly the size of every
-    /// other drawer highlight. Nil when the anchor is missing
-    /// or the resolved rect is empty or fully off screen.
-    private func cardSpotlightRect(proxy: GeometryProxy) -> CGRect? {
-        guard let anchor = keepLearningAnchor else { return nil }
-        let resolved = proxy[anchor]
-        guard !resolved.isNull, resolved.width > 0, resolved.height > 0 else { return nil }
-        let center = CGPoint(x: drawerWidth(for: proxy.size) / 2, y: resolved.midY)
-        return uniformSpotlightRect(center: center, proxy: proxy)
-    }
-
-    /// The one size for every drawer-family highlight: the
-    /// width spans the drawer plus 8pt on each side, and the
-    /// height fits the Keep Learning card plus 8pt on each
-    /// side, so the tallest target is never clipped and rows
-    /// share the card's exact box. Centred on the target, and
-    /// shifted, never shrunk, near the screen edges, so the
-    /// size stays identical on every step.
-    private func uniformSpotlightRect(center: CGPoint, proxy: GeometryProxy) -> CGRect? {
-        let width = drawerWidth(for: proxy.size) + 16
-        let height = uniformDrawerSpotlightHeight(proxy: proxy)
-        var rect = CGRect(x: center.x - width / 2, y: center.y - height / 2, width: width, height: height)
-        let container = CGRect(origin: .zero, size: proxy.size)
-        if rect.minX < 0 { rect.origin.x = 0 }
-        if rect.maxX > container.maxX { rect.origin.x = container.maxX - rect.width }
-        if rect.minY < 8 { rect.origin.y = 8 }
-        if rect.maxY > container.maxY - 8 { rect.origin.y = container.maxY - 8 - rect.height }
-        guard !rect.isNull, rect.width > 0, rect.height > 0 else { return nil }
-        return rect
-    }
-
-    /// The uniform drawer highlight height: the Keep Learning
-    /// card's live height plus 8pt on each side, so the box
-    /// fits the tallest drawer target on any device and text
-    /// size. Falls back to the measured 139pt when the card
-    /// anchor has not arrived yet.
-    private func uniformDrawerSpotlightHeight(proxy: GeometryProxy) -> CGFloat {
-        if let anchor = keepLearningAnchor {
-            let card = proxy[anchor]
-            if !card.isNull, card.height > 0 {
-                return card.height + 16
-            }
-        }
-        return 139
     }
 
     // MARK: - Tooltip placement
@@ -1385,8 +1520,10 @@ struct NavigationTourOverlay: View {
             .accessibilityElement(children: .combine)
             .accessibilityFocused($accessibilityFocus, equals: .tooltip)
             HStack(spacing: PFSpacing.sm) {
-                tourOutlineButton(title: "Back") {
-                    goBack(from: stepIndex)
+                if stepIndex > 0 {
+                    tourOutlineButton(title: "Back") {
+                        goBack(from: stepIndex)
+                    }
                 }
                 tourGoldButton(title: "Next") {
                     goNext(from: stepIndex)
@@ -1427,7 +1564,7 @@ struct NavigationTourOverlay: View {
                     .foregroundColor(.white)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Take a quick tour of the key areas of the app, in plain words: your learning journey, your lessons, listening to lessons, and how to buy a course. It only takes a minute. The app stays fully usable while the tour runs.")
+                Text("Take a quick tour of the key areas of the app, in plain words: your learning journey, your lessons, the practice areas, and how to buy a course. It only takes a minute. The app stays fully usable while the tour runs.")
                     .font(.pfCaption)
                     .foregroundColor(.white.opacity(0.85))
                     .multilineTextAlignment(.center)
@@ -1558,12 +1695,13 @@ struct NavigationTourOverlay: View {
     /// same step re-apply the immediate bits and nothing else.
     /// With Reduce Motion the tab switches at once and there is
     /// no glide, click, or page scroll. Drawer and card steps
-    /// open the drawer and circle the row or card icon from its
-    /// live frame, and the hand points at the icon from the
-    /// same frame; once the drawer settles, the step actually
-    /// opens its target through the parent callbacks, so every
-    /// step opens what it describes. Tab steps close any
-    /// destination an earlier step opened. Drawer steps pulse
+    /// open the drawer and frame the whole row or card from its
+    /// live frame, and the hand points at the row or card icon
+    /// from the same frame; no step opens its target, so the
+    /// tour never leaves a step on its own and dismissing a
+    /// sheet can never replay a step with no highlight. Every
+    /// step entry closes any destination an earlier step
+    /// opened. Drawer steps pulse
     /// the scroll target and then open the drawer, so the
     /// drawer list re-issues its scroll into view on every
     /// entry, and schedule geometry re-resolves after the slide
@@ -1587,10 +1725,15 @@ struct NavigationTourOverlay: View {
         // step's target and vanishes when the target is off
         // screen.
         postSearchDemoReset()
-        if step.tabIndex != 2 {
-            searchDemoFieldActive = false
-            searchDemoPhase = .idle
-        }
+        // Every step entry stands the Search demo and the Home
+        // block demo down: the Search step re-activates its demo
+        // after the tab switch, and the Home step re-activates
+        // its block highlight the same way. Standing down
+        // unconditionally keeps a leftover demo state from
+        // leaking onto the next step.
+        searchDemoFieldActive = false
+        searchDemoPhase = .idle
+        homeBlockActive = false
         if let tabIndex = step.tabIndex {
             isDrawerOpen = false
             drawerScrollTarget = nil
@@ -1601,7 +1744,7 @@ struct NavigationTourOverlay: View {
             sequencedStep = index
             handPoint = nil
             if reduceMotion {
-                selectedTab = tabIndex
+                writeSelectedTab(tabIndex)
                 return
             }
             transitionGeneration += 1
@@ -1613,15 +1756,38 @@ struct NavigationTourOverlay: View {
                     guard myGeneration == transitionGeneration else { return }
                     withAnimation(.easeInOut(duration: 0.15)) { clickTap = false }
                     showClickRipple()
-                    selectedTab = tabIndex
-                    if tabIndex == 1 {
+                    writeSelectedTab(tabIndex)
+                    if tabIndex == (DrawerDestination.search.tabIndex ?? 1) {
                         // Search step: the typing demo runs
                         // against the live Search page, typing
                         // the demo query and submitting it, so
                         // the step shows a real search, not an
                         // empty field. No scroll showcase here.
                         runSearchDemo(generation: myGeneration)
-                    } else if tabIndex == 2 {
+                    } else if tabIndex == (DrawerDestination.home.tabIndex ?? 0) {
+                        // Home step: spotlight the Continue
+                        // learning block for 2 seconds before
+                        // the scroll showcase, so the step's
+                        // "next lesson first" copy has a visible
+                        // highlight on the real block. Then the
+                        // page scrolls through its content and
+                        // back, like every other tab step.
+                        Task { @MainActor in
+                            guard myGeneration == transitionGeneration else { return }
+                            homeBlockActive = true
+                            try? await Task.sleep(nanoseconds: 2_000_000_000)
+                            guard myGeneration == transitionGeneration else { return }
+                            homeBlockActive = false
+                            TourPageScroller.scrollThroughPage()
+                            let drag = pageDragPoints()
+                            Task {
+                                await runHandDrag(
+                                    legs: [(drag.center, 0.4), (drag.raised, 1.8), (drag.raised, 0.35), (drag.center, 1.6)],
+                                    generation: myGeneration
+                                )
+                            }
+                        }
+                    } else if tabIndex == (DrawerDestination.paymentCases.tabIndex ?? 2) {
                         // Payment Cases: the list renders its
                         // ContentManifest.situationCount rows lazily, so a full traverse
                         // outruns the rendering and flashes
@@ -1661,6 +1827,10 @@ struct NavigationTourOverlay: View {
                 }
             }
         } else if let destination = step.destination {
+            // A sheet opened by an earlier step (or by a tap
+            // through the overlay) must not cover this drawer
+            // step: close it before opening the drawer.
+            onOpenDestination(nil)
             TourPageScroller.cancel()
             // Release any drag point left over from a tab
             // step, so the hand never lands mid-screen here.
@@ -1707,21 +1877,11 @@ struct NavigationTourOverlay: View {
             guard sequencedStep != index else { return }
             sequencedStep = index
             // A new generation so any pending tab sequence
-            // (scroll showcase or search demo) aborts.
+            // (scroll showcase or search demo) aborts. The step
+            // only highlights the row: it never opens the
+            // destination, so dismissing a sheet can never
+            // replay this step with no highlight.
             transitionGeneration += 1
-            let drawerGeneration = transitionGeneration
-            // The drawer slide and scroll finish around 0.9s
-            // in. Then the step opens its target for real, with
-            // a click ripple on the row: the learner lands in
-            // the destination, dismisses it, and continues the
-            // tour from this step. Guarded by the phase and the
-            // generation, so a fast Next or Back never opens a
-            // stale destination.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                guard drawerGeneration == transitionGeneration, phase == .step(index) else { return }
-                showClickRipple()
-                onOpenDestination(destination)
-            }
         } else if step.highlightsCard {
             // The card is fixed at the bottom of the drawer, so
             // no scroll is needed: open the drawer and spotlight
@@ -1752,18 +1912,11 @@ struct NavigationTourOverlay: View {
             guard sequencedStep != index else { return }
             sequencedStep = index
             // A new generation so any pending tab sequence
-            // (scroll showcase or search demo) aborts.
+            // (scroll showcase or search demo) aborts. The step
+            // only highlights the card: it never opens the
+            // card's target, so the tour never leaves this step
+            // on its own.
             transitionGeneration += 1
-            let cardGeneration = transitionGeneration
-            // The hand points at the circled card icon from the
-            // live frame once the drawer slide settles. Then
-            // the step opens the card's target (the top of Home)
-            // for real, guarded like the drawer activation.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                guard cardGeneration == transitionGeneration, phase == .step(index) else { return }
-                showClickRipple()
-                onOpenKeepLearning()
-            }
         }
     }
 
@@ -1839,6 +1992,13 @@ struct NavigationTourOverlay: View {
             )
             try? await Task.sleep(nanoseconds: 900_000_000)
             guard generation == transitionGeneration else { return }
+            // Filter beat: the spotlight moves to the difficulty
+            // pills while the hand points at them, so the step's
+            // filter copy has a visible highlight on the real
+            // pills, then the demo stands down.
+            searchDemoPhase = .pills
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard generation == transitionGeneration else { return }
             searchDemoFieldActive = false
             searchDemoPhase = .idle
         }
@@ -1881,6 +2041,16 @@ struct NavigationTourOverlay: View {
         withAnimation(.easeInOut(duration: 0.4)) { handPoint = nil }
     }
 
+    /// The tour's only tab write: marks the change as
+    /// programmatic (so the change handler does not mistake it
+    /// for a manual tap), switches the tab, and reports the
+    /// write to the parent's tab log.
+    private func writeSelectedTab(_ index: Int) {
+        programmaticTabChange = true
+        selectedTab = index
+        onTabWrite?(index, "tour")
+    }
+
     private func startTour() {
         phase = .step(0)
         applySideEffects(for: 0)
@@ -1888,6 +2058,9 @@ struct NavigationTourOverlay: View {
     }
 
     private func goToStep(_ index: Int) {
+        let now = Date()
+        guard now.timeIntervalSince(lastStepAdvance) >= 0.25 else { return }
+        lastStepAdvance = now
         phase = .step(index)
         applySideEffects(for: index)
         accessibilityFocus = .tooltip

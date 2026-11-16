@@ -46,7 +46,24 @@ struct SearchView: View {
     /// pushed detail views have no menu button and keep a clean back button.
     @Binding var isDrawerOpen: Bool
 
-    @State private var query = ""
+    /// Reselect tick from the tab bar: bumped when the learner
+    /// taps the Search tab while already on it. Scrolls the
+    /// browse list back to the top and recreates the results
+    /// list at the top.
+    var tabReselectTick: Int = 0
+
+    /// The search text, preserved across restarts through
+    /// SceneStorage. The computed bridge keeps every existing
+    /// read and write working; the TextField binds through
+    /// queryBinding below.
+    @SceneStorage("search.query") private var storedQuery = ""
+    private var query: String {
+        get { storedQuery }
+        set { storedQuery = newValue }
+    }
+    private var queryBinding: Binding<String> {
+        Binding(get: { query }, set: { query = $0 })
+    }
     /// The latest tour demo run accepted: keystrokes from an
     /// older run are ignored, so a demo abandoned mid-typing
     /// can never overwrite a newer one.
@@ -81,8 +98,16 @@ struct SearchView: View {
     /// row above the search field. Multi-select: tapping a level
     /// toggles it. An empty selection means all levels, and
     /// selecting every level means all levels too, so an
-    /// all-selected filter can never empty the results.
-    @State private var selectedLevels: Set<SituationLevel> = []
+    /// all-selected filter can never empty the results. The
+    /// selection is preserved across restarts through
+    /// SceneStorage, stored as comma-separated raw values; the
+    /// computed bridge keeps every existing read, write and
+    /// insert/remove working.
+    @SceneStorage("search.selectedLevels") private var storedLevels = ""
+    private var selectedLevels: Set<SituationLevel> {
+        get { Set(storedLevels.split(separator: ",").compactMap { SituationLevel(rawValue: String($0)) }) }
+        set { storedLevels = newValue.map(\.rawValue).sorted().joined(separator: ",") }
+    }
 
     /// Results shown at first: 20 per page, Load more adds 20.
     /// Only the shown results are grouped and rendered, so a
@@ -550,6 +575,12 @@ struct SearchView: View {
             .onChange(of: filterSignature) { _, _ in
                 visibleResultCount = Self.resultsPageSize
             }
+            // Tab reselect: recreate the results list at the top.
+            // The browse list scrolls to its top anchor through
+            // the reset token on pfScrollToTopOnAppear below.
+            .onChange(of: tabReselectTick) { _, _ in
+                resultsListGeneration += 1
+            }
             // The guided tour's Search demo: the tour types a
             // query character by character and taps search.
             // Demo keystrokes only land when the field is empty
@@ -613,6 +644,8 @@ struct SearchView: View {
             }
             .padding(.horizontal, PFSpacing.lg)
         }
+        // Reports the pill strip frame for the tour's filter demo.
+        .anchorPreference(key: SearchPillsAnchorKey.self, value: .bounds) { $0 }
         .padding(.top, PFSpacing.md)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Difficulty filter")
@@ -627,7 +660,7 @@ struct SearchView: View {
             Image(systemName: "magnifyingglass")
                 .foregroundColor(.pfSecondaryText)
                 .accessibilityHidden(true)
-            TextField("Search lessons, guides, situations and more", text: $query)
+            TextField("Search lessons, guides, situations and more", text: queryBinding)
                 .font(.pfBody)
                 .foregroundColor(.pfNavy)
                 .autocapitalization(.none)
@@ -720,7 +753,7 @@ struct SearchView: View {
             .padding(PFSpacing.lg)
             .id("searchBrowseTop")
         }
-        .pfScrollToTopOnAppear("searchBrowseTop")
+        .pfScrollToTopOnAppear("searchBrowseTop", resetWhen: tabReselectTick)
         .background(Color.pfBackground)
         .scrollDismissesKeyboard(.interactively)
         // Extra scrollable space at the bottom so the last row clears
@@ -946,7 +979,7 @@ struct SearchView: View {
                     if !matchedChapters.isEmpty {
                         Section(header: Text("Courses (\(matchedChapters.count))")) {
                             ForEach(matchedChapters, id: \.self) { number in
-                                NavigationLink(destination: ChapterDetailView(chapterNumber: number)) {
+                                PFGuardedNavigationLink(key: "chapter-\(number)", destination: { ChapterDetailView(chapterNumber: number) }) {
                                     courseResultRow(chapterNumber: number)
                                 }
                                 .listRowBackground(Color.pfCard)
@@ -1060,7 +1093,7 @@ struct SearchView: View {
                         .font(.pfCaptionBold)
                         .foregroundColor(.pfRoyal)
                 } else {
-                    Text("Outside the main reading path")
+                    Text("Outside the main reading order")
                         .font(.pfCaptionBold)
                         .foregroundColor(.pfRoyal)
                 }
@@ -1069,9 +1102,18 @@ struct SearchView: View {
                     .foregroundColor(.pfNavy)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("\(lessons.count) lessons, \(completed) complete")
-                    .font(.pfCaption)
-                    .foregroundColor(.pfSecondaryText)
+                // No "0 complete" for a fresh learner: the count
+                // line names completed lessons only once at
+                // least one is done.
+                if completed > 0 {
+                    Text("\(lessons.count) lessons, \(completed) complete")
+                        .font(.pfCaption)
+                        .foregroundColor(.pfSecondaryText)
+                } else {
+                    Text("\(lessons.count) lessons")
+                        .font(.pfCaption)
+                        .foregroundColor(.pfSecondaryText)
+                }
             }
             Spacer()
             Image(systemName: "chevron.right")
@@ -1101,12 +1143,12 @@ struct SearchView: View {
         let entry = scored.entry
         switch entry.type {
         case .lesson:
-            NavigationLink(destination: LessonView(entry: entry)) {
+            PFGuardedNavigationLink(key: entry.id, destination: { LessonView(entry: entry) }) {
                 SearchResultRow(entry: entry, reason: scored.reason, matchedTerm: scored.matchedTerm, query: debouncedQuery, situationsByID: situationsByID)
             }
             .listRowBackground(Color.pfCard)
         case .situation:
-            NavigationLink(destination: SituationDetailView(situation: situationFor(entry: entry, situationsByID: situationsByID))) {
+            PFGuardedNavigationLink(key: entry.id, destination: { SituationDetailLoaderView(situation: situationFor(entry: entry, situationsByID: situationsByID)) }) {
                 SearchResultRow(entry: entry, reason: scored.reason, matchedTerm: scored.matchedTerm, query: debouncedQuery, situationsByID: situationsByID)
             }
             .listRowBackground(Color.pfCard)
@@ -1538,12 +1580,12 @@ private struct SearchTypeListView: View {
     private func row(for entry: SearchEntry, situationsByID: [String: FullSituationItem]) -> some View {
         switch entry.type {
         case .lesson:
-            NavigationLink(destination: LessonView(entry: entry)) {
+            PFGuardedNavigationLink(key: entry.id, destination: { LessonView(entry: entry) }) {
                 SearchResultRow(entry: entry, situationsByID: situationsByID)
             }
             .listRowBackground(Color.pfCard)
         case .situation:
-            NavigationLink(destination: SituationDetailView(situation: situationFor(entry: entry, situationsByID: situationsByID))) {
+            PFGuardedNavigationLink(key: entry.id, destination: { SituationDetailLoaderView(situation: situationFor(entry: entry, situationsByID: situationsByID)) }) {
                 SearchResultRow(entry: entry, situationsByID: situationsByID)
             }
             .listRowBackground(Color.pfCard)

@@ -31,15 +31,25 @@ struct FinalAssessmentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var authService = AuthService.shared
     @ObservedObject private var assessmentStore = FinalAssessmentStore.shared
-    @StateObject private var session = AssessmentSession()
+    @StateObject private var session: AssessmentSession
 
     let course: CourseProduct
+
+    /// The holder key for this course's exam: one live session
+    /// per course, so a popped attempt resumes.
+    private var sessionKey: String {
+        "final:\(course.productID)"
+    }
+
+    init(course: CourseProduct) {
+        self.course = course
+        _session = StateObject(wrappedValue: AssessmentSessionHolder.shared.session(for: "final:\(course.productID)"))
+    }
 
     @State private var loadedQuestions: [AssessmentQuestion] = []
     @State private var isLoading = true
     @State private var loadError: String? = nil
     @State private var selectedOption: Int? = nil
-    @State private var didRecordAttempt = false
     @State private var earnedCertificate: CourseCertificate? = nil
 
     /// UserDefaults key for this course's exam end time. The timer
@@ -174,15 +184,20 @@ struct FinalAssessmentView: View {
             // spent backgrounded counts and an expired exam submits
             // immediately instead of waiting for the next tick.
             if newPhase == .active {
-                session.recheckTime()
+                session.resumeTimer()
+            } else if newPhase == .background {
+                session.pauseTimer()
             }
         }
+        .onAppear {
+            session.resumeTimer()
+        }
         .onDisappear {
-            session.stop()
+            session.pauseTimer()
         }
         .onChange(of: session.isFinished) { _, finished in
-            if finished, !didRecordAttempt {
-                didRecordAttempt = true
+            if finished, !AssessmentSessionHolder.shared.resultRecorded(for: sessionKey) {
+                AssessmentSessionHolder.shared.markResultRecorded(for: sessionKey)
                 earnedCertificate = assessmentStore.recordAttempt(
                     for: course,
                     correct: session.correctCount,
@@ -282,7 +297,7 @@ struct FinalAssessmentView: View {
     /// on its wall clock; it is recorded on the analytics start
     /// event so resumes and fresh starts stay distinct.
     private func startExam(totalLimit: Int, isResume: Bool = false) {
-        didRecordAttempt = false
+        AssessmentSessionHolder.shared.clearResultRecorded(for: sessionKey)
         earnedCertificate = nil
         selectedOption = nil
         session.start(

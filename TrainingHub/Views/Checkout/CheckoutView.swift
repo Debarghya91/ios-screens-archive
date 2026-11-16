@@ -46,16 +46,10 @@ struct CheckoutView: View {
     @ObservedObject private var finalAssessmentStore = FinalAssessmentStore.shared
 
     @State private var showTransactionHistory = false
-    /// Arms the Purchase alert: it only ever shows a store message
-    /// that follows the learner's own Buy or Restore tap in this
-    /// view, mirroring the gated alert in LessonView. The
-    /// launch-time product load also writes to statusMessage, and
-    /// without this gate its failure would pop a Purchase alert
-    /// unprompted. The status banner at the top of this screen
-    /// already shows the same message, but it can sit above the
-    /// visible scroll area when a Buy button below is tapped, so
-    /// the alert is the confirmation the learner always sees.
-    @State private var showPurchaseAlert = false
+
+    /// Purchase results show in the single purchase alert owned
+    /// by the tab view, so no alert or banner is kept here: one
+    /// message, one presenter, no double display.
 
     private static let displayDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -100,22 +94,6 @@ struct CheckoutView: View {
                     Button("Close") { dismiss() }
                 }
             }
-            .alert(
-                "Purchase",
-                isPresented: Binding(
-                    get: { showPurchaseAlert && storeManager.statusMessage != nil },
-                    set: {
-                        if !$0 {
-                            storeManager.clearStatusMessage()
-                            showPurchaseAlert = false
-                        }
-                    }
-                )
-            ) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text(storeManager.statusMessage ?? "")
-            }
         }
     }
 
@@ -123,16 +101,6 @@ struct CheckoutView: View {
 
     private var myPurchasesTab: some View {
         VStack(alignment: .leading, spacing: PFSpacing.xl) {
-            if let message = storeManager.statusMessage {
-                Text(message)
-                    .font(.pfBody)
-                    .foregroundColor(storeManager.unlockedProductCount > 0 ? .pfSuccess : .pfSecondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(PFSpacing.md)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.pfNavySoft)
-                    .cornerRadius(PFSpacing.cardRadius)
-            }
             catalogueIntroCard
             freeVsPaidSection
             productListSection
@@ -180,7 +148,7 @@ struct CheckoutView: View {
                 // what buying gives: ownership of the set, restore,
                 // and sync when signed in. See the file header.
                 PFBodyText(text: StoreManager.buildPhaseBuyOpensContent ? "For now, Buy opens the course on this device. No payment is taken." : "Each product gives 1 year of access from purchase, and can be renewed for 1 more year at half the sale price. The Integrated Course includes every course and every standalone product. Purchases restore with the same Apple ID, and sync to your account when you are signed in.")
-                if storeManager.productLoadFailed {
+                if storeManager.productLoadFailed || storeManager.productLoadIncomplete {
                     VStack(alignment: .leading, spacing: PFSpacing.sm) {
                         Text("Prices could not be loaded from the App Store. Check your connection, then try again. No purchase can be made until the price loads.")
                             .font(.pfBody)
@@ -359,6 +327,12 @@ struct CheckoutView: View {
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
+                        if !course.audience.isEmpty {
+                            Text(course.audience)
+                                .font(.pfCaption)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer(minLength: PFSpacing.sm)
                     if storeManager.isProductUnlocked(course.productID) {
@@ -414,11 +388,10 @@ struct CheckoutView: View {
                     // loaded, the button stays disabled. Every
                     // purchase gives 1 year of access.
                     PFGoldButton(title: buyButtonTitle(for: course)) {
-                        // Clear any stale store message and arm the
-                        // alert, so only this tap's result can pop
-                        // the Purchase alert.
+                        // Clear any stale store message, so the
+                        // tab view's purchase alert shows only
+                        // this tap's result.
                         storeManager.clearStatusMessage()
-                        showPurchaseAlert = true
                         Task {
                             await storeManager.purchase(productID: course.productID)
                         }
@@ -511,7 +484,6 @@ struct CheckoutView: View {
         VStack(alignment: .leading, spacing: PFSpacing.sm) {
             PFSecondaryButton(title: renewButtonTitle(for: course)) {
                 storeManager.clearStatusMessage()
-                showPurchaseAlert = true
                 Task {
                     await storeManager.purchaseRenewal(for: course.productID)
                 }
@@ -649,7 +621,6 @@ struct CheckoutView: View {
                     subtitle: "Already bought it on another iPhone or after reinstalling? Restore it with the same Apple ID. No account needed."
                 ) {
                     storeManager.clearStatusMessage()
-                    showPurchaseAlert = true
                     Task { await storeManager.restorePurchases() }
                 }
                 .disabled(storeManager.isBusy)
@@ -701,7 +672,6 @@ struct CheckoutView: View {
                         subtitle: integratedCourseSubtitle()
                     ) {
                         storeManager.clearStatusMessage()
-                        showPurchaseAlert = true
                         Task { await storeManager.purchase(productID: ProductCatalogue.fullCourseProductID) }
                     }
                     .disabled(integratedCourseDisabled())

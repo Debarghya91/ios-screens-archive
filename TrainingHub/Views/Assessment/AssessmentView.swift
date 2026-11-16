@@ -21,18 +21,26 @@ import SwiftUI
 
 struct AssessmentView: View {
     @EnvironmentObject private var contentService: ContentService
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var competencyStore = CompetencyStore.shared
-    @StateObject private var session = AssessmentSession()
+    @StateObject private var session: AssessmentSession
 
     let dimension: CompetencyStore.CompetencyDimension
     let chapterNumbers: [Int]
     let sourceTitle: String
+
+    /// The holder key for this assessment: one live session per
+    /// dimension and chapter set, so a popped attempt resumes.
+    private var sessionKey: String {
+        "assessment:\(dimension.rawValue):\(chapterNumbers.map(String.init).joined(separator: ","))"
+    }
 
     /// Assessment for one competency dimension.
     init(dimension: CompetencyStore.CompetencyDimension) {
         self.dimension = dimension
         self.chapterNumbers = dimension.chapterNumbers
         self.sourceTitle = dimension.rawValue
+        _session = StateObject(wrappedValue: AssessmentSessionHolder.shared.session(for: "assessment:\(dimension.rawValue):\(dimension.chapterNumbers.map(String.init).joined(separator: ","))"))
     }
 
     /// Assessment for one learning path, scored against the path's
@@ -41,6 +49,7 @@ struct AssessmentView: View {
         self.dimension = path.assessmentDimension
         self.chapterNumbers = path.chapterNumbers
         self.sourceTitle = path.title
+        _session = StateObject(wrappedValue: AssessmentSessionHolder.shared.session(for: "assessment:\(path.assessmentDimension.rawValue):\(path.chapterNumbers.map(String.init).joined(separator: ","))"))
     }
 
     @State private var loadedQuestions: [AssessmentQuestion] = []
@@ -49,7 +58,6 @@ struct AssessmentView: View {
     @State private var selectedOption: Int? = nil
     @State private var timedMode = false
     @State private var randomisedMode = true
-    @State private var didRecordResult = false
 
     var body: some View {
         ScrollView {
@@ -102,12 +110,24 @@ struct AssessmentView: View {
         .task {
             await loadQuestions()
         }
+        .onAppear {
+            // Resume a paused attempt: the timer restarts with the
+            // remaining time recomputed from the wall clock.
+            session.resumeTimer()
+        }
         .onDisappear {
-            session.stop()
+            session.pauseTimer()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                session.resumeTimer()
+            } else if newPhase == .background {
+                session.pauseTimer()
+            }
         }
         .onChange(of: session.isFinished) { _, finished in
-            if finished, !didRecordResult {
-                didRecordResult = true
+            if finished, !AssessmentSessionHolder.shared.resultRecorded(for: sessionKey) {
+                AssessmentSessionHolder.shared.markResultRecorded(for: sessionKey)
                 competencyStore.recordAssessment(
                     dimension: dimension,
                     correct: session.correctCount,
@@ -217,7 +237,7 @@ struct AssessmentView: View {
                 }
             }
             PFPrimaryButton(title: "Start assessment") {
-                didRecordResult = false
+                AssessmentSessionHolder.shared.clearResultRecorded(for: sessionKey)
                 selectedOption = nil
                 session.start(questions: loadedQuestions, timed: timedMode, randomised: randomisedMode)
                 // Analytics, consent-gated by the service.
@@ -390,7 +410,7 @@ struct AssessmentView: View {
                 }
             }
             PFPrimaryButton(title: "Retake assessment") {
-                didRecordResult = false
+                AssessmentSessionHolder.shared.clearResultRecorded(for: sessionKey)
                 selectedOption = nil
                 session.start(questions: loadedQuestions, timed: timedMode, randomised: randomisedMode)
                 // Analytics, consent-gated by the service: a retake

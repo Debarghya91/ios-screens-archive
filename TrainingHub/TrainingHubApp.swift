@@ -4,6 +4,7 @@
 
 import SwiftUI
 import UserNotifications
+import os
 
 @main
 struct TrainingHubApp: App {
@@ -16,6 +17,11 @@ struct TrainingHubApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        // Crash capture installs first, before anything else can
+        // run: it arms the uncaught-exception handler and the
+        // run marker, so a crash anywhere in the launch path is
+        // still recorded for Diagnostics.
+        CrashCapture.install()
         // The local notification service is the notification
         // centre delegate from launch, so tapped notifications
         // route even on a cold start. No other code sets the
@@ -82,18 +88,36 @@ struct TrainingHubApp: App {
                     _ = await (index, agendas, situations, store)
                 }
                 .onChange(of: scenePhase) { _, newPhase in
-                    // On every activation, refresh the system
-                    // authorisation state and make the scheduled
-                    // local notifications match it and the current
-                    // preferences. Both calls are cheap and
-                    // idempotent, and the status refresh runs
-                    // first so the schedule uses fresh state.
-                    // Nothing here prompts: the one-time in-app
-                    // explanation lives in MainTabView.
-                    guard newPhase == .active else { return }
-                    Task { @MainActor in
-                        await LocalNotificationService.shared.refreshAuthorizationStatus()
-                        LocalNotificationService.shared.refreshScheduledNotifications()
+                    switch newPhase {
+                    case .active:
+                        // On every activation, refresh the system
+                        // authorisation state and make the scheduled
+                        // local notifications match it and the current
+                        // preferences. Both calls are cheap and
+                        // idempotent, and the status refresh runs
+                        // first so the schedule uses fresh state.
+                        // Nothing here prompts: the one-time in-app
+                        // explanation lives in MainTabView.
+                        // The same activation refreshes purchase
+                        // entitlements from the device and the
+                        // server, so a purchase, renewal or refund
+                        // made outside the app takes effect without
+                        // a relaunch, and marks the run as a clean
+                        // foreground entry for crash capture.
+                        Task { @MainActor in
+                            await LocalNotificationService.shared.refreshAuthorizationStatus()
+                            LocalNotificationService.shared.refreshScheduledNotifications()
+                            await storeManager.refreshEntitlement()
+                            await storeManager.refreshEntitlementFromServer()
+                            CrashCapture.markEnteredForeground()
+                        }
+                    case .background:
+                        // A backgrounded run that never returns is a
+                        // clean exit, not a crash: record it so the
+                        // next launch does not report a false crash.
+                        CrashCapture.markCleanExit()
+                    default:
+                        break
                     }
                 }
                 .onChange(of: authService.currentUser) { _, _ in
@@ -141,7 +165,14 @@ struct TrainingHubApp: App {
 struct MainTabView: View {
     @EnvironmentObject private var contentService: ContentService
     @EnvironmentObject private var progressStore: ProgressStore
+    @EnvironmentObject private var storeManager: StoreManager
     @EnvironmentObject private var deepLinkRouter: TrainingHubDeepLinkRouter
+
+    /// Navigation log: every tab switch is recorded with its
+    /// source (tab bar, drawer, tour, Home, Dashboard), so a
+    /// wrong-landing report can be traced to the route that
+    /// caused it.
+    private let navLog = Logger(subsystem: "TrainingHub", category: "NAV")
 
     /// The onboarding store, built by the onboarding worker. Its
     /// hasCompletedOnboarding flag alone drives the onboarding
@@ -153,11 +184,59 @@ struct MainTabView: View {
     @StateObject private var onboardingStore = OnboardingStore.shared
 
     @State private var isDrawerOpen = false
+    /// Opens the Privacy Policy and Terms of Service in the
+    /// browser: the drawer rows link out to the live legal
+    /// pages, they never present a sheet.
+    @Environment(\.openURL) private var openURL
     @State private var selectedTab = 0
+    /// Bumped when the learner taps the tab they are already
+    /// on. Each root view watches it and scrolls to its top.
+    @State private var tabReselectTick = 0
+    /// The sequence of the last deep link actually routed.
+    /// A second routing attempt for the same sequence is
+    /// rejected, so a link can never open twice.
+    @State private var lastRoutedDeepLinkSequence = 0
+
+    /// The tab bar's selection binding: a tap on the current
+    /// tab bumps the reselect tick (the root scrolls to its
+    /// top), and every switch goes through the centralised
+    /// navigation, logged with its source. Programmatic
+    /// switches write selectedTab through navigateToTab
+    /// directly and never pass through this binding, so they
+    /// never bump the tick.
+    private var tabSelection: Binding<Int> {
+        Binding(
+            get: { selectedTab },
+            set: { newValue in
+                if newValue == selectedTab {
+                    tabReselectTick += 1
+                }
+                navigateToTab(newValue, source: "tabBar")
+            }
+        )
+    }
+
+    /// Record a tab switch with its source. The tour calls this
+    /// through its onTabWrite closure: the overlay already wrote
+    /// the binding, so the tour path logs without writing again.
+    private func logTabNavigation(_ index: Int, source: String) {
+        navLog.info("Tab navigation to \(index, privacy: .public) source \(source, privacy: .public)")
+    }
+
+    /// The one programmatic tab switch: logs the source, then
+    /// writes the selection. Every route in this view (drawer,
+    /// tour finish, Home and Dashboard actions) goes through
+    /// here, never through a direct selectedTab write, so tab
+    /// identity stays in DrawerDestination.tabIndex and every
+    /// switch is traceable.
+    private func navigateToTab(_ index: Int, source: String) {
+        logTabNavigation(index, source: source)
+        selectedTab = index
+    }
     /// The Home section an outside route wants to land on, set
-    /// together with the tab switch by handleDrawerSelection, the
-    /// tour's Keep Learning step and the Dashboard's Start learning
-    /// actions (through the Dashboard's binding). Home scrolls to
+    /// together with the tab switch by handleDrawerSelection,
+    /// the tour's Keep Learning step and the Dashboard's Start
+    /// learning action (through its closure). Home scrolls to
     /// it and clears it.
     @State private var homeSectionTarget: HomeSectionTarget? = nil
     @State private var presentedSheet: DrawerDestination? = nil
@@ -214,6 +293,12 @@ struct MainTabView: View {
     /// The anchor of the Search page's search field, for the
     /// tour's typing demo on the Search step.
     @State private var searchFieldAnchor: Anchor<CGRect>? = nil
+    /// The anchor of the Search page's difficulty pill strip,
+    /// for the tour's filter demo on the Search step.
+    @State private var searchPillsAnchor: Anchor<CGRect>? = nil
+    /// The anchor of the Home page's Continue learning block,
+    /// for the tour's block demo on the Home step.
+    @State private var continueLearningAnchor: Anchor<CGRect>? = nil
     /// The drawer row the tour wants scrolled into view, if any.
     /// Passed through the drawer container to the drawer list.
     @State private var tourScrollTarget: DrawerDestination? = nil
@@ -273,12 +358,12 @@ struct MainTabView: View {
                 selectedTab: selectedTab,
                 tourScrollTarget: tourScrollTarget
             ) {
-                TabView(selection: $selectedTab) {
+                TabView(selection: tabSelection) {
                     HomeView(
                         isDrawerOpen: $isDrawerOpen,
-                        selectedTab: $selectedTab,
-                        homeSectionTarget: $homeSectionTarget,
-                        onReplayTour: replayTour
+                        onSelectTab: { index in navigateToTab(index, source: "home") },
+                        tabReselectTick: tabReselectTick,
+                        homeSectionTarget: $homeSectionTarget
                     )
                         .tag(0)
                         .tabItem {
@@ -286,14 +371,14 @@ struct MainTabView: View {
                         }
                         .accessibilityLabel("Home")
 
-                    SearchView(isDrawerOpen: $isDrawerOpen)
+                    SearchView(isDrawerOpen: $isDrawerOpen, tabReselectTick: tabReselectTick)
                         .tag(1)
                         .tabItem {
                             tabLabel(title: "Search", systemImage: "magnifyingglass", index: 1)
                         }
                         .accessibilityLabel("Search")
 
-                    SituationsView(isDrawerOpen: $isDrawerOpen)
+                    SituationsView(isDrawerOpen: $isDrawerOpen, tabReselectTick: tabReselectTick)
                         .tag(2)
                         .tabItem {
                             tabLabel(title: "Payment Cases", systemImage: "briefcase.fill", index: 2)
@@ -302,8 +387,11 @@ struct MainTabView: View {
 
                     DashboardView(
                         isDrawerOpen: $isDrawerOpen,
-                        selectedTab: $selectedTab,
-                        homeSectionTarget: $homeSectionTarget
+                        onStartLearning: {
+                            navigateToTab(DrawerDestination.home.tabIndex ?? 0, source: "dashboard")
+                            homeSectionTarget = .learn(.courses)
+                        },
+                        tabReselectTick: tabReselectTick
                     )
                         .tag(3)
                         .tabItem {
@@ -353,7 +441,21 @@ struct MainTabView: View {
                     PracticeExperienceSheet {
                         CommunityChallengeView()
                     }
-                case .myLearning, .home, .learn, .search, .paymentCases, .myProgress, .startTour:
+                case .certificates:
+                    PracticeExperienceSheet {
+                        CertificatesListView()
+                    }
+                case .learningHabit:
+                    PracticeExperienceSheet {
+                        HabitSheetView()
+                    }
+                case .notifications:
+                    PracticeExperienceSheet {
+                        NotificationSettingsView()
+                    }
+                case .diagnostics:
+                    DiagnosticsView()
+                case .myLearning, .home, .learn, .search, .paymentCases, .myProgress, .startTour, .interviewQuestions, .privacyPolicy, .termsOfService:
                     EmptyView()
                 }
             }
@@ -379,9 +481,11 @@ struct MainTabView: View {
                     keepLearningAnchor: keepLearningAnchor,
                     keepLearningFrame: keepLearningFrame,
                     searchFieldAnchor: searchFieldAnchor,
+                    searchPillsAnchor: searchPillsAnchor,
+                    continueLearningAnchor: continueLearningAnchor,
                     onOpenDestination: openDestinationFromTour,
-                    onOpenKeepLearning: openKeepLearningFromTour,
-                    onFinish: finishTour
+                    onFinish: finishTour,
+                    onTabWrite: { index, source in logTabNavigation(index, source: source) }
                 )
                 .zIndex(2)
             }
@@ -410,6 +514,12 @@ struct MainTabView: View {
         .onPreferenceChange(SearchFieldAnchorKey.self) { anchor in
             searchFieldAnchor = anchor
         }
+        .onPreferenceChange(SearchPillsAnchorKey.self) { anchor in
+            searchPillsAnchor = anchor
+        }
+        .onPreferenceChange(ContinueLearningAnchorKey.self) { anchor in
+            continueLearningAnchor = anchor
+        }
         .coordinateSpace(name: TourCoordinateSpace.name)
         // Deep-link lesson sheet: a lesson link opens here, in its
         // own NavigationStack with a Done button, over any tab.
@@ -428,6 +538,25 @@ struct MainTabView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("That link did not match a lesson in the course catalogue.")
+        }
+        // The one purchase alert in the app: every purchase,
+        // restore and verification notice from StoreManager
+        // surfaces here, and nowhere else, so a notice can
+        // never stack over a lesson or a checkout screen.
+        // Dismissing clears the message; the store writes
+        // purchase notices only, never load failures.
+        .alert(
+            "Purchase",
+            isPresented: Binding(
+                get: { storeManager.statusMessage != nil },
+                set: { isPresented in
+                    if !isPresented { storeManager.clearStatusMessage() }
+                }
+            )
+        ) {
+            Button("OK", role: .cancel) { storeManager.clearStatusMessage() }
+        } message: {
+            Text(storeManager.statusMessage ?? "")
         }
         .alert("Turn on reminders?", isPresented: $showNotificationPermissionPrompt) {
             Button("Allow notifications") {
@@ -532,23 +661,35 @@ struct MainTabView: View {
     private func handleDrawerSelection(_ destination: DrawerDestination) {
         switch destination {
         case .home:
-            selectedTab = 0
+            navigateToTab(DrawerDestination.home.tabIndex ?? 0, source: "drawer")
             homeSectionTarget = .top
         case .myLearning:
             // The Keep Learning card promises Continue/Start, so
             // it lands on the top of Home, where the Continue
             // learning block names the next lesson.
-            selectedTab = 0
+            navigateToTab(DrawerDestination.home.tabIndex ?? 0, source: "drawer")
             homeSectionTarget = .top
         case .learn:
-            selectedTab = 0
+            navigateToTab(DrawerDestination.home.tabIndex ?? 0, source: "drawer")
             homeSectionTarget = .learn(.courses)
         case .search:
-            selectedTab = 1
+            navigateToTab(DrawerDestination.search.tabIndex ?? 1, source: "drawer")
         case .paymentCases:
-            selectedTab = 2
+            navigateToTab(DrawerDestination.paymentCases.tabIndex ?? 2, source: "drawer")
         case .myProgress:
-            selectedTab = 3
+            navigateToTab(DrawerDestination.myProgress.tabIndex ?? 3, source: "drawer")
+        case .interviewQuestions:
+            // Interview Questions stays practice content: it
+            // lands on Home's Practice tab, where the interview
+            // section lives.
+            navigateToTab(DrawerDestination.home.tabIndex ?? 0, source: "drawer")
+            homeSectionTarget = .tab(.practice)
+        case .certificates, .learningHabit, .notifications, .diagnostics:
+            presentedSheet = destination
+        case .privacyPolicy:
+            openURL(SupabaseConfig.privacyPolicyURL)
+        case .termsOfService:
+            openURL(SupabaseConfig.termsURL)
         case .practice:
             // Practice Mode as a sheet, for the first
             // practice-eligible situation. See PracticeSheetView.
@@ -574,17 +715,34 @@ struct MainTabView: View {
     /// once: the view loads its own data. A link is never routed
     /// before onboarding finishes, because the onboarding cover
     /// sits above the sheets; routing retries when the flag flips.
-    /// Gating is unchanged throughout: LessonView applies its own
-    /// gate, so only free sample lessons open with full content.
+    /// Two guards stop stale routing: a link older than 30 minutes
+    /// is dropped, and a link whose sequence was already routed is
+    /// never routed again. Gating is unchanged throughout:
+    /// LessonView applies its own gate, so only free sample lessons
+    /// open with full content.
     private func resolvePendingDeepLink() {
         guard onboardingStore.hasCompletedOnboarding,
               let link = deepLinkRouter.pendingLink else { return }
+        // TTL: a link tapped long ago (cold start, onboarding,
+        // a slow catalogue) must not open content the learner no
+        // longer expects. 30 minutes covers every real launch.
+        if let receivedAt = deepLinkRouter.pendingReceivedAt,
+           Date().timeIntervalSince(receivedAt) > 30 * 60 {
+            deepLinkRouter.clear()
+            return
+        }
+        // Duplicate sequence: this link was already routed. A
+        // re-entrant call during routing must not open it twice.
+        let sequence = deepLinkRouter.pendingSequence
+        guard sequence != lastRoutedDeepLinkSequence else { return }
         switch link {
         case .weeklyFreeCase:
+            lastRoutedDeepLinkSequence = sequence
             deepLinkRouter.clear()
             presentedSheet = .weeklyFreeCase
         case .lesson(let lessonID):
             guard let index = contentService.searchIndex else { return }
+            lastRoutedDeepLinkSequence = sequence
             deepLinkRouter.clear()
             if let entry = index.entries.first(where: { $0.id == lessonID && $0.type == .lesson }) {
                 deepLinkLessonEntry = entry
@@ -616,16 +774,6 @@ struct MainTabView: View {
         }
     }
 
-    /// Open the Keep Learning card's target from the tour's final
-    /// step: close the drawer and land on the top of Home, where
-    /// the Continue learning block names the next lesson, the same
-    /// routing as tapping the card itself.
-    private func openKeepLearningFromTour() {
-        isDrawerOpen = false
-        selectedTab = 0
-        homeSectionTarget = .top
-    }
-
     /// Show the guided tour only when onboarding has finished and
     /// the tour itself is unfinished. Called on appear (returning
     /// learners, onboarding already complete), from the onboarding
@@ -646,7 +794,7 @@ struct MainTabView: View {
         tourScrollTarget = nil
         isDrawerOpen = false
         presentedSheet = nil
-        selectedTab = 0
+        navigateToTab(DrawerDestination.home.tabIndex ?? 0, source: "tour")
         // The permission explanation follows the tour, once the
         // overlay has gone. The delayed check re-reads every
         // guard, so it stays silent if anything changed.
@@ -733,6 +881,21 @@ private struct PracticeExperienceSheet<Content: View>: View {
     }
 }
 
+/// The Learning habit sheet: the habit section (daily goal,
+/// streak, weekly target, revision) in a scroll view, presented
+/// from the drawer's "Everything inside" section.
+private struct HabitSheetView: View {
+    var body: some View {
+        ScrollView {
+            HabitSectionView()
+                .padding(PFSpacing.lg)
+        }
+        .background(Color.pfBackground)
+        .navigationTitle("Learning habit")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
 private struct PracticeSheetView: View {
     @EnvironmentObject private var contentService: ContentService
     @Environment(\.dismiss) private var dismiss
@@ -765,6 +928,16 @@ private struct PracticeSheetView: View {
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let error = contentService.indexError, contentService.searchIndex == nil {
+                    PFErrorStateView(
+                        title: "Could not load the course catalogue",
+                        message: error,
+                        retryTitle: "Retry"
+                    ) {
+                        Task { await contentService.loadSearchIndex() }
+                    }
+                    .padding(PFSpacing.xl)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     VStack(spacing: PFSpacing.md) {

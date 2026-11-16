@@ -150,12 +150,6 @@ struct LessonView: View {
 
     /// Opens the Purchases screen from the locked lesson card.
     @State private var showCheckout = false
-    /// Arms the Purchase alert: it only ever shows a store
-    /// message that follows the learner's own Buy tap in this
-    /// view. The launch-time product load also writes to
-    /// statusMessage, and without this gate its failure pops a
-    /// Purchase alert over the first lesson opened, unprompted.
-    @State private var showPurchaseAlert = false
 
     /// Arms the remove-download confirmation: removing the saved
     /// audio is confirmed before it happens, and the section then
@@ -713,12 +707,27 @@ struct LessonView: View {
             }
         }
         .onChange(of: isLessonLocked) { _, locked in
-            if !locked {
+            if locked {
+                // The lesson locked under an open view (sign-out,
+                // refund, or expiry): stop the narration at once,
+                // so audio never keeps playing for locked content.
+                audioService.stop()
+                hasStartedAudio = false
+                didAutoAdvance = false
+                showFinishedPrompt = false
+            } else {
                 Task { await setupLesson() }
             }
         }
         .onDisappear {
             audioService.stop()
+            // Nil the finish/next/previous callbacks: they capture
+            // this view, and the view owns the audio service, so
+            // leaving them set keeps the service alive forever.
+            // setupLesson() re-wires them on the next appear.
+            audioService.onFinished = nil
+            audioService.onNextLesson = nil
+            audioService.onPreviousLesson = nil
             // Reset the started flag so Play starts the audio fresh
             // if the learner comes back to this lesson.
             hasStartedAudio = false
@@ -741,22 +750,6 @@ struct LessonView: View {
                 audioService: audioService,
                 onClose: { showFullScreenVisual = false }
             )
-        }
-        .alert(
-            "Purchase",
-            isPresented: Binding(
-                get: { showPurchaseAlert && storeManager.statusMessage != nil },
-                set: {
-                    if !$0 {
-                        storeManager.clearStatusMessage()
-                        showPurchaseAlert = false
-                    }
-                }
-            )
-        ) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text(storeManager.statusMessage ?? "")
         }
         .confirmationDialog(
             "Remove this download?",
@@ -2256,11 +2249,10 @@ struct LessonView: View {
                         .foregroundColor(.pfNavy)
                         .fixedSize(horizontal: false, vertical: true)
                     PFGoldButton(title: storeManager.isBusy ? "Please wait..." : "Buy \(part.name) for \(storeManager.priceText(for: part.productID))") {
-                        // Clear any stale launch-time store message
-                        // and arm the alert, so only this tap's
-                        // result can pop the Purchase alert.
+                        // Clear any stale launch-time store message;
+                        // the result shows in the single purchase
+                        // alert owned by the tab view.
                         storeManager.clearStatusMessage()
-                        showPurchaseAlert = true
                         Task { await storeManager.purchase(productID: part.productID) }
                     }
                     .disabled(storeManager.isBusy)
@@ -2315,6 +2307,10 @@ struct LessonView: View {
         if let loaded = await contentService.loadLessonDetailWithSource(entry: entry) {
             detail = loaded.detail
             detailSource = loaded.source
+            // The full detail replaces the summary paragraphs: a
+            // highlight left over from the summary could point at
+            // the wrong paragraph in the full text.
+            highlightedParagraphIndex = nil
             hasLoadedDetail = true
         } else {
             loadError = "This lesson could not be loaded. Check your connection and tap Retry."

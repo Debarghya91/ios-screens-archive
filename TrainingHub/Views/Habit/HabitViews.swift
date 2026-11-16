@@ -116,18 +116,27 @@ private struct DailyObjectiveHabitCard: View {
                                 )
                             }
                         }
-                        Text(objective.lesson.title)
-                            .font(.pfCardTitle)
-                            .foregroundColor(.pfNavy)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(PFChapterHelper.chapterTitle(for: objective.lesson))
-                            .font(.pfCaption)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if let duration = LessonDurations.listenLabel(for: objective.lesson.id) {
-                            Text(duration)
-                                .font(.pfCaption)
-                                .foregroundColor(.pfSecondaryText)
+                        HStack(alignment: .top, spacing: PFSpacing.md) {
+                            if objective.lesson.thumbnail != nil {
+                                PFThumbnailView(thumbnailPath: objective.lesson.thumbnail, size: 44, cornerRadius: 12)
+                            } else {
+                                PFIconTile(systemImage: "target", size: 44)
+                            }
+                            VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                                Text(objective.lesson.title)
+                                    .font(.pfCardTitle)
+                                    .foregroundColor(.pfNavy)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text(PFChapterHelper.chapterTitle(for: objective.lesson))
+                                    .font(.pfCaption)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let duration = LessonDurations.listenLabel(for: objective.lesson.id) {
+                                    Text(duration)
+                                        .font(.pfCaption)
+                                        .foregroundColor(.pfSecondaryText)
+                                }
+                            }
                         }
                         Text(objective.reason)
                             .font(.pfBody)

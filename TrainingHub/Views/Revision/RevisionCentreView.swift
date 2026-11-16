@@ -359,7 +359,11 @@ private struct AddLessonSheet: View {
                             } label: {
                                 PFCard {
                                     HStack(spacing: PFSpacing.md) {
-                                        PFIconTile(systemImage: "book.fill", size: 40)
+                                        if lesson.thumbnail != nil {
+                                            PFThumbnailView(thumbnailPath: lesson.thumbnail, size: 40, cornerRadius: 12)
+                                        } else {
+                                            PFIconTile(systemImage: "book.fill", size: 40)
+                                        }
                                         Text(lesson.title)
                                             .font(.pfBody)
                                             .foregroundColor(.pfNavy)

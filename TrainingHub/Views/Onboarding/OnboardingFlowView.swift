@@ -1,8 +1,9 @@
 // OnboardingFlowView.swift
 // Payments Training Hub iOS - Explanation-first first-run screen:
-// one screen that says who the app is for, why it helps, and how
-// the journey works, then a single Get started button. No
-// questions up front: the old seven-step flow asked about role,
+// one screen that says what you get, who the app is for, how you
+// learn, why it helps, and what is free, then a single Get started
+// button and a Skip this introduction button that does the same.
+// No questions up front: the old seven-step flow asked about role,
 // knowledge, objective, intensity and a diagnostic before the
 // learner had seen anything, and new users dropped out. The
 // profile models, the store, and the diagnostic view all stay in
@@ -41,10 +42,35 @@ struct OnboardingFlowView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: PFSpacing.lg) {
-                    Text("Learn payments, properly.")
-                        .font(.pfScreenTitle)
-                        .foregroundColor(.pfNavy)
-                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                        Text("Learn payments, properly.")
+                            .font(.pfScreenTitle)
+                            .foregroundColor(.pfNavy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("The full payments course: short lessons, real cases, and practice, in plain language.")
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    PFCard {
+                        VStack(alignment: .leading, spacing: PFSpacing.md) {
+                            Text("What you get")
+                                .font(.pfCardTitle)
+                                .foregroundColor(.pfNavy)
+                            countRow(value: ProductCatalogue.partProducts.count, label: "courses, in reading order")
+                            countRow(value: ContentManifest.chapterCount, label: "chapters")
+                            countRow(value: ContentManifest.lessonCount, label: "lessons")
+                            countRow(value: ContentManifest.situationCount, label: "Payment Cases")
+                            countRow(value: ContentManifest.interviewQuestionCount, label: "interview questions")
+                            countRow(value: ContentManifest.guideCount, label: "guides")
+                            countRow(value: ContentManifest.labCount, label: "labs")
+                            countRow(value: ContentManifest.testCount, label: "tests")
+                            countRow(value: ContentManifest.simulatorCount, label: "simulators")
+                            countRow(value: ContentManifest.faqCount, label: "FAQs")
+                            countRow(value: ContentManifest.weeklyCaseCount, label: "weekly cases")
+                        }
+                    }
 
                     explanationBlock(
                         systemImage: "person.2.fill",
@@ -52,22 +78,25 @@ struct OnboardingFlowView: View {
                         body: "Built for people who work in payments or want to: business analysts, product owners, freshers starting out, and anyone who needs to understand how money moves."
                     )
                     explanationBlock(
-                        systemImage: "lightbulb.fill",
-                        title: "Why it helps",
-                        body: "881 short narrated lessons across 10 courses, 564 real-world payment situations, practice labs, simulators, and interview preparation, all in one place, in plain language."
+                        systemImage: "map.fill",
+                        title: "How you learn",
+                        body: "Pick a learning journey, or start at Course 1 and work in order. Read the lesson, or tap Play and listen. Practise with real payment cases. Your progress saves as you go."
                     )
                     explanationBlock(
-                        systemImage: "map.fill",
-                        title: "Your journey",
-                        body: "Start with Course 1 and work through in order, or pick the course that matches the gap you need to close. Your progress saves as you go."
+                        systemImage: "lightbulb.fill",
+                        title: "Why it helps",
+                        body: "\(ContentManifest.lessonCount) short narrated lessons across \(ProductCatalogue.partProducts.count) courses, \(ContentManifest.situationCount) real-world payment situations, practice labs, simulators, and interview preparation, all in one place, in plain language."
                     )
 
                     PFCard {
-                        VStack(spacing: PFSpacing.md) {
-                            countRow(value: ContentManifest.chapterCount, label: "chapters")
-                            countRow(value: ContentManifest.lessonCount, label: "lessons")
-                            countRow(value: ContentManifest.situationCount, label: "Payment Cases")
-                            countRow(value: ContentManifest.interviewQuestionCount, label: "interview questions")
+                        VStack(alignment: .leading, spacing: PFSpacing.md) {
+                            Text("What is free")
+                                .font(.pfCardTitle)
+                                .foregroundColor(.pfNavy)
+                            freeRow("The first lesson of every chapter is free, with the full content.")
+                            freeRow("A few Payment Cases are free to try.")
+                            freeRow("You can browse the whole catalogue free, with no sign-in.")
+                            freeRow("Courses unlock when you buy them, for 1 year.")
                         }
                     }
 
@@ -78,6 +107,15 @@ struct OnboardingFlowView: View {
                         getStarted()
                     }
                     .accessibilityLabel("Get started")
+
+                    Button("Skip this introduction") {
+                        getStarted()
+                    }
+                    .font(.pfBody.weight(.semibold))
+                    .foregroundColor(.pfRoyal)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .accessibilityLabel("Skip this introduction")
+                    .accessibilityHint("Skips the introduction and opens the app.")
 
                     Text("No sign-in needed. Nothing here locks browsing: you can explore first and come back to a route later.")
                         .font(.pfBody)
@@ -126,6 +164,23 @@ struct OnboardingFlowView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(value) \(label)")
+    }
+
+    /// One "What is free" line: a checkmark and the promise, in
+    /// plain words. Every line restates a claim the app already
+    /// makes on its locked screens and catalogue copy.
+    private func freeRow(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: PFSpacing.sm) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.pfSuccess)
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.pfBody)
+                .foregroundColor(.pfSecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(text)
     }
 
     /// Get started: record onboarding as complete with no
@@ -198,7 +253,7 @@ struct OnboardingFlowView: View {
     @ViewBuilder
     private var freeCaseCard: some View {
         if let freeCase {
-            NavigationLink(destination: SituationDetailView(situation: freeCase)) {
+            NavigationLink(destination: SituationDetailLoaderView(situation: freeCase)) {
                 PFCard {
                     HStack(spacing: PFSpacing.md) {
                         if freeCase.thumbnail != nil {

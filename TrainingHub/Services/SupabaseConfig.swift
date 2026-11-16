@@ -164,6 +164,10 @@ struct CourseProduct: Identifiable, Hashable {
     /// Contents line override for standalone products. Empty means
     /// the contents line is derived from chapters or situations.
     let contentsSummary: String
+    /// Who this product is for, in one sentence. Shown on the
+    /// course and purchase screens so the learner can tell at a
+    /// glance whether it matches them.
+    let audience: String
 
     init(
         id: String,
@@ -178,7 +182,8 @@ struct CourseProduct: Identifiable, Hashable {
         renewalPriceINR: Int = 0,
         validityDays: Int = EntitlementValidity.validityDays,
         lessonCount: Int = 0,
-        contentsSummary: String = ""
+        contentsSummary: String = "",
+        audience: String = ""
     ) {
         self.id = id
         self.productID = productID
@@ -193,6 +198,7 @@ struct CourseProduct: Identifiable, Hashable {
         self.validityDays = validityDays
         self.lessonCount = lessonCount
         self.contentsSummary = contentsSummary
+        self.audience = audience
     }
 
     /// The renewal subscription product ID for this product.

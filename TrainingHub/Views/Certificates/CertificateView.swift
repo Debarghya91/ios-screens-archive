@@ -202,15 +202,15 @@ struct CertificateView: View {
                     .foregroundColor(.pfNavy)
                     .fixedSize(horizontal: false, vertical: true)
                 let progress = path.progress(in: progressStore, service: contentService)
-                Text("Complete all \(progress.total) lessons in \(path.title) to earn the \(path.certificateTitle ?? "path") certificate. You have completed \(progress.completed) so far.")
+                Text(progress.completed > 0 ? "Complete all \(progress.total) lessons in \(path.title) to earn the \(path.certificateTitle ?? "journey") certificate. You have completed \(progress.completed) so far." : "Complete all \(progress.total) lessons in \(path.title) to earn the \(path.certificateTitle ?? "journey") certificate.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
-                if progress.total > 0 {
+                if progress.total > 0 && progress.completed > 0 {
                     PFProgressBar(progress: Double(progress.completed) / Double(progress.total))
                 }
                 NavigationLink(destination: PathDetailView(path: path)) {
-                    Text("Open the path")
+                    Text("Open the journey")
                         .font(.pfBody.weight(.semibold))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
@@ -239,7 +239,7 @@ struct CertificatesListView: View {
             VStack(alignment: .leading, spacing: PFSpacing.md) {
                 sampleCertificateSection
                 courseCertificatesSection
-                Text("Path certificates are issued only when every lesson in a path is complete. The Interview Preparation path has no certificate.")
+                Text("Journey certificates are issued only when every lesson in a journey is complete. The Interview Preparation journey has no certificate.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -255,7 +255,7 @@ struct CertificatesListView: View {
                                         .font(.pfCardTitle)
                                         .foregroundColor(.pfNavy)
                                         .fixedSize(horizontal: false, vertical: true)
-                                    Text(earned ? "Earned" : "\(progress.completed) of \(progress.total) lessons complete")
+                                    Text(earned ? "Earned" : (progress.completed > 0 ? "\(progress.completed) of \(progress.total) lessons complete" : "Not started"))
                                         .font(.pfCaptionBold)
                                         .foregroundColor(earned ? .pfSuccess : .pfRoyal)
                                 }
