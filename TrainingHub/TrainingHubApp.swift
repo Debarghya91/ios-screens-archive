@@ -44,10 +44,41 @@ struct TrainingHubApp: App {
 
     var body: some Scene {
         WindowGroup {
-            // Guest is the default: the app opens straight into the main
-            // tabs with no forced sign-in. Auth is an upgrade path
-            // (Profile / drawer "Sign in" opens WelcomeView), never a gate.
-            MainTabView()
+            // Sign-in is the mandatory first step: until a session
+            // exists, the app shows the sign-in screen and nothing
+            // else. No tab, lesson, case or sheet is reachable
+            // without a session. AuthService restores a stored
+            // session synchronously from the Keychain before the
+            // first frame, so a signed-in learner never sees the
+            // sign-in screen flash. Signing out, deleting the
+            // account, or a dead session drops the gate back to
+            // the sign-in screen. The gate waits for the
+            // post-sign-in prompts too (see isReadyForContent), so
+            // the guest-data migration offer and the registration
+            // welcome popup are answered on the sign-in screens
+            // before the tabs appear.
+            Group {
+                if authService.isReadyForContent {
+                    MainTabView()
+                        .task {
+                            // Load the catalogue, the agendas, the full situations
+                            // and the store in parallel: they are independent, and
+                            // running them in sequence delayed the store
+                            // behind a slow catalogue load. This runs only
+                            // behind the gate, so no content loads before
+                            // sign-in; every load is guarded against
+                            // re-entry, so signing out and back in never
+                            // duplicates work.
+                            async let index: Void = contentService.loadSearchIndex()
+                            async let agendas: Void = contentService.loadAgendas()
+                            async let situations: Void = contentService.loadFullSituations()
+                            async let store: Void = storeManager.start()
+                            _ = await (index, agendas, situations, store)
+                        }
+                } else {
+                    WelcomeView()
+                }
+            }
                 .environmentObject(contentService)
                 .environmentObject(progressStore)
                 .environmentObject(storeManager)
@@ -67,6 +98,11 @@ struct TrainingHubApp: App {
                     // sign-in error. Only URLs that are not deep
                     // links reach the auth handler. See
                     // ReferralInvite.swift for the link formats.
+                    // A deep link received while the sign-in gate
+                    // is up stays pending in the router: MainTabView
+                    // routes it once it appears, after sign-in and
+                    // onboarding, so a link can never open content
+                    // ahead of authentication.
                     if let link = TrainingHubDeepLink(url: url) {
                         Task { @MainActor in deepLinkRouter.receive(link) }
                         return
@@ -75,17 +111,6 @@ struct TrainingHubApp: App {
                     // token, or password reset link).
                     // handleAuthCallback returns false for non-auth URLs.
                     Task { _ = await authService.handleAuthCallback(url: url) }
-                }
-                .task {
-                    // Load the catalogue, the agendas, the full situations
-                    // and the store in parallel: they are independent, and
-                    // running them in sequence delayed the store
-                    // behind a slow catalogue load.
-                    async let index: Void = contentService.loadSearchIndex()
-                    async let agendas: Void = contentService.loadAgendas()
-                    async let situations: Void = contentService.loadFullSituations()
-                    async let store: Void = storeManager.start()
-                    _ = await (index, agendas, situations, store)
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     switch newPhase {
@@ -258,8 +283,9 @@ struct MainTabView: View {
     @State private var showDeepLinkNotFound = false
 
     /// The guided tour, shown once on first launch, after the
-    /// splash. Replayable from Help and Support. Guest mode stays:
-    /// the tour never forces sign-in. tourDone is the tour's own
+    /// splash. Replayable from Help and Support. The tour runs
+    /// after sign-in: the gate shows the sign-in screen first.
+    /// tourDone is the tour's own
     /// install-level flag, separate from the onboarding flag: the
     /// tour fires once after the first onboarding completion (see
     /// startTourIfNeeded) and never again, except on replay.
@@ -713,8 +739,11 @@ struct MainTabView: View {
     /// a lesson link carrying some other catalogue id never opens
     /// that content. Weekly-case links open the weekly sheet at
     /// once: the view loads its own data. A link is never routed
-    /// before onboarding finishes, because the onboarding cover
-    /// sits above the sheets; routing retries when the flag flips.
+    /// before sign-in: this view mounts only behind the gate, so a
+    /// link tapped while signed out waits in the router until the
+    /// learner signs in. A link is never routed before onboarding
+    /// finishes either, because the onboarding cover sits above
+    /// the sheets; routing retries when the flag flips.
     /// Two guards stop stale routing: a link older than 30 minutes
     /// is dropped, and a link whose sequence was already routed is
     /// never routed again. Gating is unchanged throughout:

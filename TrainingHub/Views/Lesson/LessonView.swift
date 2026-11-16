@@ -16,12 +16,13 @@
 import SwiftUI
 import Foundation
 
-// MARK: - Local bookmarks (guest, no sign-in)
+// MARK: - Local bookmarks
 //
 // Bookmarks live only on this device, in UserDefaults namespaced per
 // account through AccountScopedStorage, keyed by lesson id and
-// situation id. No sign-in is ever required: signed-out bookmarks
-// live under the guest namespace.
+// situation id. Bookmarks are stored locally, never synced; the
+// signed-out namespace holds bookmarks saved before the sign-in
+// gate, and the migration offer moves them into the account.
 // One shared instance, so a bookmark set in a detail view is reflected
 // in every list that shows the same item.
 final class PFBookmarkStore: ObservableObject {

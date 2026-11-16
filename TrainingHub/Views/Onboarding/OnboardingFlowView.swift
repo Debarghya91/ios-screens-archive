@@ -14,8 +14,8 @@
 // with no fabricated profile, weekly goal untouched) and calls
 // onFinish, so the flow can be presented as a fullScreenCover
 // with no other dependencies: the only init argument is
-// onFinish. Onboarding never forces sign-in and never gates
-// browsing.
+// onFinish. Onboarding runs after sign-in: the app gate shows
+// the sign-in screen first, and this flow never gates browsing.
 //
 // Counts come from ContentManifest only. The first lesson and the
 // free case come from the live catalogue, so nothing is shown
@@ -95,7 +95,7 @@ struct OnboardingFlowView: View {
                                 .foregroundColor(.pfNavy)
                             freeRow("The first lesson of every chapter is free, with the full content.")
                             freeRow("A few Payment Cases are free to try.")
-                            freeRow("You can browse the whole catalogue free, with no sign-in.")
+                            freeRow("You can browse the whole catalogue free.")
                             freeRow("Courses unlock when you buy them, for 1 year.")
                         }
                     }
@@ -117,7 +117,7 @@ struct OnboardingFlowView: View {
                     .accessibilityLabel("Skip this introduction")
                     .accessibilityHint("Skips the introduction and opens the app.")
 
-                    Text("No sign-in needed. Nothing here locks browsing: you can explore first and come back to a route later.")
+                    Text("Nothing here locks browsing: you can explore first and come back to a route later.")
                         .font(.pfBody)
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)

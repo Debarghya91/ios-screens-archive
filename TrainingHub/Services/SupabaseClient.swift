@@ -27,7 +27,7 @@ enum SupabaseError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notConfigured:
-            return "Sign-in is not set up yet. The app keeps working as a guest."
+            return "Sign-in is not set up yet. Please try again later."
         case .invalidURL:
             return "The server address is not valid."
         case .http(let status, _):

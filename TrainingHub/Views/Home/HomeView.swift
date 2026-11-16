@@ -18,10 +18,10 @@
 // user-facing: journeys are called learning journeys, the chosen
 // one is "Your journey", and the primary affordance names no
 // concept at all, just the next lesson.
-// Guest is the default: the screen works fully as a guest and never
-// blocks on sign-in. The greeting shows a name only when a user is
-// actually signed in (AuthService.currentUser); as a guest it says
-// "Learner".
+// Sign-in is the mandatory first step, so this screen is only
+// reachable signed in. The greeting shows the signed-in name
+// (AuthService.currentUser) and falls back to "Learner" when no
+// name is set.
 
 import SwiftUI
 import Foundation

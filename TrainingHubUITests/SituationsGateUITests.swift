@@ -9,10 +9,12 @@
 // exist in the app code (the identifiers are added by the D101
 // gate implementation itself).
 //
-// The tests run as a fresh guest with no purchase, so every
+// The tests run signed in with no purchase, so every
 // non-sample situation is locked (StoreManager.isPracticeUnlocked
-// is false). The explain text itself comes from live website data,
-// so no test can name an explain string: instead each locked test
+// is false). Without a stored session the tests skip in setUp:
+// sign-in is the mandatory first step. The explain text itself
+// comes from live website data, so no test can name an explain
+// string: instead each locked test
 // asserts the gate renders and every content surface is absent
 // (detail tabs, content section headings, the visual heading and
 // the Practice Mode entry, all of which only render with the full
@@ -34,6 +36,15 @@ final class SituationsGateUITests: XCTestCase {
         app = XCUIApplication()
         app.launchArguments.append("--uitest-guest-launch")
         app.launch()
+        // Sign-in is the mandatory first step: without a stored
+        // session the launch lands on the sign-in screen and no
+        // tab is reachable. These purchase-gate tests need a
+        // signed-in session, so skip plainly when the gate is
+        // showing instead of failing on tabs that must not exist.
+        // With a restored session the tests run as before.
+        if app.buttons["Continue with Email"].waitForExistence(timeout: 10) {
+            throw XCTSkip("Needs a signed-in session: sign-in is the mandatory first step, and these tests reach content behind the gate.")
+        }
     }
 
     /// Open the Payment Cases tab and wait for a locked situation
@@ -44,7 +55,7 @@ final class SituationsGateUITests: XCTestCase {
         let lockedRow = app.buttons["lockedSituationRow"].firstMatch
         XCTAssertTrue(
             lockedRow.waitForExistence(timeout: 30),
-            "A locked situation row must exist in Payment Cases for a guest with no purchase."
+            "A locked situation row must exist in Payment Cases for a signed-in learner with no purchase."
         )
         return lockedRow
     }

@@ -1,7 +1,6 @@
 // WeeklyFreeCaseView.swift
 // Payments Training Hub iOS - The free payment case of the week: one real
-// situation every week, free to open,
-// with no purchase and no sign-in.
+// situation every week, free to open, with no purchase.
 //
 // The case is picked deterministically by WeeklyFreeCaseSelector:
 // the same week and the same list always pick the same case, on
@@ -250,7 +249,7 @@ struct WeeklyFreeCaseView: View {
                 .font(.pfHeroTitle)
                 .foregroundColor(.white)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("\(weekLabel). A new case appears every Monday. Free to open, no purchase and no sign-in needed.")
+            Text("\(weekLabel). A new case appears every Monday. Free to open, no purchase needed.")
                 .font(.pfBody)
                 .foregroundColor(.white.opacity(0.85))
                 .fixedSize(horizontal: false, vertical: true)

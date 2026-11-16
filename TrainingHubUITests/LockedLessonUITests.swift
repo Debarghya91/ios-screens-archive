@@ -9,9 +9,11 @@
 // title, and element below was verified by grep against the app
 // source before it was written.
 //
-// Preconditions, same as the guest launch tests: the simulator has
-// completed onboarding, no purchase is owned, and the network is
-// available so the course catalogue can load. The tests target one
+// Preconditions: the simulator is signed in (a stored session
+// restores at launch), has completed onboarding, no purchase is
+// owned, and the network is available so the course catalogue can
+// load. Without a session the tests skip in setUp: the sign-in
+// gate is the mandatory first step. The tests target one
 // real non-sample lesson, ch1s2 ("Payment versus transfer"), the
 // second lesson of chapter 1 in the live search index. The first
 // lesson of a chapter is the free sample and opens unlocked, so a
@@ -58,6 +60,15 @@ final class LockedLessonUITests: XCTestCase {
         app = XCUIApplication()
         app.launchArguments.append("--uitest-guest-launch")
         app.launch()
+        // Sign-in is the mandatory first step: without a stored
+        // session the launch lands on the sign-in screen and no
+        // tab is reachable. These purchase-gate tests need a
+        // signed-in session, so skip plainly when the gate is
+        // showing instead of failing on tabs that must not exist.
+        // With a restored session the tests run as before.
+        if app.buttons["Continue with Email"].waitForExistence(timeout: 10) {
+            throw XCTSkip("Needs a signed-in session: sign-in is the mandatory first step, and these tests reach content behind the gate.")
+        }
     }
 
     /// The lesson body lock: opening a locked lesson from search
@@ -136,6 +147,14 @@ final class LockedLessonDeepLinkUITests: XCTestCase {
     func testLockedLessonDeepLinkShowsLock() throws {
         let url = try XCTUnwrap(URL(string: "com.paymentstraininghub.app://lesson?id=\(LockedLessonFixture.lessonID)"))
         try app.open(url)
+
+        // The gate: a link opened while signed out waits behind
+        // the sign-in screen and routes only after sign-in. Skip
+        // plainly when the gate is showing; with a restored
+        // session the link routes and the lock renders.
+        if app.buttons["Continue with Email"].waitForExistence(timeout: 10) {
+            throw XCTSkip("Needs a signed-in session: the deep link waits behind the mandatory sign-in gate.")
+        }
 
         XCTAssertTrue(
             app.staticTexts["Locked lesson"].waitForExistence(timeout: 30),

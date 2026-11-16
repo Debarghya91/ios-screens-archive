@@ -1053,7 +1053,7 @@ struct AboutTrainingHubView: View {
                         Text("How it works")
                             .font(.pfSectionTitle)
                             .foregroundColor(.pfNavy)
-                        PFBodyText(text: "Browse the catalogue freely, with no sign-in. The first lesson of every chapter is free. Courses unlock when you buy them, or buy the Integrated Course to unlock all chapters, lessons and Payment Situations. Payment Situations is also available on its own, paid by In-App Purchase. Progress syncs to your account when you sign in, and stays on your device when you do not.")
+                        PFBodyText(text: "Sign in to browse the catalogue. The first lesson of every chapter is free. Courses unlock when you buy them, or buy the Integrated Course to unlock all chapters, lessons and Payment Situations. Payment Situations is also available on its own, paid by In-App Purchase. Your progress syncs to your account across your devices.")
                     }
 
                     VStack(alignment: .leading, spacing: PFSpacing.sm) {

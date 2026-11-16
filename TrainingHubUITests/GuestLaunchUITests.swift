@@ -1,64 +1,65 @@
 // GuestLaunchUITests.swift
-// TrainingHub iOS - Phase 7 UI test: the guest launch flow.
-// The app must open straight to Home with no sign-in gate: a guest
-// sees the five tabs and the greeting, and is never forced into
-// WelcomeView. The UI test target TrainingHubUITests exists in the
-// Xcode project (verified in project.pbxproj, 12 Nov 2026); the old
-// note saying no target existed yet is removed.
+// TrainingHub iOS - UI tests: sign-in is the mandatory first step.
+// A fresh launch (no stored session) opens the sign-in screen and
+// shows no tab bar, no lesson, and no guest bypass: there is no
+// way to reach content without a session. A stored session
+// restores at launch, so a signed-in learner opens straight into
+// the tabs; these tests cover the signed-out launch only.
+//
+// The file keeps its historical name so project.pbxproj needs no
+// change; the class and the assertions are the gate tests. They
+// replace the old guest-launch tests, which asserted the guest
+// default (and a removed Learn tab) that the mandatory sign-in
+// gate removed. The purchase-gate UI tests (LockedLessonUITests,
+// SituationsGateUITests) skip plainly when the gate is showing
+// and run when a session is restored.
 //
 // UNEXECUTED: written on a Linux VM with no Xcode. These tests were
-// never compiled or run. Statically checked only.
-//
-// Phase 1: no UI assertion is added for the guest-migration alert
-// (it needs a signed-in session with guest data) or for the absence
-// of the Content management entry in Release (the entry is compiled
-// out with #if DEBUG, so no in-app UI test can assert Release
-// absence). Both are manual test items; see the Phase 1 test report.
+// never compiled or run. Statically checked only: every label
+// below was verified by grep against the app source.
 
 import XCTest
 
-final class GuestLaunchUITests: XCTestCase {
+final class SignInGateUITests: XCTestCase {
 
     private var app: XCUIApplication!
 
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments.append("--uitest-guest-launch")
         app.launch()
     }
 
-    func testGuestLaunchOpensHomeWithoutSignIn() {
-        // The tab bar is visible immediately: Home is the first tab.
-        let homeTab = app.tabBars.buttons["Home"]
-        XCTAssertTrue(homeTab.waitForExistence(timeout: 10), "Home tab must exist on launch for a guest.")
-        XCTAssertTrue(app.tabBars.buttons["Learn"].exists)
-        XCTAssertTrue(app.tabBars.buttons["Search"].exists)
-        XCTAssertTrue(app.tabBars.buttons["Payment Cases"].exists)
-        XCTAssertTrue(app.tabBars.buttons["My Progress"].exists)
-
-        // No sign-in sheet or welcome screen blocks the guest.
-        XCTAssertFalse(app.staticTexts["Sign in with Apple"].exists)
-        XCTAssertFalse(app.buttons["Continue with Apple"].exists)
+    func testFreshLaunchShowsSignInScreenAndNoTabs() {
+        // The sign-in screen is the first thing a signed-out
+        // learner sees: the email and create-account buttons
+        // exist, and no tab bar exists at all.
+        XCTAssertTrue(
+            app.buttons["Continue with Email"].waitForExistence(timeout: 10),
+            "The sign-in screen must show on a fresh launch."
+        )
+        XCTAssertTrue(app.buttons["Create account"].exists)
+        XCTAssertFalse(app.tabBars.firstMatch.exists, "No tab bar may exist before sign-in.")
+        XCTAssertFalse(app.tabBars.buttons["Home"].exists)
+        XCTAssertFalse(app.tabBars.buttons["Search"].exists)
+        XCTAssertFalse(app.tabBars.buttons["Payment Cases"].exists)
+        XCTAssertFalse(app.tabBars.buttons["My Progress"].exists)
     }
 
-    func testGuestCanOpenSearchTab() {
-        app.tabBars.buttons["Search"].tap()
-        XCTAssertTrue(app.textFields["Search lessons, guides, situations and more"].waitForExistence(timeout: 10))
+    func testGateHasNoGuestBypass() {
+        // No control may offer guest access: the old bypass
+        // buttons are gone, and a sign-in error offers only OK.
+        XCTAssertTrue(app.buttons["Continue with Email"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Explore as Guest"].exists)
+        XCTAssertFalse(app.buttons["Continue as guest"].exists)
     }
 
-    func testGuestCanOpenLearnTab() {
-        app.tabBars.buttons["Learn"].tap()
-        XCTAssertTrue(app.staticTexts["Learn"].firstMatch.waitForExistence(timeout: 10))
-    }
-
-    func testGuestCanOpenPaymentCasesTabWithoutSignIn() {
-        // Tapping into Payment Cases must not force a sign-in sheet:
-        // the free samples stay visible to a guest and paid content
-        // shows a lock, never a sign-in gate.
-        app.tabBars.buttons["Payment Cases"].tap()
-        XCTAssertTrue(app.tabBars.buttons["Payment Cases"].waitForExistence(timeout: 10))
-        XCTAssertFalse(app.staticTexts["Sign in with Apple"].exists)
-        XCTAssertFalse(app.buttons["Continue with Apple"].exists)
+    func testEmailSignInSheetOpensFromGate() {
+        XCTAssertTrue(app.buttons["Continue with Email"].waitForExistence(timeout: 10))
+        app.buttons["Continue with Email"].tap()
+        XCTAssertTrue(
+            app.staticTexts["Sign in with your email"].waitForExistence(timeout: 10),
+            "Tapping Continue with Email must open the email sign-in sheet."
+        )
     }
 }

@@ -1,15 +1,17 @@
 // WelcomeView.swift
-// Payments Training Hub iOS - Sign-in screen. A standalone screen, reachable
-// from Profile or the drawer "Sign in" row. It is NEVER a launch gate:
-// the app opens straight into the guest experience, and this screen
-// only appears when the learner asks to sign in.
+// Payments Training Hub iOS - Sign-in screen. The mandatory first
+// step: TrainingHubApp shows this screen until a session exists,
+// and no content is reachable without signing in. It is also
+// reachable from Profile for a signed-out learner.
 // No em dashes in any user-facing text.
 
 import SwiftUI
 import AuthenticationServices
 
-/// The welcome and sign-in screen. Guest is the default: "Explore as
-/// Guest" dismisses straight back to the main app.
+/// The welcome and sign-in screen. There is no guest path: every
+/// route into the app goes through a session. When presented as a
+/// sheet (Profile), signing in dismisses it; as the launch gate,
+/// the dismiss calls are no-ops and the gate itself flips.
 struct WelcomeView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var authService = AuthService.shared
@@ -53,7 +55,6 @@ struct WelcomeView: View {
             EmailSignupView()
         }
         .alert("Sign-in", isPresented: errorAlertBinding) {
-            Button("Continue as guest") { dismiss() }
             Button("OK", role: .cancel) { }
         } message: {
             Text(authService.authError ?? "Something went wrong. Please try again.")
@@ -180,7 +181,7 @@ struct WelcomeView: View {
                 if authService.canSignIn {
                     showEmailAuth = true
                 } else {
-                    authService.authError = "Sign-in is not set up yet. You can keep learning as a guest, and your progress stays on this device."
+                    authService.authError = "Sign-in is not set up yet. Please try again later."
                 }
             } label: {
                 Label("Continue with Email", systemImage: "envelope.fill")
@@ -198,7 +199,7 @@ struct WelcomeView: View {
                 if authService.canSignIn {
                     showEmailSignup = true
                 } else {
-                    authService.authError = "Sign-in is not set up yet. You can keep learning as a guest, and your progress stays on this device."
+                    authService.authError = "Sign-in is not set up yet. Please try again later."
                 }
             } label: {
                 Label("Create account", systemImage: "person.badge.plus")
@@ -212,30 +213,13 @@ struct WelcomeView: View {
             .buttonStyle(.plain)
             .disabled(authService.isBusy)
 
-            Button {
-                dismiss()
-            } label: {
-                Text("Explore as Guest")
-                    .font(.pfBody.weight(.semibold))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.white.opacity(0.14))
-                    .cornerRadius(PFSpacing.cornerRadius)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: PFSpacing.cornerRadius)
-                            .stroke(Color.white.opacity(0.4), lineWidth: 1)
-                    )
-            }
-            .buttonStyle(.plain)
-
             if authService.isBusy {
                 ProgressView()
                     .progressViewStyle(.circular)
                     .tint(.white)
             }
 
-            Text("No account is needed to learn. Signing in syncs your progress across devices and keeps it safe if you change phones.")
+            Text("Sign in to start learning. Your progress syncs across your devices and stays safe if you change phones.")
                 .font(.pfCaption)
                 .foregroundColor(.white.opacity(0.75))
                 .multilineTextAlignment(.center)

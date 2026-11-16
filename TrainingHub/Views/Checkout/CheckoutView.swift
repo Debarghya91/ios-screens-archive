@@ -864,7 +864,7 @@ struct CheckoutView: View {
     // MARK: - Footer
 
     private var footerNote: some View {
-        Text("No account is needed. Purchases are tied to your Apple ID. When you are signed in, your progress syncs across your devices. If you have questions, email support@paymentstraininghub.com.")
+        Text("Purchases are tied to your Apple ID. Your progress syncs across your devices. If you have questions, email support@paymentstraininghub.com.")
             .font(.pfBody)
             .foregroundColor(.pfSecondaryText)
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -12,9 +12,9 @@
 // website-only, because Apple In-App Purchase cannot take an
 // external discount. The registration welcome popup shows once,
 // right after the registration completes and the learner signs in;
-// AuthService owns that once-only flag. Guest remains the default:
-// this screen only appears when the learner asks to create an
-// account.
+// AuthService owns that once-only flag. Sign-in is the mandatory
+// first step: this screen is reached from the sign-in screen when
+// the learner creates an account.
 // No em dashes in any user-facing text.
 
 import SwiftUI

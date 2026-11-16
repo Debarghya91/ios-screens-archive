@@ -1,13 +1,14 @@
 // ProfileView.swift
 // Payments Training Hub iOS - Profile screen, separate from the Dashboard.
-// Guests see "Guest" with a Sign in button, and the account-only rows
-// stay behind a sign-in prompt. Signed-in users see their name, email,
+// Sign-in is the mandatory first step, so this screen is only
+// reachable signed in: users see their name, email,
 // verification badge, designation, organisation and years of
 // experience, plus real stats from ProgressStore (lessons completed,
-// day streak, quizzes taken). Learning time is shown on My Progress
-// from recorded durations; this screen shows counts only. Learning
-// reminders sit below the stats for both guests and signed-in
-// users: reminders are off by default and need explicit opt-in.
+// day streak, quizzes taken). The guest header below is kept only as
+// a defensive fallback and cannot show behind the gate. Learning
+// time is shown on My Progress from recorded durations; this screen
+// shows counts only. Learning reminders sit below the stats:
+// reminders are off by default and need explicit opt-in.
 // No em dashes in any user-facing text.
 
 import SwiftUI
@@ -129,7 +130,7 @@ struct ProfileView: View {
                         let deleted = await authService.deleteAccount()
                         deleteSucceeded = deleted
                         deleteResultMessage = deleted
-                            ? "Your account has been deleted. You are now learning as a guest."
+                            ? "Your account has been deleted."
                             : (authService.authError ?? "Account deletion is not available yet. Please try again later.")
                         showDeleteResultAlert = true
                     }
@@ -157,16 +158,16 @@ struct ProfileView: View {
         }
     }
 
-    // MARK: - Guest header
+    // MARK: - Signed-out header (defensive fallback, unreachable behind the gate)
 
     private var guestHeader: some View {
         PFCard {
             VStack(spacing: PFSpacing.md) {
                 initialsCircle(initials: "G", size: 84)
-                Text("Guest")
+                Text("Signed out")
                     .font(.pfScreenTitle)
                     .foregroundColor(.pfNavy)
-                Text("You are learning as a guest. Your progress stays on this device.")
+                Text("You are signed out. Sign in to keep learning.")
                     .font(.pfBody)
                     .foregroundColor(.pfSecondaryText)
                     .multilineTextAlignment(.center)
@@ -459,7 +460,7 @@ struct ProfileView: View {
         }
     }
 
-    // MARK: - Guest prompt
+    // MARK: - Signed-out prompt (defensive fallback, unreachable behind the gate)
 
     private var guestPromptSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.md) {

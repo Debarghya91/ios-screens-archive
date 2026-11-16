@@ -1,13 +1,15 @@
 // AuthService.swift
 // Payments Training Hub iOS - Sign in with Apple, email OTP / magic link,
 // Google sign-in, and session handling through Supabase Auth.
-// Guest is the default: nothing here is ever a launch gate. The app
-// opens straight into the guest experience, and auth is an upgrade
-// path reached from Profile or the drawer "Sign in" row.
+// Sign-in is the mandatory first step: TrainingHubApp shows the
+// sign-in screen until a session exists, and no content is
+// reachable without one. The stored session restores from the
+// Keychain at launch, so a signed-in learner opens straight into
+// the app.
 // Sessions live in the Keychain, never in UserDefaults: tokens are
 // secrets and UserDefaults is not a safe place for them.
 // When Supabase is not configured, every method fails gracefully with
-// "Sign-in is not set up yet" and the app keeps working as a guest.
+// "Sign-in is not set up yet" and the learner stays on the sign-in screen.
 // Google sign-in uses the Supabase Auth authorize URL with PKCE
 // (ASWebAuthenticationSession), the same pattern Supabase documents
 // for OAuth providers: no custom OAuth flow and no third-party SDK.
@@ -138,7 +140,7 @@ private enum AuthError: LocalizedError {
         case .appleTokenMissing:
             return "Apple did not return a sign-in token. Please try again."
         case .notConfigured:
-            return "Sign-in is not set up yet. The app keeps working as a guest."
+            return "Sign-in is not set up yet. Please try again later."
         }
     }
 }
@@ -234,6 +236,22 @@ final class AuthService: ObservableObject {
 
     /// True when a user is signed in.
     var isSignedIn: Bool { currentUser != nil }
+
+    /// True when sign-in is fully complete and content may show: a
+    /// session exists, and neither the one-time guest-data
+    /// migration offer nor the registration welcome popup is still
+    /// waiting for an answer. TrainingHubApp gates the main tabs
+    /// on this, not on isSignedIn alone: both post-sign-in prompts
+    /// live on the sign-in screens, and flipping to the tabs the
+    /// moment the session lands would destroy them before the
+    /// learner can answer. Both flags are decided before
+    /// currentUser is set in saveSession, so the gate never sees a
+    /// half-decided state, and neither flag is ever set by a
+    /// launch restore, so a returning learner is never held at
+    /// the gate.
+    var isReadyForContent: Bool {
+        isSignedIn && !offersGuestMigration && !showRegistrationWelcome
+    }
 
     /// True when Supabase is configured and sign-in can work.
     var canSignIn: Bool { client.isConfigured }
@@ -1097,15 +1115,16 @@ final class AuthService: ObservableObject {
     /// in-memory user and the account's in-memory store state. The
     /// account's stored data is NOT wiped: it stays under its own
     /// namespace and loads again on the next sign-in. What the
-    /// learner sees after signing out is the guest namespace, so a
-    /// different account signing in next can never see this
-    /// account's progress, notes or bookmarks.
+    /// learner sees after signing out is the sign-in screen (the
+    /// app gate), and the stores reload into the signed-out
+    /// namespace, so a different account signing in next can never
+    /// see this account's progress, notes or bookmarks.
     /// Downloaded audio is the one exception, and only in part:
     /// files recorded as downloaded by this account are removed,
     /// because playback of a downloaded file carries no
     /// entitlement re-check and the files would otherwise stay
-    /// playable offline by a guest or the next account. Files
-    /// downloaded as a guest, files owned by another identity,
+    /// playable offline by the next account. Files downloaded
+    /// while signed out, files owned by another identity,
     /// and files with no ownership record are kept (see
     /// LessonDownloadStore.removeDownloadsOwned). The account
     /// re-downloads its lessons on tap after the next sign-in.
@@ -1450,7 +1469,7 @@ final class AuthService: ObservableObject {
             return storedSession?.accessToken
         } catch {
             // A failed refresh means the session is dead. Clear it so
-            // the app falls back to guest instead of retrying forever.
+            // the sign-in screen shows again instead of retrying forever.
             clearSession()
             return nil
         }
@@ -1494,8 +1513,8 @@ final class AuthService: ObservableObject {
             throw SupabaseError.decoding(underlying: error)
         }
         // A session that is already expired is a malformed reply:
-        // storing it would bounce the learner straight back to guest
-        // through a failed refresh. Fail verification instead.
+        // storing it would bounce the learner straight back to the
+        // sign-in screen through a failed refresh. Fail verification instead.
         guard reply.expiresIn > 0 else {
             throw SupabaseError.decoding(underlying: DecodingError.dataCorrupted(DecodingError.Context(codingPath: [], debugDescription: "Session expiry must be positive.")))
         }
@@ -1753,7 +1772,7 @@ final class AuthService: ObservableObject {
     /// has, reload the stores so the moved data shows at once, then
     /// sync and refresh entitlements for the account. Migration
     /// copies, it does not move: the guest copy is left in place,
-    /// so signing out still shows the same guest data.
+    /// untouched.
     func acceptGuestMigration() async {
         guard let userID = currentUser?.id else {
             offersGuestMigration = false
@@ -1772,8 +1791,7 @@ final class AuthService: ObservableObject {
 
     /// Decline the migration offer. Guest data stays under the
     /// guest namespace, untouched, and the offer is not made again
-    /// for this account. The learner still sees guest data after
-    /// signing out; it is never synced to the account.
+    /// for this account. It is never synced to the account.
     func declineGuestMigration() {
         if let userID = currentUser?.id {
             markMigrationResolved(for: userID)
