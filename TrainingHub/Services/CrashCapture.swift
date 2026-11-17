@@ -19,7 +19,46 @@
 // previousDeathUnreported tells those deaths apart from clean runs.
 
 import Foundation
+import os
 import UIKit
+
+// MARK: - GATE-DIAG TEMPORARY (revert after the run-before-send diagnosis)
+//
+// Body-evaluation and publish counters: prove whether the root and
+// tab views keep re-evaluating during the tap tests, whether the
+// lesson sheet ever constructs, and whether any observed service
+// publishes in a stream. Body counts log at growing thresholds;
+// publishes log every assignment (they should be rare). DELETE
+// THIS WHOLE SECTION plus its call sites once the diagnosis is
+// done. Nothing here changes behaviour: os_log is async, the
+// counters write no view state, and the lock keeps the counts
+// safe if a publish lands off the main thread.
+enum GateDiag {
+    private static let log = Logger(subsystem: "PaymentsTrainingHub", category: "GateDiag")
+    private static let lock = NSLock()
+    private static var counts: [String: Int] = [:]
+    private static let thresholds: Set<Int> = [1, 2, 3, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]
+
+    /// Count one body evaluation. Logs at thresholds only.
+    static func count(_ name: String) {
+        lock.lock()
+        let next = (counts[name] ?? 0) + 1
+        counts[name] = next
+        lock.unlock()
+        if thresholds.contains(next) {
+            log.info("Body eval \(name, privacy: .public) #\(next, privacy: .public)")
+        }
+    }
+
+    /// Count one @Published assignment. Logs every assignment.
+    static func publish(_ name: String) {
+        lock.lock()
+        let next = (counts[name] ?? 0) + 1
+        counts[name] = next
+        lock.unlock()
+        log.info("Publish \(name, privacy: .public) #\(next, privacy: .public)")
+    }
+}
 
 /// The directory crash data lives in: Application Support, with
 /// the temporary directory as a fallback. Never force unwrapped.
@@ -43,6 +82,7 @@ enum CrashBreadcrumbs {
     private static let lock = NSLock()
     private static var entries: [String] = []
     private static let persistQueue = DispatchQueue(label: "com.paymentstraininghub.crashbreadcrumbs")
+    private static let breadcrumbLog = Logger(subsystem: "PaymentsTrainingHub", category: "Breadcrumbs")
     private static let fileName = "pf-breadcrumbs.json"
 
     private static var fileURL: URL {
@@ -59,6 +99,10 @@ enum CrashBreadcrumbs {
         }
         let snapshot = entries
         lock.unlock()
+        // Also mirrored to os_log: the CI gate collects only the
+        // streamed log, never the app container, so without this
+        // the tap/appear breadcrumbs are invisible in gate runs.
+        breadcrumbLog.info("Breadcrumb: \(capped, privacy: .public)")
         persistQueue.async {
             if let data = try? JSONEncoder().encode(snapshot) {
                 try? data.write(to: fileURL, options: [.atomic])

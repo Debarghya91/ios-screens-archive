@@ -228,7 +228,9 @@ final class StoreManager: ObservableObject {
     }()
 
     /// The fetched products, empty until the store loads them.
-    @Published private(set) var products: [Product] = []
+    @Published private(set) var products: [Product] = [] {
+        didSet { GateDiag.publish("products") } // GATE-DIAG TEMPORARY
+    }
 
     /// The StoreKit product for one store ID (a purchase ID or a
     /// renewal ID), nil until loaded.
@@ -248,7 +250,9 @@ final class StoreManager: ObservableObject {
     /// through setPurchasedProductIDs. In Release this set starts
     /// empty and is populated only by verified transactions, never
     /// from a stored cache.
-    @Published private(set) var purchasedProductIDs: Set<String> = []
+    @Published private(set) var purchasedProductIDs: Set<String> = [] {
+        didSet { GateDiag.publish("purchasedProductIDs") } // GATE-DIAG TEMPORARY
+    }
 
     /// Product IDs with an active user_purchases row for the signed-in
     /// user on the server. This is the ONLY server path that unlocks
@@ -257,7 +261,9 @@ final class StoreManager: ObservableObject {
     /// the same account (see the H2 helpers); it is never set from
     /// any other stored state. Guests (no account) never have
     /// one; their StoreKit purchase is what unlocks them.
-    @Published private(set) var serverEntitledProductIDs: Set<String> = []
+    @Published private(set) var serverEntitledProductIDs: Set<String> = [] {
+        didSet { GateDiag.publish("serverEntitledProductIDs") } // GATE-DIAG TEMPORARY
+    }
 
     /// Expiry per store product ID from verified on-device
     /// transactions: the purchase date plus 1 year for a purchase,
@@ -298,7 +304,9 @@ final class StoreManager: ObservableObject {
     @Published private(set) var serverEntitlementSyncPending = false
 
     /// True while products are being fetched or a purchase is running.
-    @Published private(set) var isBusy = false
+    @Published private(set) var isBusy = false {
+        didSet { GateDiag.publish("isBusy") } // GATE-DIAG TEMPORARY
+    }
 
     /// True while the product list could not be loaded at all.
     @Published private(set) var productLoadFailed = false

@@ -527,7 +527,8 @@ struct MainTabView: View {
     }
 
     var body: some View {
-        ZStack {
+        GateDiag.count("MainTabView") // GATE-DIAG TEMPORARY
+        return ZStack {
             // Invisible tab bar frame reader: measures the real
             // tab bar geometry in window coordinates for the
             // tour spotlight. It draws nothing, takes no

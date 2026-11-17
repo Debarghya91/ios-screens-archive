@@ -708,7 +708,8 @@ struct SituationsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        GateDiag.count("SituationsView") // GATE-DIAG TEMPORARY
+        return NavigationStack {
             ZStack(alignment: .leading) {
                 ScrollViewReader { proxy in
                     ScrollView {
