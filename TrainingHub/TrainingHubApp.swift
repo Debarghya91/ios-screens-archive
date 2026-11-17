@@ -265,10 +265,6 @@ struct MainTabView: View {
     /// it and clears it.
     @State private var homeSectionTarget: HomeSectionTarget? = nil
     @State private var presentedSheet: DrawerDestination? = nil
-    /// Guards delayed tour destination opens: bumped on every
-    /// tour destination request, so a stale delayed open can
-    /// never fire after the tour moved on or finished.
-    @State private var tourDestinationGeneration = 0
     @State private var showSplash = true
 
     /// A lesson opened from a deep link, shown as a sheet so the
@@ -282,24 +278,15 @@ struct MainTabView: View {
     /// so a slow load never shows a false not-found alert.
     @State private var showDeepLinkNotFound = false
 
-    /// The guided tour, shown once on first launch, after the
-    /// splash. Replayable from Help and Support. The tour runs
-    /// after sign-in: the gate shows the sign-in screen first.
-    /// tourDone is the tour's own
-    /// install-level flag, separate from the onboarding flag: the
-    /// tour fires once after the first onboarding completion (see
-    /// startTourIfNeeded) and never again, except on replay.
-    @AppStorage("pf.tour.done") private var tourDone = false
-    @State private var showTour = false
     /// The local notification service. MainTabView attaches the
     /// deep link router to it on appear, so tapped notifications
     /// route through the same router as tapped links, and owns
     /// the one-time permission explanation below.
     @StateObject private var notificationService = LocalNotificationService.shared
     /// The one-time in-app explanation shown before the system
-    /// notification prompt. Presented once, after onboarding and
-    /// the welcome tour have completed, and never again: both
-    /// answers record the install-level asked flag.
+    /// notification prompt. Presented once, after onboarding has
+    /// completed, and never again: both answers record the
+    /// install-level asked flag.
     @State private var showNotificationPermissionPrompt = false
     /// The measured tab bar geometry, reported by the frame
     /// reader for the tour spotlight. Empty until the first
@@ -325,9 +312,6 @@ struct MainTabView: View {
     /// The anchor of the Home page's Continue learning block,
     /// for the tour's block demo on the Home step.
     @State private var continueLearningAnchor: Anchor<CGRect>? = nil
-    /// The drawer row the tour wants scrolled into view, if any.
-    /// Passed through the drawer container to the drawer list.
-    @State private var tourScrollTarget: DrawerDestination? = nil
     /// Drawer row anchors, read at this ZStack (the common
     /// ancestor of the drawer and the tour overlay) and passed
     /// down to the overlay, which resolves them against its own
@@ -381,8 +365,7 @@ struct MainTabView: View {
             DrawerContainer(
                 isOpen: $isDrawerOpen,
                 onSelect: handleDrawerSelection,
-                selectedTab: selectedTab,
-                tourScrollTarget: tourScrollTarget
+                selectedTab: selectedTab
             ) {
                 TabView(selection: tabSelection) {
                     HomeView(
@@ -440,7 +423,7 @@ struct MainTabView: View {
                 case .appearance:
                     AppearanceSettingsView()
                 case .helpAndSupport:
-                    HelpSupportView(onReplayTour: replayTour)
+                    HelpSupportView()
                 case .about:
                     AboutTrainingHubView()
                 case .simulator:
@@ -481,39 +464,9 @@ struct MainTabView: View {
                     }
                 case .diagnostics:
                     DiagnosticsView()
-                case .myLearning, .home, .learn, .search, .paymentCases, .myProgress, .startTour, .interviewQuestions, .privacyPolicy, .termsOfService:
+                case .myLearning, .home, .learn, .search, .paymentCases, .myProgress, .interviewQuestions, .privacyPolicy, .termsOfService:
                     EmptyView()
                 }
-            }
-            .onAppear {
-                // The tour only starts once onboarding has finished:
-                // startTourIfNeeded also requires onboarding complete,
-                // so a first-run learner sees onboarding first.
-                startTourIfNeeded()
-            }
-
-            // The guided tour, above the drawer and the tabs. On
-            // first launch it appears once the splash has faded;
-            // on replay the splash is long gone, so it appears
-            // immediately.
-            if showTour && !showSplash {
-                NavigationTourOverlay(
-                    selectedTab: $selectedTab,
-                    isDrawerOpen: $isDrawerOpen,
-                    drawerScrollTarget: $tourScrollTarget,
-                    drawerRowAnchors: drawerRowAnchors,
-                    drawerRowFrames: drawerRowFrames,
-                    tabBarGeometry: tabBarGeometry,
-                    keepLearningAnchor: keepLearningAnchor,
-                    keepLearningFrame: keepLearningFrame,
-                    searchFieldAnchor: searchFieldAnchor,
-                    searchPillsAnchor: searchPillsAnchor,
-                    continueLearningAnchor: continueLearningAnchor,
-                    onOpenDestination: openDestinationFromTour,
-                    onFinish: finishTour,
-                    onTabWrite: { index, source in logTabNavigation(index, source: source) }
-                )
-                .zIndex(2)
             }
 
             // Splash: brief, then the tabs take over. It is an
@@ -606,7 +559,7 @@ struct MainTabView: View {
             // as tapped links: attach it, and deliver any link
             // that arrived before this view appeared. Then check
             // the one-time permission explanation: on a returning
-            // launch the tour is already done, so this is the
+            // launch onboarding is already complete, so this is the
             // moment it appears.
             notificationService.attachDeepLinkRouter(deepLinkRouter)
             maybeShowNotificationPermissionPrompt()
@@ -619,8 +572,8 @@ struct MainTabView: View {
             // waiting for it can resolve now.
             resolvePendingDeepLink()
         }
-        // Onboarding, after the splash fades and before the guided
-        // tour. The cover is driven solely by
+        // Onboarding, after the splash fades. The cover is
+        // driven solely by
         // hasCompletedOnboarding plus the splash gate: when the
         // flow saves or skips itself, the flag flips and the cover
         // dismisses. The set side is intentionally empty: nothing
@@ -630,27 +583,16 @@ struct MainTabView: View {
             get: { !onboardingStore.hasCompletedOnboarding && !showSplash },
             set: { _ in }
         )) {
-            OnboardingFlowView(onFinish: {
-                startTourIfNeeded()
-            })
+            OnboardingFlowView(onFinish: {})
         }
-        // The tour starts when onboarding completes, even if the
-        // completion lands through the store rather than onFinish:
-        // both paths call the same guarded starter, which also
-        // requires the tour to be unfinished.
+        // A deep link that arrived during onboarding routes once
+        // the cover is gone, and onboarding completing arms the
+        // permission check.
         .onChange(of: onboardingStore.hasCompletedOnboarding) { _, _ in
-            startTourIfNeeded()
             // A deep link that arrived during onboarding routes
             // now that the cover is gone.
             resolvePendingDeepLink()
-            // Onboarding completing with the tour already done
-            // (a returning install) arms the permission check.
-            maybeShowNotificationPermissionPrompt()
-        }
-        .onChange(of: tourDone) { _, _ in
-            // The tour finishing arms the permission check; the
-            // delayed check in finishTour retries it once the
-            // tour overlay has gone.
+            // Onboarding completing arms the permission check.
             maybeShowNotificationPermissionPrompt()
         }
         .task {
@@ -659,14 +601,12 @@ struct MainTabView: View {
             withAnimation(.easeOut(duration: 0.3)) {
                 showSplash = false
             }
-            // Fallback for the permission explanation: if the tour
-            // never started, the tour-done flag can never arm the
-            // check, so check again shortly after the splash, with
-            // the fallback allowed. On a normal first launch the
-            // tour is showing by now, so this check does nothing.
+            // Check the permission explanation again shortly
+            // after the splash, in case the first check ran
+            // before onboarding completed.
             try? await Task.sleep(nanoseconds: 800_000_000)
             guard !Task.isCancelled else { return }
-            maybeShowNotificationPermissionPrompt(allowTourFallback: true)
+            maybeShowNotificationPermissionPrompt()
         }
         .task {
             // Refresh the reading-order map from the website in
@@ -722,11 +662,6 @@ struct MainTabView: View {
             presentedSheet = .practice
         case .myPurchases, .profile, .appearance, .helpAndSupport, .about, .simulator, .isoExplorer, .exceptionLab, .baStudio, .weeklyFreeCase, .communityChallenge:
             presentedSheet = destination
-        case .startTour:
-            // The drawer has already closed by the time this
-            // runs (DrawerContainer waits for the close
-            // animation), so the tour start card shows at once.
-            showTour = true
         }
     }
 
@@ -781,92 +716,26 @@ struct MainTabView: View {
         }
     }
 
-    /// Open a drawer destination from a tour step, or close any
-    /// destination the tour opened when passed nil. Opening
-    /// closes the drawer first and routes through
-    /// handleDrawerSelection once the close animation finishes,
-    /// exactly as a real drawer tap does. The generation guards
-    /// the delayed routing: a fast Next or Back bumps it, so a
-    /// stale delayed open can never fire after the tour moved
-    /// on or finished.
-    private func openDestinationFromTour(_ destination: DrawerDestination?) {
-        tourDestinationGeneration += 1
-        let generation = tourDestinationGeneration
-        guard let destination else {
-            presentedSheet = nil
-            return
-        }
-        isDrawerOpen = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            guard generation == tourDestinationGeneration, showTour else { return }
-            handleDrawerSelection(destination)
-        }
-    }
-
-    /// Show the guided tour only when onboarding has finished and
-    /// the tour itself is unfinished. Called on appear (returning
-    /// learners, onboarding already complete), from the onboarding
-    /// flow's onFinish, and when the onboarding flag flips. The
-    /// tour overlay still waits for the splash to fade.
-    private func startTourIfNeeded() {
-        guard !tourDone, onboardingStore.hasCompletedOnboarding else { return }
-        showTour = true
-    }
-
-    /// The tour finished, completed or skipped: mark it done and
-    /// land on Home with the drawer closed and no destination
-    /// sheet open: a sheet opened by a tour step must not
-    /// survive the tour.
-    private func finishTour() {
-        tourDone = true
-        showTour = false
-        tourScrollTarget = nil
-        isDrawerOpen = false
-        presentedSheet = nil
-        navigateToTab(DrawerDestination.home.tabIndex ?? 0, source: "tour")
-        // The permission explanation follows the tour, once the
-        // overlay has gone. The delayed check re-reads every
-        // guard, so it stays silent if anything changed.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            maybeShowNotificationPermissionPrompt()
-        }
-    }
-
     /// Show the one-time notification permission explanation,
-    /// once, after onboarding and the welcome tour have
-    /// completed. Every guard must pass: onboarding complete
-    /// (install-level flag pf.onboarding.completed.v1, read
-    /// through OnboardingStore.hasCompletedOnboarding), the
-    /// splash and the tour overlay gone, the tour done
-    /// (install-level flag pf.tour.done) unless the caller
-    /// allows the fallback, the learner not yet asked
-    /// (install-level flag pf.notifications.permissionAsked.v1),
-    /// and the system decision still not determined. Both
-    /// answers in the alert record the asked flag, so the
-    /// explanation can never nag. The fallback covers a tour
-    /// that never runs: the post-splash check passes it, and
-    /// the tour-showing guard keeps it silent while the tour
-    /// is actually running.
-    private func maybeShowNotificationPermissionPrompt(allowTourFallback: Bool = false) {
+    /// once, after onboarding has completed. Every guard must
+    /// pass: onboarding complete (install-level flag
+    /// pf.onboarding.completed.v1, read through
+    /// OnboardingStore.hasCompletedOnboarding), the splash
+    /// gone, the learner not yet asked (install-level flag
+    /// pf.notifications.permissionAsked.v1), and the system
+    /// decision still not determined. Both answers in the
+    /// alert record the asked flag, so the explanation can
+    /// never nag.
+    private func maybeShowNotificationPermissionPrompt() {
         guard onboardingStore.hasCompletedOnboarding,
               !showSplash,
-              !showTour,
               !showNotificationPermissionPrompt,
-              tourDone || allowTourFallback,
               !notificationService.hasAskedPermission,
               notificationService.authorizationStatus == .notDetermined
         else { return }
         showNotificationPermissionPrompt = true
     }
 
-    /// Replay the tour from Help and Support: dismiss the sheet,
-    /// then show the tour start card.
-    private func replayTour() {
-        presentedSheet = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-            showTour = true
-        }
-    }
 }
 
 // MARK: - Practice sheet (drawer entry point)

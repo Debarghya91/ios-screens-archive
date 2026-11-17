@@ -53,7 +53,6 @@ enum DrawerDestination: String, Identifiable, Hashable {
     case appearance
     case helpAndSupport
     case about
-    case startTour
     case interviewQuestions
     case certificates
     case learningHabit
@@ -81,7 +80,7 @@ enum DrawerDestination: String, Identifiable, Hashable {
             return 2
         case .myProgress:
             return 3
-        case .learn, .myLearning, .practice, .weeklyFreeCase, .communityChallenge, .simulator, .isoExplorer, .exceptionLab, .baStudio, .myPurchases, .profile, .appearance, .helpAndSupport, .about, .startTour, .interviewQuestions, .certificates, .learningHabit, .notifications, .diagnostics, .privacyPolicy, .termsOfService:
+        case .learn, .myLearning, .practice, .weeklyFreeCase, .communityChallenge, .simulator, .isoExplorer, .exceptionLab, .baStudio, .myPurchases, .profile, .appearance, .helpAndSupport, .about, .interviewQuestions, .certificates, .learningHabit, .notifications, .diagnostics, .privacyPolicy, .termsOfService:
             return nil
         }
     }
@@ -135,10 +134,10 @@ struct SideDrawerView: View {
         }
     }
 
-    /// The rows in the drawer, in display order: first the twelve
+    /// The rows in the drawer, in display order: first the eleven
     /// navigation rows (Home, Learn, Search, Payment Cases,
     /// Practice, the Free Case of the Week, the Weekly Challenge,
-    /// the four practice experiences, and Start Tour), then one
+    /// and the four practice experiences), then one
     /// section headed "Everything inside" holding the thirteen
     /// capability and account rows: Interview Questions, My
     /// Progress, Certificates, Learning habit, Courses and
@@ -149,12 +148,8 @@ struct SideDrawerView: View {
     /// is deleted, everything stays one tap away. Practice sits
     /// directly after Payment Cases, the cases it practises. The
     /// Free Case of the Week sits after Practice: it is one free
-    /// case a week, and it opens as a sheet, never a tab. The
-    /// guided tour addresses drawer rows by destination through
-    /// their anchors and scrolls by row id, so the reorder moves
-    /// no tour spotlight: each tour step still resolves its own
-    /// row, and the new rows have no tour step. Profile is
-    /// listed explicitly so it is always one tap away, and it
+    /// case a week, and it opens as a sheet, never a tab. Profile
+    /// is listed explicitly so it is always one tap away, and it
     /// routes to the Profile sheet, never to the My Progress tab.
     /// My Progress keeps its tab active state from inside the
     /// section: its tabIndex is still 3.
@@ -231,12 +226,6 @@ struct SideDrawerView: View {
                 icon: "square.and.pencil",
                 title: "BA/PO Studio",
                 subtitle: "Draft BA and PO deliverables"
-            ),
-            DrawerRowModel(
-                id: .startTour,
-                icon: "play.circle.fill",
-                title: "Start Tour",
-                subtitle: "A quick guided tour of the key areas of the app"
             ),
             DrawerRowModel(
                 id: .interviewQuestions,
@@ -745,10 +734,6 @@ struct HelpSupportView: View {
     @EnvironmentObject private var storeManager: StoreManager
     @Environment(\.dismiss) private var dismiss
 
-    /// Called when the learner taps Replay tour. The parent
-    /// dismisses this sheet and presents the tour.
-    var onReplayTour: (() -> Void)? = nil
-
     /// The FAQ currently expanded to its full answer, if any.
     @State private var expandedFAQID: String? = nil
     /// False shows the first 20 FAQs; true shows every FAQ.
@@ -816,36 +801,6 @@ struct HelpSupportView: View {
                     Text("Contact")
                 }
 
-                Section {
-                    Button(action: { onReplayTour?() }) {
-                        HStack(spacing: PFSpacing.md) {
-                            Image(systemName: "play.circle.fill")
-                                .foregroundColor(.pfRoyal)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Replay tour")
-                                    .font(.pfCardTitle)
-                                    .foregroundColor(.pfNavy)
-                                Text("See the guided tour of the app again.")
-                                    .font(.pfCallout)
-                                    .foregroundColor(.pfSecondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.pfCallout.weight(.semibold))
-                                .foregroundColor(.pfSecondaryText)
-                                .accessibilityHidden(true)
-                        }
-                        .padding(.vertical, 4)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Replay tour")
-                    .accessibilityHint("Shows the guided tour of the app again.")
-                    .listRowBackground(Color.pfCard)
-                } header: {
-                    Text("Guided tour")
-                }
 
                 Section {
                     Button(action: { showDiagnostics = true }) {
