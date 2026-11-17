@@ -85,6 +85,18 @@ enum GateDiag {
         }
     }
 
+    /// Budget for _printChanges output: the first 30 calls per
+    /// view print, then silence. The re-evaluation loop would
+    /// otherwise flood the log with identical dependency
+    /// reports. The first reports name the trigger.
+    static func printChangesBudget(_ name: String) -> Bool {
+        lock.lock()
+        let next = (counts["printChanges-\(name)"] ?? 0) + 1
+        counts["printChanges-\(name)"] = next
+        lock.unlock()
+        return next <= 30
+    }
+
     private static var tapsInstalled = false
     private static var tapCancellables: [AnyCancellable] = []
 

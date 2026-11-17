@@ -3,6 +3,7 @@
 // No em dashes in any user-facing text.
 
 import SwiftUI
+import UIKit
 import UserNotifications
 import os
 
@@ -394,6 +395,13 @@ struct MainTabView: View {
     @State private var homeSectionTarget: HomeSectionTarget? = nil
     @State private var presentedSheet: DrawerDestination? = nil
     @State private var showSplash = true
+    /// The introduction cover flag, owned by this view: armed
+    /// once the splash fades (if onboarding is incomplete) and
+    /// cleared when the completion flag flips. A writable flag,
+    /// not a computed binding: the old read-only binding (empty
+    /// setter) left the cover stuck on screen after dismissal
+    /// in gate runs 44171037785 and 44188117143.
+    @State private var showOnboarding = false
 
     /// A lesson opened from a deep link, shown as a sheet so the
     /// link works from any tab without disturbing tab state.
@@ -521,12 +529,63 @@ struct MainTabView: View {
             },
             set: { sheet in
                 if sheet == nil {
+                    CrashBreadcrumbs.record("sheet binding set to nil") // GATE-DIAG TEMPORARY
                     deepLinkLessonEntry = nil
                     lessonSheetRouter.presentedEntry = nil
                     lessonSheetRouter.presentedCase = nil
                 }
             }
         )
+    }
+
+    /// GATE-DIAG TEMPORARY: record that SwiftUI requested the
+    /// sheet content, then hand the item through. Distinguishes
+    /// "content closure never requested" from "closure ran but
+    /// the view never appeared". DELETE with the rest of
+    /// GateDiag.
+    private func logSheetRequest(_ sheet: MainTabSheet) -> MainTabSheet {
+        CrashBreadcrumbs.record("sheet content requested \(sheet.id)")
+        return sheet
+    }
+
+    /// The single sheet's content: a deep-link lesson, a tapped
+    /// lesson, or the introduction's free case, each in its own
+    /// NavigationStack with a Done button.
+    @ViewBuilder
+    private func mainTabSheetContent(for sheet: MainTabSheet) -> some View {
+        switch sheet {
+        case .deepLink(let entry):
+            NavigationStack {
+                LessonView(entry: entry)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { deepLinkLessonEntry = nil }
+                                .accessibilityHint("Closes this lesson.")
+                        }
+                    }
+            }
+        case .lesson(let entry):
+            NavigationStack {
+                LessonView(entry: entry)
+                    .onAppear { CrashBreadcrumbs.record("lesson sheet appeared") } // GATE-DIAG TEMPORARY
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { lessonSheetRouter.close() }
+                                .accessibilityHint("Closes this lesson.")
+                        }
+                    }
+            }
+        case .freeCase(let situation):
+            NavigationStack {
+                SituationDetailLoaderView(situation: situation)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { lessonSheetRouter.closeCase() }
+                                .accessibilityHint("Closes this Payment Case.")
+                        }
+                    }
+            }
+        }
     }
 
     /// True while any sheet owns the presentation hierarchy, or
@@ -565,8 +624,57 @@ struct MainTabView: View {
         scheduleNotificationPromptCheck()
     }
 
+    /// GATE-DIAG TEMPORARY: record the real UIKit presentation
+    /// hierarchy at this moment: the root view controller, the
+    /// chain of presented controllers, and whether each is
+    /// mid-dismissal, mid-presentation, or stuck in a
+    /// transition. SwiftUI state and the UIKit hierarchy
+    /// diverged in gate runs 44171037785 and 44188117143 (the
+    /// cover stayed visible after onDismiss), and only this
+    /// probe shows which side is telling the truth. DELETE with
+    /// the rest of GateDiag.
+    private func probePresentationHierarchy(tag: String) {
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+        guard let window = windows.first(where: { $0.isKeyWindow }) ?? windows.first else {
+            CrashBreadcrumbs.record("PROBE \(tag): no window")
+            return
+        }
+        var parts: [String] = ["root=\(window.rootViewController.map { String(describing: type(of: $0)) } ?? "nil")"]
+        var current = window.rootViewController?.presentedViewController
+        var depth = 0
+        while let presented = current, depth < 5 {
+            parts.append("presented=\(String(describing: type(of: presented))) dismissing=\(presented.isBeingDismissed) presenting=\(presented.isBeingPresented) coordinator=\(presented.transitionCoordinator != nil) hasWindow=\(presented.viewIfLoaded?.window != nil)")
+            current = presented.presentedViewController
+            depth += 1
+        }
+        CrashBreadcrumbs.record("PROBE \(tag): " + parts.joined(separator: " | "))
+    }
+
+    /// GATE-DIAG TEMPORARY (Test B isolation): the cover's
+    /// dismissal runs ONLY the UIKit probe, at fire time and at
+    /// +100ms, +1s and +5s. No arbitration, no pending open, no
+    /// notification check: the experiment is whether the cover
+    /// dismisses cleanly with nothing else requested. Restore
+    /// presentationDidDismiss here once the lifecycle failure
+    /// is proven and fixed.
+    private func coverDidDismiss() {
+        CrashBreadcrumbs.record("cover onDismiss fired")
+        probePresentationHierarchy(tag: "cover-onDismiss")
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            probePresentationHierarchy(tag: "cover+100ms")
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            probePresentationHierarchy(tag: "cover+1s")
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            probePresentationHierarchy(tag: "cover+5s")
+        }
+    }
+
     var body: some View {
         GateDiag.count("MainTabView") // GATE-DIAG TEMPORARY
+        if GateDiag.printChangesBudget("MainTabView") { let _ = Self._printChanges() } // GATE-DIAG TEMPORARY
         return ZStack {
             // Invisible tab bar frame reader: measures the real
             // tab bar geometry in window coordinates for the
@@ -756,39 +864,7 @@ struct MainTabView: View {
         // each other and the lesson sheet never presented (see
         // MainTabSheet).
         .sheet(item: mainTabSheetBinding, onDismiss: { presentationDidDismiss() }) { sheet in
-            switch sheet {
-            case .deepLink(let entry):
-                NavigationStack {
-                    LessonView(entry: entry)
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Done") { deepLinkLessonEntry = nil }
-                                    .accessibilityHint("Closes this lesson.")
-                            }
-                        }
-                }
-            case .lesson(let entry):
-                NavigationStack {
-                    LessonView(entry: entry)
-                        .onAppear { CrashBreadcrumbs.record("lesson sheet appeared") } // GATE-DIAG TEMPORARY
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Done") { lessonSheetRouter.close() }
-                                    .accessibilityHint("Closes this lesson.")
-                            }
-                        }
-                }
-            case .freeCase(let situation):
-                NavigationStack {
-                    SituationDetailLoaderView(situation: situation)
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Done") { lessonSheetRouter.closeCase() }
-                                    .accessibilityHint("Closes this Payment Case.")
-                            }
-                        }
-                }
-            }
+            mainTabSheetContent(for: logSheetRequest(sheet))
         }
         // Presentation arbitration: this alert shows only when
         // no sheet owns the hierarchy, onboarding and the splash
@@ -891,44 +967,49 @@ struct MainTabView: View {
             // waiting for it can resolve now.
             resolvePendingDeepLink()
         }
-        // Onboarding, after the splash fades. The cover is
-        // driven solely by
-        // hasCompletedOnboarding plus the splash gate: when the
-        // flow saves or skips itself, the flag flips and the cover
-        // dismisses. The set side is intentionally empty: nothing
-        // else may dismiss onboarding, and the flow always offers
+        // Onboarding, after the splash fades. The cover flag is
+        // owned here, not computed from the store: the old
+        // read-only computed binding (empty setter) left the
+        // cover on screen after its onDismiss fired in gate runs
+        // 44171037785 and 44188117143, wedging every later
+        // presentation. The flag arms only once the splash is
+        // gone, and clears when the completion flag flips (see
+        // the onChange handlers below). The flow always offers
         // Skip, so the tabs are never blocked behind it.
         .fullScreenCover(
-            isPresented: Binding(
-                get: { !onboardingStore.hasCompletedOnboarding && !showSplash },
-                set: { _ in }
-            ),
+            isPresented: $showOnboarding,
             onDismiss: {
-                // The cover is actually gone: this is the moment
-                // a deep link that arrived during onboarding
-                // routes, and an introduction card's requested
-                // content opens through the lesson sheet. The
-                // previous 0.6s sleep in the flag's onChange
-                // guessed at the dismissal and still presented
-                // into an unsettled hierarchy: gate run
-                // 44089979766 lost the app right after the
-                // first-lesson card tap, with the reminders
-                // alert up and no sheet. onDismiss is the
-                // dismissal itself, not a guess at it. Opening
-                // nothing when nothing is pending keeps this a
-                // no-op for plain Skip taps.
-                presentationDidDismiss()
+                coverDidDismiss()
             }
         ) {
             OnboardingFlowView(onFinish: {})
         }
-        // Onboarding completing arms the permission check. The
-        // check itself waits while a sheet is pending or up (see
-        // maybeShowNotificationPermissionPrompt), so the
-        // explanation never stacks over a lesson the
-        // introduction just opened.
-        .onChange(of: onboardingStore.hasCompletedOnboarding) { _, _ in
-            scheduleNotificationPromptCheck()
+        // Onboarding completing requests the cover dismissal:
+        // the flag flip clears the cover flag, and the cover's
+        // onDismiss runs the post-dismissal handling. The
+        // completion event and the dismissal callback serve
+        // different purposes and must not both trigger the
+        // pending presentation.
+        .onChange(of: onboardingStore.hasCompletedOnboarding) { _, completed in
+            // GATE-DIAG TEMPORARY (Test B isolation): the flag
+            // flip requests dismissal only, and the UIKit probe
+            // records the hierarchy at that moment. The
+            // notification check is disabled here for this run
+            // so no other presentation competes with the cover
+            // dismissal. Restore scheduleNotificationPromptCheck
+            // here once the lifecycle failure is proven.
+            probePresentationHierarchy(tag: "flag-flipped")
+            if completed {
+                showOnboarding = false
+            }
+        }
+        .onChange(of: showSplash) { _, splashVisible in
+            // Arm the cover once the splash is gone, only for a
+            // learner who has not completed onboarding. The
+            // cover must never compete with the splash.
+            if !splashVisible, !onboardingStore.hasCompletedOnboarding {
+                showOnboarding = true
+            }
         }
         .task {
             // GATE-DIAG TEMPORARY: count every objectWillChange fire
