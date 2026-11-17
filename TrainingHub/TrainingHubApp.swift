@@ -481,21 +481,51 @@ struct MainTabView: View {
         }
     }
 
-    /// The lesson sheet binding: the router's presented lesson,
-    /// written back to the router when the sheet dismisses.
-    private var lessonSheetBinding: Binding<SearchEntry?> {
-        Binding(
-            get: { lessonSheetRouter.presentedEntry },
-            set: { lessonSheetRouter.presentedEntry = $0 }
-        )
+    /// The one sheet MainTabView can present: a deep-link
+    /// lesson, a tapped lesson, or the introduction's free
+    /// case. Three separate .sheet modifiers on this view
+    /// shadowed each other (only one presentation modifier of
+    /// a kind is honored per view), which is how every gate run
+    /// lost the lesson sheet: the router recorded the request,
+    /// the binding flipped, the sheet never presented, and no
+    /// warning was logged. One sheet, one binding, one
+    /// presentation. Priority is deep link first, then the
+    /// tapped lesson, then the free case; in practice only one
+    /// source is ever set, because the arbitration gate holds
+    /// the others until the sheet closes.
+    private enum MainTabSheet: Identifiable {
+        case deepLink(SearchEntry)
+        case lesson(SearchEntry)
+        case freeCase(Situation)
+
+        var id: String {
+            switch self {
+            case .deepLink(let entry): return "deepLink-\(entry.id)"
+            case .lesson(let entry): return "lesson-\(entry.id)"
+            case .freeCase(let situation): return "case-\(situation.id)"
+            }
+        }
     }
 
-    /// The free-case sheet binding, same contract as the lesson
-    /// sheet binding.
-    private var lessonCaseSheetBinding: Binding<Situation?> {
+    /// The single sheet binding: whichever source holds a
+    /// destination presents, and dismissing clears every
+    /// source, so a queued destination can never strand the
+    /// sheet open or present twice.
+    private var mainTabSheetBinding: Binding<MainTabSheet?> {
         Binding(
-            get: { lessonSheetRouter.presentedCase },
-            set: { lessonSheetRouter.presentedCase = $0 }
+            get: {
+                if let entry = deepLinkLessonEntry { return .deepLink(entry) }
+                if let entry = lessonSheetRouter.presentedEntry { return .lesson(entry) }
+                if let situation = lessonSheetRouter.presentedCase { return .freeCase(situation) }
+                return nil
+            },
+            set: { sheet in
+                if sheet == nil {
+                    deepLinkLessonEntry = nil
+                    lessonSheetRouter.presentedEntry = nil
+                    lessonSheetRouter.presentedCase = nil
+                }
+            }
         )
     }
 
@@ -717,48 +747,47 @@ struct MainTabView: View {
             if continueLearningAnchor == nil, let anchor { continueLearningAnchor = anchor }
         }
         .coordinateSpace(name: TourCoordinateSpace.name)
-        // Deep-link lesson sheet: a lesson link opens here, in its
-        // own NavigationStack with a Done button, over any tab.
-        .sheet(item: $deepLinkLessonEntry, onDismiss: { presentationDidDismiss() }) { entry in
-            NavigationStack {
-                LessonView(entry: entry)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Done") { deepLinkLessonEntry = nil }
-                                .accessibilityHint("Closes this lesson.")
+        // The one lesson/case sheet: a deep-link lesson, a
+        // tapped lesson, or the introduction's free case, each
+        // in its own NavigationStack with a Done button, over
+        // any tab. No push transition is involved, so a tap can
+        // never strand the learner on a list. One modifier
+        // only: three .sheet modifiers on this view shadowed
+        // each other and the lesson sheet never presented (see
+        // MainTabSheet).
+        .sheet(item: mainTabSheetBinding, onDismiss: { presentationDidDismiss() }) { sheet in
+            switch sheet {
+            case .deepLink(let entry):
+                NavigationStack {
+                    LessonView(entry: entry)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { deepLinkLessonEntry = nil }
+                                    .accessibilityHint("Closes this lesson.")
+                            }
                         }
-                    }
-            }
-        }
-        // Lesson sheet: every lesson tap in the app opens here,
-        // in its own NavigationStack with a Done button, over any
-        // tab, the same presentation a deep-link lesson gets. No
-        // push transition is involved, so a tap can never strand
-        // the learner on a list.
-        .sheet(item: lessonSheetBinding, onDismiss: { presentationDidDismiss() }) { entry in
-            NavigationStack {
-                LessonView(entry: entry)
-                    .onAppear { CrashBreadcrumbs.record("lesson sheet appeared") } // GATE-DIAG TEMPORARY
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Done") { lessonSheetRouter.close() }
-                                .accessibilityHint("Closes this lesson.")
+                }
+            case .lesson(let entry):
+                NavigationStack {
+                    LessonView(entry: entry)
+                        .onAppear { CrashBreadcrumbs.record("lesson sheet appeared") } // GATE-DIAG TEMPORARY
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { lessonSheetRouter.close() }
+                                    .accessibilityHint("Closes this lesson.")
+                            }
                         }
-                    }
-            }
-        }
-        // Free-case sheet: the introduction's free-case card
-        // opens here once the introduction is gone, same
-        // presentation as the lesson sheet.
-        .sheet(item: lessonCaseSheetBinding, onDismiss: { presentationDidDismiss() }) { situation in
-            NavigationStack {
-                SituationDetailLoaderView(situation: situation)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Done") { lessonSheetRouter.closeCase() }
-                                .accessibilityHint("Closes this Payment Case.")
+                }
+            case .freeCase(let situation):
+                NavigationStack {
+                    SituationDetailLoaderView(situation: situation)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { lessonSheetRouter.closeCase() }
+                                    .accessibilityHint("Closes this Payment Case.")
+                            }
                         }
-                    }
+                }
             }
         }
         // Presentation arbitration: this alert shows only when
