@@ -258,7 +258,9 @@ private struct ReviewSheet: View {
                                         .font(.pfBody)
                                         .foregroundColor(.pfNavy)
                                         .fixedSize(horizontal: false, vertical: true)
-                                    NavigationLink(destination: LessonView(entry: entry)) {
+                                    Button {
+                                        LessonSheetRouter.shared.open(entry)
+                                    } label: {
                                         Text("Open the lesson to check yourself")
                                             .font(.pfBody.weight(.semibold))
                                             .foregroundColor(.pfRoyal)

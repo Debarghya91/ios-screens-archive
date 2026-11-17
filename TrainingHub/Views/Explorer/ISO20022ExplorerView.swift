@@ -662,7 +662,9 @@ struct ISO20022RelatedLessonsSection: View {
     }
 
     private func lessonRow(_ entry: SearchEntry) -> some View {
-        NavigationLink(destination: LessonView(entry: entry)) {
+        Button {
+            LessonSheetRouter.shared.open(entry)
+        } label: {
             PFCard {
                 HStack(spacing: PFSpacing.md) {
                     PFIconTile(systemImage: "play.fill", size: 40)

@@ -87,7 +87,12 @@ final class PFBookmarkStore: ObservableObject {
 
 // MARK: - Lesson view
 
-/// Pushed via NavigationLink from Home, Courses, Search and Situations.
+/// Opened as a sheet from every lesson tap through
+/// LessonSheetRouter, and from lesson links through the
+/// deep-link sheet in MainTabView. Inside the sheet, related
+/// and next-lesson links push within the sheet's own
+/// NavigationStack, and the audio auto-advance navigates the
+/// same way.
 struct LessonView: View {
     let entry: SearchEntry
 
@@ -716,7 +721,18 @@ struct LessonView: View {
         .sheet(isPresented: signInSheetBinding) {
             WelcomeView()
         }
+        .onAppear {
+            // Probe: the view appeared, so the presentation
+            // completed. A tap breadcrumb with no appear
+            // breadcrumb means the presentation itself stuck.
+            CrashBreadcrumbs.record("lesson appear \(entry.id)")
+        }
         .task {
+            // Probe: the task firing proves SwiftUI ran the
+            // view's work, even for a locked lesson. Recorded
+            // before the lock check, so a locked lesson still
+            // leaves this trace.
+            CrashBreadcrumbs.record("lesson task \(entry.id)")
             // Locked lessons start nothing: no progress event, no
             // audio, no detail load, no auto full-screen visual.
             // A purchase unlocks the lesson while this view is open;

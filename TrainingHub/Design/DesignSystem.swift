@@ -871,15 +871,18 @@ final class PFNavigationDebouncer: ObservableObject {
 /// style propagates to the inner Button, so card rows keep their
 /// press effect and text rows keep theirs. This gives the 500ms
 /// debounce; true single-top (one destination instance per stack)
-/// needs path-based stacks and is a larger refactor.
+/// needs path-based stacks and is a larger refactor. Lesson taps
+/// do not use this wrapper: they open as a sheet through
+/// LessonSheetRouter, which records the same breadcrumb.
 struct PFGuardedNavigationLink<Destination: View, Label: View>: View {
     let key: String
     let destination: Destination
     let label: Label
     /// A diagnostic breadcrumb recorded on a tap that passes the
     /// debounce, when set. Nil by default, so call sites without
-    /// one are unaffected. Lesson taps pass one so a crash on
-    /// the lesson path leaves a trace in the diagnostics.
+    /// one are unaffected. No current call site passes one:
+    /// lesson taps open through LessonSheetRouter, which records
+    /// the same breadcrumb, and the other destinations pass none.
     let breadcrumb: String?
     @State private var isActive = false
 

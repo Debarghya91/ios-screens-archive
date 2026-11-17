@@ -115,6 +115,12 @@ enum InvestigationEngine {
             difficulty: difficulty
         )
         let timeline = evidence.filter { $0.kind == .timeline }
+        // Evidence and timeline are disjoint lists: timeline items live
+        // only in `timeline`, so the workspace (timeline + evidence)
+        // shows each item once. The supporting-IDs and kind
+        // computations keep using the full list, so scoring and
+        // decisions are unchanged.
+        let nonTimelineEvidence = evidence.filter { $0.kind != .timeline }
         let supportingEvidenceIDs = evidence
             .filter { $0.kind == .timeline || $0.kind == .message || $0.kind == .log }
             .map { $0.id }
@@ -155,7 +161,7 @@ enum InvestigationEngine {
             objectives: objectives,
             paymentHeader: header,
             timeline: timeline,
-            evidence: evidence,
+            evidence: nonTimelineEvidence,
             hypotheses: hypotheses,
             decisions: decisions,
             correctDiagnosis: diagnosis,
@@ -202,6 +208,12 @@ enum InvestigationEngine {
         }
         evidence = applyingExpertCompleteness(to: evidence, difficulty: difficulty)
         let timeline = evidence.filter { $0.kind == .timeline }
+        // Evidence and timeline are disjoint lists: timeline items live
+        // only in `timeline`, so the workspace (timeline + evidence)
+        // shows each item once. The supporting-IDs and kind
+        // computations keep using the full list, so scoring and
+        // decisions are unchanged.
+        let nonTimelineEvidence = evidence.filter { $0.kind != .timeline }
         let genuineIDs = evidence.filter { !$0.isRedHerring }.map { $0.id }
         let supportingEvidenceIDs = genuineIDs.isEmpty ? evidence.map { $0.id } : genuineIDs
 
@@ -247,7 +259,7 @@ enum InvestigationEngine {
             objectives: objectives,
             paymentHeader: header,
             timeline: timeline,
-            evidence: evidence,
+            evidence: nonTimelineEvidence,
             hypotheses: hypotheses,
             decisions: decisions,
             correctDiagnosis: diagnosis,

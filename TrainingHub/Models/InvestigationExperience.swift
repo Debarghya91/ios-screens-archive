@@ -254,9 +254,10 @@ enum InvestigationSource: String, Codable, Hashable {
 
 /// One investigation case: the briefing, the evidence workspace
 /// contents, the hypothesis set, the decision points, and the
-/// report source material. `timeline` is the kind-timeline subset
-/// of `evidence`, in journey order; the same items appear in both
-/// lists. `reflectionPrompt` carries the case closing question,
+/// report source material. `timeline` holds the journey steps
+/// and `evidence` holds every other item: the two lists are
+/// disjoint, so timeline plus evidence is the full set with no
+/// item twice. `reflectionPrompt` carries the case closing question,
 /// which renders as a reflection prompt in the report and is never
 /// a question the learner must answer. The case is built per
 /// difficulty because Expert changes evidence completeness.

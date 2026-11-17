@@ -151,6 +151,98 @@ struct TrainingHubApp: App {
     }
 }
 
+// MARK: - Lesson sheet router
+
+/// Opens lessons the way a deep link does: one sheet, owned by
+/// MainTabView, carrying its own NavigationStack and a Done
+/// button, over whatever tab is showing. Every lesson tap in the
+/// app routes through here instead of pushing through a
+/// NavigationLink, after the v106 fault in which a lesson tap
+/// recorded its breadcrumb but the lesson screen never started:
+/// the push transition between the tap and LessonView never
+/// completed. A sheet presentation has no push transition to
+/// stick, and the deep-link sheet already proves the mechanism.
+///
+/// The router is a shared singleton, like the navigation
+/// debouncer: any view opens a lesson with one call and no
+/// environment plumbing. The debounce and the breadcrumb live
+/// here, so every lesson tap gets the same guard and the same
+/// trace: a second tap on the same lesson within half a second
+/// is ignored, and a tap that passes the debounce records
+/// "lesson tap <id>".
+///
+/// The introduction cards cannot open a sheet directly: the
+/// introduction is a fullScreenCover, and a sheet presented
+/// while the cover is up is unreliable, so the cards request
+/// their content here and MainTabView opens it once the cover
+/// is gone, the same deferral the deep-link router uses.
+@MainActor
+final class LessonSheetRouter: ObservableObject {
+    static let shared = LessonSheetRouter()
+
+    /// The lesson the sheet is showing, or nil when no lesson
+    /// sheet is up. MainTabView presents the sheet from this.
+    @Published var presentedEntry: SearchEntry? = nil
+    /// The free Payment Case the sheet is showing, or nil when
+    /// no case sheet is up. Only the introduction requests one.
+    @Published var presentedCase: Situation? = nil
+
+    /// A lesson requested from the introduction, waiting for the
+    /// cover to dismiss before it opens. Nil otherwise.
+    private(set) var pendingEntry: SearchEntry? = nil
+    /// A free case requested from the introduction, same wait.
+    private(set) var pendingCase: Situation? = nil
+
+    /// Open a lesson at once: the debounce guards the tap, the
+    /// breadcrumb records it, and the sheet presents.
+    func open(_ entry: SearchEntry) {
+        guard PFNavigationDebouncer.shared.allow(key: entry.id) else { return }
+        CrashBreadcrumbs.record("lesson tap \(entry.id)")
+        presentedEntry = entry
+    }
+
+    /// Close the lesson sheet.
+    func close() {
+        presentedEntry = nil
+    }
+
+    /// Close the case sheet.
+    func closeCase() {
+        presentedCase = nil
+    }
+
+    /// Request a lesson from the introduction: the tap is
+    /// debounced and recorded now, and the lesson opens once
+    /// MainTabView reports the introduction gone.
+    func requestAfterIntroduction(_ entry: SearchEntry) {
+        guard PFNavigationDebouncer.shared.allow(key: entry.id) else { return }
+        CrashBreadcrumbs.record("lesson tap \(entry.id)")
+        pendingEntry = entry
+    }
+
+    /// Request a free case from the introduction, same deferral.
+    func requestCaseAfterIntroduction(_ situation: Situation) {
+        guard PFNavigationDebouncer.shared.allow(key: "case-\(situation.id)") else { return }
+        CrashBreadcrumbs.record("case tap \(situation.id)")
+        pendingCase = situation
+    }
+
+    /// Open whatever the introduction requested, now that its
+    /// cover is gone. Called from MainTabView when onboarding
+    /// completes. A lesson and a case are never both pending:
+    /// only one card can be tapped before the cover dismisses.
+    func openPendingAfterIntroduction() {
+        if let entry = pendingEntry {
+            pendingEntry = nil
+            presentedEntry = entry
+        }
+        if let situation = pendingCase {
+            pendingCase = nil
+            presentedCase = situation
+        }
+    }
+}
+
 /// The main tab bar, four tabs: Home (0), Search (1), Payment
 /// Cases (2), My Progress (3). Home is the one place for browsing
 /// and starting lessons: the courses, learning journeys and
@@ -198,6 +290,11 @@ struct MainTabView: View {
     /// namespace), so sign-in, sign-out, and relaunch never show
     /// onboarding again.
     @StateObject private var onboardingStore = OnboardingStore.shared
+
+    /// The lesson sheet router: every lesson tap in the app
+    /// opens its sheet through here. MainTabView owns the sheet
+    /// presentation below; the router owns the state.
+    @StateObject private var lessonSheetRouter = LessonSheetRouter.shared
 
     @State private var isDrawerOpen = false
     /// Opens the Privacy Policy and Terms of Service in the
@@ -337,6 +434,24 @@ struct MainTabView: View {
         } else {
             Label(title, systemImage: systemImage)
         }
+    }
+
+    /// The lesson sheet binding: the router's presented lesson,
+    /// written back to the router when the sheet dismisses.
+    private var lessonSheetBinding: Binding<SearchEntry?> {
+        Binding(
+            get: { lessonSheetRouter.presentedEntry },
+            set: { lessonSheetRouter.presentedEntry = $0 }
+        )
+    }
+
+    /// The free-case sheet binding, same contract as the lesson
+    /// sheet binding.
+    private var lessonCaseSheetBinding: Binding<Situation?> {
+        Binding(
+            get: { lessonSheetRouter.presentedCase },
+            set: { lessonSheetRouter.presentedCase = $0 }
+        )
     }
 
     var body: some View {
@@ -504,6 +619,36 @@ struct MainTabView: View {
                     }
             }
         }
+        // Lesson sheet: every lesson tap in the app opens here,
+        // in its own NavigationStack with a Done button, over any
+        // tab, the same presentation a deep-link lesson gets. No
+        // push transition is involved, so a tap can never strand
+        // the learner on a list.
+        .sheet(item: lessonSheetBinding) { entry in
+            NavigationStack {
+                LessonView(entry: entry)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { lessonSheetRouter.close() }
+                                .accessibilityHint("Closes this lesson.")
+                        }
+                    }
+            }
+        }
+        // Free-case sheet: the introduction's free-case card
+        // opens here once the introduction is gone, same
+        // presentation as the lesson sheet.
+        .sheet(item: lessonCaseSheetBinding) { situation in
+            NavigationStack {
+                SituationDetailLoaderView(situation: situation)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { lessonSheetRouter.closeCase() }
+                                .accessibilityHint("Closes this Payment Case.")
+                        }
+                    }
+            }
+        }
         .alert("Lesson link not found", isPresented: $showDeepLinkNotFound) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -583,6 +728,10 @@ struct MainTabView: View {
             // A deep link that arrived during onboarding routes
             // now that the cover is gone.
             resolvePendingDeepLink()
+            // An introduction card tap requested its content
+            // while the cover was up: open it now that the
+            // cover is gone, through the lesson sheet.
+            lessonSheetRouter.openPendingAfterIntroduction()
             // Onboarding completing arms the permission check.
             maybeShowNotificationPermissionPrompt()
         }

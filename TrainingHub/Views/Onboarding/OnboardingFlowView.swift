@@ -396,7 +396,14 @@ struct OnboardingFlowView: View {
     private var firstLessonCard: some View {
         if let firstLesson {
             let isSample = PFChapterHelper.isSampleLesson(firstLesson, in: contentService)
-            NavigationLink(destination: LessonView(entry: firstLesson)) {
+            // Never a push from inside the cover: the card
+            // requests the lesson, then finishes the
+            // introduction, and MainTabView opens the lesson
+            // through the lesson sheet once the cover is gone.
+            Button {
+                LessonSheetRouter.shared.requestAfterIntroduction(firstLesson)
+                getStarted()
+            } label: {
                 PFCard {
                     HStack(spacing: PFSpacing.md) {
                         if firstLesson.thumbnail != nil {
@@ -435,7 +442,14 @@ struct OnboardingFlowView: View {
     @ViewBuilder
     private var freeCaseCard: some View {
         if let freeCase {
-            NavigationLink(destination: SituationDetailLoaderView(situation: freeCase)) {
+            // Same deferral as the first-lesson card: request
+            // the case, finish the introduction, and MainTabView
+            // opens the case sheet once the cover is gone. Never
+            // a push from inside the cover.
+            Button {
+                LessonSheetRouter.shared.requestCaseAfterIntroduction(freeCase)
+                getStarted()
+            } label: {
                 PFCard {
                     HStack(spacing: PFSpacing.md) {
                         if freeCase.thumbnail != nil {

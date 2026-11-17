@@ -346,7 +346,9 @@ struct PathDetailView: View {
                         PFChapterHelper.chapterNumber(from: $0.id) == chapter.number
                     }
                     ForEach(chapterLessons) { lesson in
-                        NavigationLink(destination: LessonView(entry: lesson)) {
+                        Button {
+                            LessonSheetRouter.shared.open(lesson)
+                        } label: {
                             LessonRow(entry: lesson)
                         }
                         .buttonStyle(PFCardButtonStyle())

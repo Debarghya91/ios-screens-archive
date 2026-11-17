@@ -945,7 +945,9 @@ struct HomeView: View {
                 PFHomeTabCard(accent: .gold) {
                     VStack(alignment: .leading, spacing: PFSpacing.md) {
                         if let leftOff = leftOffLesson {
-                            NavigationLink(destination: LessonView(entry: leftOff)) {
+                            Button {
+                                LessonSheetRouter.shared.open(leftOff)
+                            } label: {
                                 HStack(spacing: PFSpacing.md) {
                                     if leftOff.thumbnail != nil {
                                         PFThumbnailView(thumbnailPath: leftOff.thumbnail, size: 44, cornerRadius: 12)
@@ -1005,7 +1007,9 @@ struct HomeView: View {
                             .font(.pfBody)
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
-                        NavigationLink(destination: LessonView(entry: next)) {
+                        Button {
+                            LessonSheetRouter.shared.open(next)
+                        } label: {
                             Text(isNewLearner ? "Start this lesson" : "Continue")
                                 .font(.pfBody.weight(.semibold))
                                 .foregroundColor(.white)
@@ -1107,7 +1111,9 @@ struct HomeView: View {
     /// course title, a progress bar with the percentage, and
     /// one-tap resume to the next lesson.
     private func inProgressCourseCard(for course: InProgressCourse) -> some View {
-        NavigationLink(destination: LessonView(entry: course.resume)) {
+        Button {
+            LessonSheetRouter.shared.open(course.resume)
+        } label: {
             PFHomeTabCard(accent: .gold) {
                 HStack(spacing: PFSpacing.md) {
                     if let thumbnailPath = PFChapterHelper.courseThumbnailPath(for: course.product, in: contentService) {
@@ -1430,7 +1436,9 @@ struct HomeView: View {
                         )
                     }
                     ForEach(weakRevisionLessons) { lesson in
-                        PFGuardedNavigationLink(key: lesson.id, breadcrumb: "lesson tap \(lesson.id)", destination: { LessonView(entry: lesson) }) {
+                        Button {
+                            LessonSheetRouter.shared.open(lesson)
+                        } label: {
                             PFHomeTopBarCard(accent: .navy) {
                                 HStack(spacing: PFSpacing.md) {
                                     if lesson.thumbnail != nil {
@@ -1494,7 +1502,9 @@ struct HomeView: View {
     private func weakQuizLessonRow(lesson: SearchEntry, average: Double, attempts: Int) -> some View {
         let percent = Int((average * 100).rounded())
         let attemptWord = attempts == 1 ? "attempt" : "attempts"
-        return PFGuardedNavigationLink(key: lesson.id, breadcrumb: "lesson tap \(lesson.id)", destination: { LessonView(entry: lesson) }) {
+        return Button {
+            LessonSheetRouter.shared.open(lesson)
+        } label: {
             PFHomeTopBarCard(accent: .navy) {
                 HStack(spacing: PFSpacing.md) {
                     if lesson.thumbnail != nil {
@@ -1915,7 +1925,9 @@ struct HomeView: View {
                 .foregroundColor(.pfSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
             if let firstLesson = continueNextLesson ?? contentService.readingOrderLessons.first {
-                NavigationLink(destination: LessonView(entry: firstLesson)) {
+                Button {
+                    LessonSheetRouter.shared.open(firstLesson)
+                } label: {
                     Text("Start with the first lesson")
                         .font(.pfBody.weight(.semibold))
                         .foregroundColor(.pfRoyal)
@@ -1981,7 +1993,9 @@ struct HomeView: View {
                 }
             } else {
                 ForEach(recentUnfinishedLessons) { lesson in
-                    PFGuardedNavigationLink(key: lesson.id, breadcrumb: "lesson tap \(lesson.id)", destination: { LessonView(entry: lesson) }) {
+                    Button {
+                        LessonSheetRouter.shared.open(lesson)
+                    } label: {
                         LessonRow(entry: lesson)
                             .contentShape(Rectangle())
                     }
@@ -2551,7 +2565,9 @@ struct GuidedPathDetailView: View {
                                 .font(.pfCaption)
                                 .foregroundColor(.pfSecondaryText)
                         }
-                        NavigationLink(destination: LessonView(entry: next)) {
+                        Button {
+                            LessonSheetRouter.shared.open(next)
+                        } label: {
                             Text(completedCount == lessons.count ? "Review again" : "Continue")
                                 .font(.pfBody.weight(.semibold))
                                 .foregroundColor(.white)
@@ -2571,7 +2587,9 @@ struct GuidedPathDetailView: View {
                         .foregroundColor(.pfSecondaryText)
                 }
                 ForEach(visibleLessons) { lesson in
-                    PFGuardedNavigationLink(key: lesson.id, breadcrumb: "lesson tap \(lesson.id)", destination: { LessonView(entry: lesson) }) {
+                    Button {
+                        LessonSheetRouter.shared.open(lesson)
+                    } label: {
                         LessonRow(entry: lesson)
                     }
                     .buttonStyle(PFCardButtonStyle())

@@ -100,7 +100,9 @@ private struct DailyObjectiveHabitCard: View {
 
     var body: some View {
         if let objective {
-            NavigationLink(destination: LessonView(entry: objective.lesson)) {
+            Button {
+                LessonSheetRouter.shared.open(objective.lesson)
+            } label: {
                 PFCard {
                     VStack(alignment: .leading, spacing: PFSpacing.sm) {
                         HStack(spacing: PFSpacing.sm) {
@@ -448,7 +450,9 @@ private struct WeakAreaHabitCard: View {
                 .font(.pfCardTitle)
                 .foregroundColor(.pfNavy)
             ForEach(picks) { pick in
-                NavigationLink(destination: LessonView(entry: pick.lesson)) {
+                Button {
+                    LessonSheetRouter.shared.open(pick.lesson)
+                } label: {
                     PFCard {
                         HStack(spacing: PFSpacing.md) {
                             PFIconTile(systemImage: "questionmark.circle.fill", size: 44)

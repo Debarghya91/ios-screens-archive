@@ -617,7 +617,9 @@ struct DashboardView: View {
                     PFLoadingView(message: "Loading your next lesson...")
                 }
             } else if let recommendation = nextRecommendation {
-                NavigationLink(destination: LessonView(entry: recommendation.lesson)) {
+                Button {
+                    LessonSheetRouter.shared.open(recommendation.lesson)
+                } label: {
                     PFCard {
                         VStack(alignment: .leading, spacing: PFSpacing.md) {
                             HStack(spacing: PFSpacing.md) {
@@ -1989,7 +1991,9 @@ struct DashboardView: View {
                                 .foregroundColor(.pfSecondaryText)
                             if let id = event.lessonID,
                                let entry = contentService.allLessons.first(where: { $0.id == id }) {
-                                NavigationLink(destination: LessonView(entry: entry)) {
+                                Button {
+                                    LessonSheetRouter.shared.open(entry)
+                                } label: {
                                     Text("Open lesson")
                                         .font(.pfBody)
                                         .fontWeight(.semibold)
@@ -2024,7 +2028,9 @@ struct DashboardView: View {
                 }
             } else {
                 ForEach(recommendedLessons) { lesson in
-                    NavigationLink(destination: LessonView(entry: lesson)) {
+                    Button {
+                        LessonSheetRouter.shared.open(lesson)
+                    } label: {
                         LessonRow(entry: lesson)
                     }
                     .buttonStyle(PFCardButtonStyle())

@@ -1153,7 +1153,9 @@ struct SearchView: View {
         let entry = scored.entry
         switch entry.type {
         case .lesson:
-            PFGuardedNavigationLink(key: entry.id, breadcrumb: "lesson tap \(entry.id)", destination: { LessonView(entry: entry) }) {
+            Button {
+                LessonSheetRouter.shared.open(entry)
+            } label: {
                 SearchResultRow(entry: entry, reason: scored.reason, matchedTerm: scored.matchedTerm, query: debouncedQuery, situationsByID: situationsByID)
             }
             .listRowBackground(Color.pfCard)
@@ -1602,7 +1604,9 @@ private struct SearchTypeListView: View {
     private func row(for entry: SearchEntry, situationsByID: [String: FullSituationItem]) -> some View {
         switch entry.type {
         case .lesson:
-            PFGuardedNavigationLink(key: entry.id, breadcrumb: "lesson tap \(entry.id)", destination: { LessonView(entry: entry) }) {
+            Button {
+                LessonSheetRouter.shared.open(entry)
+            } label: {
                 SearchResultRow(entry: entry, situationsByID: situationsByID)
             }
             .listRowBackground(Color.pfCard)

@@ -28,7 +28,15 @@ enum InvestigationScoring {
     /// five, computed by InvestigationDimensionScores.
     static func score(case investigationCase: InvestigationCase, run: InvestigationRun) -> InvestigationReport {
         let decisions = investigationCase.decisions
-        let evidenceIDs = Set(investigationCase.evidence.map { $0.id })
+        // Timeline and evidence are disjoint lists since the
+        // duplication fix: the scored set is their union, the
+        // same ids the old overlapping evidence list carried,
+        // so opening a timeline item still counts exactly as
+        // it did before.
+        let evidenceIDs = Set(
+            investigationCase.timeline.map { $0.id }
+                + investigationCase.evidence.map { $0.id }
+        )
         let openedIDs = run.openedEvidenceIDs.intersection(evidenceIDs)
 
         var wrongPicks = 0

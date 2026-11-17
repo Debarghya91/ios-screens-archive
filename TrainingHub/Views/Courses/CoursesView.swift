@@ -1529,7 +1529,9 @@ struct ChapterDetailView: View {
                         .buttonStyle(PFCardButtonStyle())
                         .accessibilityLabel("\(lesson.title), locked. Tap to see the price.")
                     } else {
-                        PFGuardedNavigationLink(key: lesson.id, breadcrumb: "lesson tap \(lesson.id)", destination: { LessonView(entry: lesson) }) {
+                        Button {
+                            LessonSheetRouter.shared.open(lesson)
+                        } label: {
                             LessonRow(entry: lesson, showsLessonNumber: true)
                                 .contentShape(Rectangle())
                         }
