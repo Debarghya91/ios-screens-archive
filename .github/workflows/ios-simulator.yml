@@ -124,7 +124,7 @@ jobs:
               kill "$SAMPLER_PID" 2>/dev/null || true
               SAMPLER_PID=""
             fi
-        done
+          done
           exit $FAILED
 
       - name: Upload run evidence
