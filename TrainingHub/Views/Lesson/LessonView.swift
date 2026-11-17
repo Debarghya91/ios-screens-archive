@@ -744,16 +744,28 @@ struct LessonView: View {
             // before it flips the link active, so the link appears
             // with the right destination already in place, and the
             // pushed lesson starts with its own link inactive.
+            // The link also requires a pending destination: there
+            // is no fallback to the current entry, so it can never
+            // push a duplicate of the lesson already showing, and
+            // the pending entry is cleared when the navigation
+            // goes inactive (the onChange after this background),
+            // so a stale destination is never reused.
             Group {
-                if isNavLinkActive {
+                if isNavLinkActive, let pending = pendingNavEntry {
                     NavigationLink(
-                        destination: LessonView(entry: pendingNavEntry ?? entry),
+                        destination: LessonView(entry: pending),
                         isActive: $isNavLinkActive
                     ) { EmptyView() }
                     .hidden()
                 }
             }
         )
+        .onChange(of: isNavLinkActive) { _, active in
+            // Navigation went inactive (the pushed lesson was
+            // popped): drop the pending destination, so the next
+            // navigation cannot reuse a stale entry.
+            if !active { pendingNavEntry = nil }
+        }
         .sheet(isPresented: $showCheckout) {
             CheckoutView()
         }

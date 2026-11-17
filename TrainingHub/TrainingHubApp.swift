@@ -187,11 +187,22 @@ final class LessonSheetRouter: ObservableObject {
     /// no case sheet is up. Only the introduction requests one.
     @Published var presentedCase: Situation? = nil
 
-    /// A lesson requested from the introduction, waiting for the
-    /// cover to dismiss before it opens. Nil otherwise.
-    private(set) var pendingEntry: SearchEntry? = nil
-    /// A free case requested from the introduction, same wait.
-    private(set) var pendingCase: Situation? = nil
+    /// The destination requested from the introduction, waiting
+    /// for the cover to dismiss before it opens. Nil otherwise.
+    /// Published, so MainTabView's presentation arbitration
+    /// re-evaluates the moment a request lands or opens: while
+    /// a destination is pending, no alert may take the
+    /// hierarchy, and the pending open holds this value until
+    /// the sheet actually presents, so the gate stays closed
+    /// through the settle window.
+    @Published private(set) var pendingDestination: PendingDestination? = nil
+
+    /// True while a pending destination's deferred open is
+    /// scheduled but has not fired yet. Stops a second
+    /// openPendingAfterIntroduction call (every sheet
+    /// re-triggers the arbitration on dismiss) from scheduling
+    /// a second presentation of the same destination.
+    private var isOpeningPending = false
 
     /// Open a lesson at once: the debounce guards the tap, the
     /// breadcrumb records it, and the sheet presents.
@@ -217,30 +228,56 @@ final class LessonSheetRouter: ObservableObject {
     func requestAfterIntroduction(_ entry: SearchEntry) {
         guard PFNavigationDebouncer.shared.allow(key: entry.id) else { return }
         CrashBreadcrumbs.record("lesson tap \(entry.id)")
-        pendingEntry = entry
+        pendingDestination = .lesson(entry)
     }
 
     /// Request a free case from the introduction, same deferral.
     func requestCaseAfterIntroduction(_ situation: Situation) {
         guard PFNavigationDebouncer.shared.allow(key: "case-\(situation.id)") else { return }
         CrashBreadcrumbs.record("case tap \(situation.id)")
-        pendingCase = situation
+        pendingDestination = .freeCase(situation)
     }
 
     /// Open whatever the introduction requested, now that its
     /// cover is gone. Called from MainTabView when onboarding
-    /// completes. A lesson and a case are never both pending:
-    /// only one card can be tapped before the cover dismisses.
+    /// completes, and re-run from every sheet dismissal, so a
+    /// request deferred behind another sheet opens when that
+    /// sheet closes. The presentation is deferred past a short
+    /// settle delay: the cover's onDismiss fires while the
+    /// hierarchy is still tearing the cover down, and a sheet
+    /// presented synchronously from it is dropped (gate run
+    /// 44124436974: the lesson sheet never appeared after the
+    /// first-lesson card tap). The pending destination is held
+    /// until the deferred presentation fires, so the
+    /// arbitration gate stays closed through the window and no
+    /// alert can take the hierarchy first. A second call while
+    /// the open is scheduled is a no-op, so the destination
+    /// can never present twice.
     func openPendingAfterIntroduction() {
-        if let entry = pendingEntry {
-            pendingEntry = nil
-            presentedEntry = entry
-        }
-        if let situation = pendingCase {
-            pendingCase = nil
-            presentedCase = situation
+        guard let destination = pendingDestination, !isOpeningPending else { return }
+        isOpeningPending = true
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            isOpeningPending = false
+            pendingDestination = nil
+            switch destination {
+            case .lesson(let entry):
+                presentedEntry = entry
+            case .freeCase(let situation):
+                presentedCase = situation
+            }
         }
     }
+}
+
+/// One destination requested from the introduction, waiting for
+/// its cover to dismiss before it opens. A single enum value
+/// makes the two request kinds mutually exclusive by
+/// construction: a lesson and a case can never both be pending,
+/// so the cover's dismissal opens exactly one sheet.
+enum PendingDestination {
+    case lesson(SearchEntry)
+    case freeCase(Situation)
 }
 
 /// The main tab bar, four tabs: Home (0), Search (1), Payment
@@ -454,6 +491,41 @@ struct MainTabView: View {
         )
     }
 
+    /// True while any sheet owns the presentation hierarchy, or
+    /// a sheet is queued behind the introduction cover. Every
+    /// alert checks this before presenting, and deep-link
+    /// routing waits while it holds: a second presentation
+    /// started while one is active is dropped by SwiftUI, which
+    /// is how gate runs lost the lesson sheet after the
+    /// first-lesson card tap. A gated alert or link is not lost:
+    /// its flag stays set and every sheet re-runs the
+    /// arbitration on dismiss (see presentationDidDismiss), so
+    /// it shows as soon as the hierarchy is free.
+    private var hasActiveSheetPresentation: Bool {
+        presentedSheet != nil
+            || deepLinkLessonEntry != nil
+            || lessonSheetRouter.presentedEntry != nil
+            || lessonSheetRouter.presentedCase != nil
+            || lessonSheetRouter.pendingDestination != nil
+    }
+
+    /// Re-run the presentation arbitration after a sheet or the
+    /// introduction cover closes: a deep link deferred while a
+    /// presentation was up routes now, an introduction request
+    /// deferred behind another sheet opens now, and the one-time
+    /// notification explanation shows if its guards pass. Each
+    /// step is a no-op when nothing is waiting. The pending
+    /// destination opens only when the deep-link routing above
+    /// did not take the hierarchy; otherwise it waits for that
+    /// sheet's dismissal, which re-runs this function.
+    private func presentationDidDismiss() {
+        resolvePendingDeepLink()
+        if deepLinkLessonEntry == nil, presentedSheet == nil {
+            lessonSheetRouter.openPendingAfterIntroduction()
+        }
+        maybeShowNotificationPermissionPrompt()
+    }
+
     var body: some View {
         ZStack {
             // Invisible tab bar frame reader: measures the real
@@ -518,7 +590,7 @@ struct MainTabView: View {
                 .toolbarBackground(Color.pfCard, for: .tabBar)
                 .toolbarBackground(.visible, for: .tabBar)
             }
-            .sheet(item: $presentedSheet, onDismiss: { maybeShowNotificationPermissionPrompt() }) { destination in
+            .sheet(item: $presentedSheet, onDismiss: { presentationDidDismiss() }) { destination in
                 switch destination {
                 case .myPurchases:
                     CheckoutView()
@@ -608,7 +680,7 @@ struct MainTabView: View {
         .coordinateSpace(name: TourCoordinateSpace.name)
         // Deep-link lesson sheet: a lesson link opens here, in its
         // own NavigationStack with a Done button, over any tab.
-        .sheet(item: $deepLinkLessonEntry, onDismiss: { maybeShowNotificationPermissionPrompt() }) { entry in
+        .sheet(item: $deepLinkLessonEntry, onDismiss: { presentationDidDismiss() }) { entry in
             NavigationStack {
                 LessonView(entry: entry)
                     .toolbar {
@@ -624,7 +696,7 @@ struct MainTabView: View {
         // tab, the same presentation a deep-link lesson gets. No
         // push transition is involved, so a tap can never strand
         // the learner on a list.
-        .sheet(item: lessonSheetBinding, onDismiss: { maybeShowNotificationPermissionPrompt() }) { entry in
+        .sheet(item: lessonSheetBinding, onDismiss: { presentationDidDismiss() }) { entry in
             NavigationStack {
                 LessonView(entry: entry)
                     .toolbar {
@@ -638,7 +710,7 @@ struct MainTabView: View {
         // Free-case sheet: the introduction's free-case card
         // opens here once the introduction is gone, same
         // presentation as the lesson sheet.
-        .sheet(item: lessonCaseSheetBinding, onDismiss: { maybeShowNotificationPermissionPrompt() }) { situation in
+        .sheet(item: lessonCaseSheetBinding, onDismiss: { presentationDidDismiss() }) { situation in
             NavigationStack {
                 SituationDetailLoaderView(situation: situation)
                     .toolbar {
@@ -649,7 +721,28 @@ struct MainTabView: View {
                     }
             }
         }
-        .alert("Lesson link not found", isPresented: $showDeepLinkNotFound) {
+        // Presentation arbitration: this alert shows only when
+        // no sheet owns the hierarchy, onboarding and the splash
+        // are done, and no purchase notice is waiting (the
+        // purchase alert has priority). The flag stays set while
+        // gated, so the alert shows as soon as the hierarchy is
+        // free instead of being lost.
+        .alert(
+            "Lesson link not found",
+            isPresented: Binding(
+                get: {
+                    showDeepLinkNotFound
+                        && onboardingStore.hasCompletedOnboarding
+                        && !showSplash
+                        && !hasActiveSheetPresentation
+                        && !showNotificationPermissionPrompt
+                        && storeManager.statusMessage == nil
+                },
+                set: { isPresented in
+                    if !isPresented { showDeepLinkNotFound = false }
+                }
+            )
+        ) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("That link did not match a lesson in the course catalogue.")
@@ -658,12 +751,24 @@ struct MainTabView: View {
         // restore and verification notice from StoreManager
         // surfaces here, and nowhere else, so a notice can
         // never stack over a lesson or a checkout screen.
-        // Dismissing clears the message; the store writes
-        // purchase notices only, never load failures.
+        // Presentation arbitration: the alert shows only when
+        // no sheet owns the hierarchy, onboarding and the splash
+        // are done, and the notification explanation is not up.
+        // The message stays in the store while gated, so the
+        // notice shows as soon as the hierarchy is free instead
+        // of being lost. Dismissing clears the message; the
+        // store writes purchase notices only, never load
+        // failures.
         .alert(
             "Purchase",
             isPresented: Binding(
-                get: { storeManager.statusMessage != nil },
+                get: {
+                    storeManager.statusMessage != nil
+                        && onboardingStore.hasCompletedOnboarding
+                        && !showSplash
+                        && !hasActiveSheetPresentation
+                        && !showNotificationPermissionPrompt
+                },
                 set: { isPresented in
                     if !isPresented { storeManager.clearStatusMessage() }
                 }
@@ -734,8 +839,7 @@ struct MainTabView: View {
                 // dismissal itself, not a guess at it. Opening
                 // nothing when nothing is pending keeps this a
                 // no-op for plain Skip taps.
-                resolvePendingDeepLink()
-                lessonSheetRouter.openPendingAfterIntroduction()
+                presentationDidDismiss()
             }
         ) {
             OnboardingFlowView(onFinish: {})
@@ -840,6 +944,13 @@ struct MainTabView: View {
     private func resolvePendingDeepLink() {
         guard onboardingStore.hasCompletedOnboarding,
               let link = deepLinkRouter.pendingLink else { return }
+        // A sheet already up (or queued behind the cover) owns
+        // the hierarchy: routing now would present a second
+        // sheet over it and lose the link. The link stays
+        // pending and routes from the sheet's dismissal, which
+        // re-runs this function through
+        // presentationDidDismiss.
+        guard !hasActiveSheetPresentation else { return }
         // TTL: a link tapped long ago (cold start, onboarding,
         // a slow catalogue) must not open content the learner no
         // longer expects. 30 minutes covers every real launch.
@@ -876,10 +987,11 @@ struct MainTabView: View {
     /// OnboardingStore.hasCompletedOnboarding), the splash
     /// gone, the learner not yet asked (install-level flag
     /// pf.notifications.permissionAsked.v1), the system
-    /// decision still not determined, and no sheet pending or
-    /// up: presenting the alert while a sheet presents (or the
-    /// reverse) wedges the presentation hierarchy, which is how
-    /// gate run 44089979766 lost the app after the
+    /// decision still not determined, no sheet pending or up
+    /// (see hasActiveSheetPresentation), and no other alert
+    /// waiting: presenting the alert while a sheet presents (or
+    /// the reverse) wedges the presentation hierarchy, which is
+    /// how gate run 44089979766 lost the app after the
     /// first-lesson card tap. A deferred check is not lost:
     /// every sheet re-checks on dismiss, so the explanation
     /// shows as soon as the sheet closes. Both answers in the
@@ -891,12 +1003,9 @@ struct MainTabView: View {
               !showNotificationPermissionPrompt,
               !notificationService.hasAskedPermission,
               notificationService.authorizationStatus == .notDetermined,
-              lessonSheetRouter.pendingEntry == nil,
-              lessonSheetRouter.pendingCase == nil,
-              lessonSheetRouter.presentedEntry == nil,
-              lessonSheetRouter.presentedCase == nil,
-              deepLinkLessonEntry == nil,
-              presentedSheet == nil
+              !hasActiveSheetPresentation,
+              !showDeepLinkNotFound,
+              storeManager.statusMessage == nil
         else { return }
         showNotificationPermissionPrompt = true
     }

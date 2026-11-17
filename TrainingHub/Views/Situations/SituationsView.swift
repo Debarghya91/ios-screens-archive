@@ -1344,11 +1344,19 @@ private struct PillFlow: Layout {
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         // An unspecified proposal asks for the ideal size: wrap
         // against infinity, but report the width actually used.
-        // Returning .infinity here poisoned the parent layout:
-        // the negotiation never converged (the Payment Cases
-        // list spun for 12 minutes in gate run 44089979766) and
-        // rows measured infinite frames ({{inf, inf}, {0, 0}}).
-        let availableWidth = proposal.width ?? .infinity
+        // An EXPLICITLY infinite proposal is the same unbounded
+        // offer, not a width to report: normalise it to nil
+        // before wrapping and reporting. Returning .infinity
+        // here poisoned the parent layout: the negotiation never
+        // converged (the Payment Cases list spun for 12 minutes
+        // in gate run 44089979766) and rows measured infinite
+        // frames ({{inf, inf}, {0, 0}}), which no tap can hit
+        // (the Timeline gate test still hit one in run
+        // 44124436974, because only the nil case was
+        // normalised). A finite proposal still reports the
+        // offered width, as before.
+        let finiteProposal = proposal.width.flatMap { $0.isFinite ? $0 : nil }
+        let availableWidth = finiteProposal ?? .infinity
         var x: CGFloat = 0
         var y: CGFloat = 0
         var rowHeight: CGFloat = 0
@@ -1365,7 +1373,7 @@ private struct PillFlow: Layout {
             x += size.width + spacing
         }
         widestRow = max(widestRow, x > 0 ? x - spacing : 0)
-        return CGSize(width: proposal.width ?? widestRow, height: y + rowHeight)
+        return CGSize(width: finiteProposal ?? widestRow, height: y + rowHeight)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {

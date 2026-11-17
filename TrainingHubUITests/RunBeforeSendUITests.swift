@@ -122,6 +122,44 @@ private extension XCUIApplication {
         return element.exists && element.isHittable
     }
 
+    /// Tap an element resolved fresh on every attempt, waiting
+    /// for hittability with a finite frame before each tap. An
+    /// element resolved once can go stale while the list
+    /// settles: gate run 44124436974 failed the free-case row
+    /// tap with "no longer valid after interruption handling"
+    /// on a row whose frame measured infinite, and retrying
+    /// the same stale reference can never recover. Each attempt
+    /// re-runs the query, scrolls the fresh element into range,
+    /// and taps only when it exists, is hittable, and measures
+    /// a finite non-empty frame. Every attempt is recorded as
+    /// a test activity, so the xcresult shows whether the first
+    /// tap landed or a retry saved the test. Returns false when
+    /// no attempt produced a tappable element; the caller still
+    /// asserts the real outcome afterwards.
+    @discardableResult
+    func tapWithFreshQuery(
+        _ label: String,
+        maxAttempts: Int = 3,
+        resolve: () -> XCUIElement
+    ) -> Bool {
+        for attempt in 1...maxAttempts {
+            let element = resolve()
+            if scrollUntilHittable(element, maxSwipes: 20) {
+                let frame = element.frame
+                if frame.width.isFinite, frame.width > 0,
+                   frame.height.isFinite, frame.height > 0 {
+                    element.tap()
+                    if attempt > 1 {
+                        XCTContext.runActivity(named: "Tap for \(label) landed on attempt \(attempt) of \(maxAttempts)") { _ in }
+                    }
+                    return true
+                }
+            }
+            XCTContext.runActivity(named: "Tap for \(label): attempt \(attempt) of \(maxAttempts) found no hittable element with a finite frame; re-querying") { _ in }
+        }
+        return false
+    }
+
     /// Tap a tab by its label. Prefers the tab bar button; falls
     /// back to any button with the label.
     func tapTab(_ label: String) {
@@ -397,12 +435,19 @@ final class InvestigationTimelineUITests: XCTestCase {
             app.staticTexts["Free samples"].waitForExistence(timeout: 30),
             "The Free samples section must render on Payment Cases once the catalogue has loaded."
         )
-        let freeRow = app.buttons.containing(.staticText, identifier: "Free").firstMatch
+        // The free row's tap retries with a fresh query: gate
+        // run 44124436974 failed the tap on a stale element
+        // ("no longer valid after interruption handling") whose
+        // frame measured infinite. A fresh query per attempt
+        // plus a finite-frame check keeps a settling list from
+        // failing the test; the duplication assertion below is
+        // unchanged.
         XCTAssertTrue(
-            app.scrollUntilHittable(freeRow, maxSwipes: 20),
-            "A free sample case row must render."
+            app.tapWithFreshQuery("free sample case row") {
+                app.buttons.containing(.staticText, identifier: "Free").firstMatch
+            },
+            "A free sample case row must render and accept a tap."
         )
-        freeRow.tap()
 
         // The case detail offers the investigation.
         let investigate = app.buttons["Investigate this case"]
