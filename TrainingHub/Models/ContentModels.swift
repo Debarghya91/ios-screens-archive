@@ -48,6 +48,38 @@ struct SearchEntry: Codable, Identifiable, Hashable {
     /// carry it. Nil otherwise.
     let domain: String? = nil
 
+    /// Explicit init: the memberwise form takes only the five
+    /// properties without defaults on this toolchain, so the
+    /// agenda join's eleven-argument construction failed. The
+    /// six optional parameters default exactly as the stored
+    /// properties do, so five-argument construction in tests
+    /// keeps working unchanged.
+    init(
+        id: String,
+        title: String,
+        url: String,
+        type: SearchEntryType,
+        text: String,
+        agenda: String? = nil,
+        thumbnail: String? = nil,
+        tags: [String] = [],
+        excerpt: String? = nil,
+        chapter: String? = nil,
+        domain: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.url = url
+        self.type = type
+        self.text = text
+        self.agenda = agenda
+        self.thumbnail = thumbnail
+        self.tags = tags
+        self.excerpt = excerpt
+        self.chapter = chapter
+        self.domain = domain
+    }
+
     var isLesson: Bool { type == .lesson }
     var isGuide: Bool { type == .guide }
     var isSituation: Bool { type == .situation }
