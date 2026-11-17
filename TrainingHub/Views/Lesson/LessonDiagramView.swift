@@ -90,7 +90,14 @@ struct LessonDiagramView: View {
         func makeCoordinator() -> Coordinator {
             Coordinator(activeBeat: activeBeat, loadedSVG: svg) { [contentHeight = $contentHeight] height in
                 DispatchQueue.main.async {
-                    contentHeight.wrappedValue = height
+                    // Write only on a real change: the page
+                    // reports its height on every resize, and the
+                    // frame follows this value, so an
+                    // unconditional write feeds resize reports
+                    // back into resizes without end.
+                    if contentHeight.wrappedValue != height {
+                        contentHeight.wrappedValue = height
+                    }
                 }
             }
         }

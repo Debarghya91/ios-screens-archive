@@ -416,6 +416,11 @@ struct MainTabView: View {
     /// completed, and never again: both answers record the
     /// install-level asked flag.
     @State private var showNotificationPermissionPrompt = false
+    /// True while a delayed notification-prompt check is
+    /// scheduled but has not fired yet. Stops the dismissal
+    /// and flag-change paths from queueing the same check
+    /// twice behind one cover dismissal.
+    @State private var isNotificationPromptCheckPending = false
     /// The measured tab bar geometry, reported by the frame
     /// reader for the tour spotlight. Empty until the first
     /// report arrives.
@@ -527,7 +532,7 @@ struct MainTabView: View {
         if deepLinkLessonEntry == nil, presentedSheet == nil {
             lessonSheetRouter.openPendingAfterIntroduction()
         }
-        maybeShowNotificationPermissionPrompt()
+        scheduleNotificationPromptCheck()
     }
 
     var body: some View {
@@ -813,7 +818,16 @@ struct MainTabView: View {
         } message: {
             Text(storeManager.statusMessage ?? "")
         }
-        .alert("Turn on reminders?", isPresented: $showNotificationPermissionPrompt) {
+        // Gated like the other two alerts: the flag alone must
+        // never present into an owned hierarchy. The flag stays
+        // set while gated, so the explanation shows as soon as
+        // the hierarchy is free instead of wedging it.
+        .alert("Turn on reminders?", isPresented: Binding(
+            get: { showNotificationPermissionPrompt && !hasActiveSheetPresentation },
+            set: { isPresented in
+                if !isPresented { showNotificationPermissionPrompt = false }
+            }
+        )) {
             Button("Allow notifications") {
                 Task { @MainActor in
                     _ = await notificationService.requestAuthorization()
@@ -885,7 +899,7 @@ struct MainTabView: View {
         // explanation never stacks over a lesson the
         // introduction just opened.
         .onChange(of: onboardingStore.hasCompletedOnboarding) { _, _ in
-            maybeShowNotificationPermissionPrompt()
+            scheduleNotificationPromptCheck()
         }
         .task {
             // GATE-DIAG TEMPORARY: count every objectWillChange fire
@@ -1027,6 +1041,28 @@ struct MainTabView: View {
             } else {
                 showDeepLinkNotFound = true
             }
+        }
+    }
+
+    /// Schedule the one-time notification explanation past the
+    /// cover dismissal. Checking synchronously from the
+    /// dismissal or the completion flag presented the alert
+    /// into the dismissing cover in gate run 44171037785: the
+    /// alert ghosted mid-transition and the lesson sheet never
+    /// presented after it. The one-second settle covers the
+    /// dismissal animation even on a slow Debug simulator, and
+    /// the guards are re-checked when the delay fires, so a
+    /// sheet that opened in the meantime still gates the
+    /// alert. Callsites with no dismissal in flight (a
+    /// returning launch, the splash task) keep calling the
+    /// check directly.
+    private func scheduleNotificationPromptCheck() {
+        guard !isNotificationPromptCheckPending else { return }
+        isNotificationPromptCheckPending = true
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            isNotificationPromptCheckPending = false
+            maybeShowNotificationPermissionPrompt()
         }
     }
 

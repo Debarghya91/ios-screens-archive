@@ -402,7 +402,14 @@ struct OnboardingFlowView: View {
             // through the lesson sheet once the cover is gone.
             Button {
                 LessonSheetRouter.shared.requestAfterIntroduction(firstLesson)
-                getStarted()
+                // Finish on the next turn: the request and the
+                // completion flag in one transaction left the
+                // cover stuck on screen in gate run 44171037785
+                // (its onDismiss fired but the cover never
+                // left), which dropped the lesson sheet behind
+                // it. The request is already recorded, so the
+                // dismissal still opens it.
+                Task { @MainActor in getStarted() }
             } label: {
                 PFCard {
                     HStack(spacing: PFSpacing.md) {
@@ -448,7 +455,11 @@ struct OnboardingFlowView: View {
             // a push from inside the cover.
             Button {
                 LessonSheetRouter.shared.requestCaseAfterIntroduction(freeCase)
-                getStarted()
+                // Same next-turn finish as the first-lesson card:
+                // the request and the completion flag in one
+                // transaction left the cover stuck in gate run
+                // 44171037785.
+                Task { @MainActor in getStarted() }
             } label: {
                 PFCard {
                     HStack(spacing: PFSpacing.md) {
