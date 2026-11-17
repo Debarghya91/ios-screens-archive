@@ -1,8 +1,9 @@
 // RegistrationWelcomePopup.swift
 // Payments Training Hub iOS - The congratulations popup shown once, on the
 // first sign-in right after registration completes (credentials
-// set, terms accepted, signed in). It dismisses itself after about
-// 3 seconds, and a tap dismisses it sooner. AuthService owns the
+// set, terms accepted, signed in). A tap dismisses it. It never dismisses
+// itself: an earlier 3 second auto-dismiss could flash it away
+// before the learner read it. AuthService owns the
 // once-only rule: the popup is only ever presented when the
 // pf.welcomeShown.v1 flag for the account is unset, and the flag is
 // written when the popup is first shown, so it can never appear on
@@ -65,10 +66,6 @@ struct RegistrationWelcomePopup: View {
             .shadow(color: Color.black.opacity(0.25), radius: 20, x: 0, y: 8)
             .padding(PFSpacing.xl)
             .onTapGesture { dismiss() }
-        }
-        .task {
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
-            dismiss()
         }
     }
 

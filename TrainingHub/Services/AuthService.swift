@@ -714,14 +714,20 @@ final class AuthService: ObservableObject {
                 Self.clearLegacySignupState()
                 try await storeSession(from: data)
                 return currentUser != nil ? .signedIn : nil
-            case .newAccount, .unknown:
-                // An unrecognised reply is treated as a new
-                // account, so it can never break signup.
+            case .newAccount:
                 Self.recordPendingRegistration(email: trimmedEmail, caseID: caseID)
                 Self.clearLegacySignupState()
                 pendingEmail = trimmedEmail
                 authInfo = "Check your email to confirm your address, then sign in."
                 return .needsEmailConfirmation
+            case .unknown:
+                // Never claim an email was sent when the reply was
+                // not understood: the account may already exist,
+                // in which case no mail is sent at all, and saying
+                // otherwise is wrong information. Point at sign-in,
+                // which works whether or not the account is new.
+                authError = "We could not confirm whether your account was created, and no confirmation email may have been sent. Try signing in with the password you just chose. If that fails, use an emailed code or reset your password."
+                return nil
             case .confirmedDuplicate:
                 authError = PFSignupErrorCode.emailAlreadyRegistered.message
                 return .confirmedDuplicate

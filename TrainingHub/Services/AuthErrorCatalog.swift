@@ -368,8 +368,9 @@ enum PFSignupReplyKind: Equatable {
     /// only resends the confirmation, it never saves a new one.
     case unconfirmedDuplicate
     /// The reply could not be read as any known shape. Callers
-    /// treat this as a new account, so an unrecognised reply can
-    /// never break signup.
+    /// never treat this as a new account: claiming a
+    /// confirmation email was sent when the reply was not
+    /// understood is wrong information.
     case unknown
 }
 

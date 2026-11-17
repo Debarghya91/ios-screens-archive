@@ -46,6 +46,13 @@ struct WelcomeView: View {
         )
     }
 
+    /// True when the signed-in profile has no display name yet, so
+    /// the welcome popup points at finishing the profile.
+    private var isProfileIncomplete: Bool {
+        guard authService.isSignedIn else { return true }
+        return authService.displayName == nil
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: PFSpacing.xl) {
@@ -59,6 +66,23 @@ struct WelcomeView: View {
             .frame(maxWidth: .infinity)
         }
         .background(Color.pfBackground)
+        .overlay {
+            // The registration welcome popup must be reachable from
+            // this view: Google and email sign-ins land here, and
+            // the gate stays closed until the popup is dismissed.
+            // Only EmailSignupView rendered it before, so a Google
+            // sign-in stranded the learner on this screen with no
+            // way forward. The email and signup sheets render
+            // their own copy while they are up.
+            if authService.showRegistrationWelcome, !showEmailAuth, !showEmailSignup,
+               let welcomeCaseID = authService.registrationWelcomeCaseID {
+                RegistrationWelcomePopup(
+                    caseID: welcomeCaseID,
+                    profileIncomplete: isProfileIncomplete,
+                    onDismiss: { authService.dismissRegistrationWelcome() }
+                )
+            }
+        }
         .sheet(isPresented: $showEmailAuth) {
             EmailAuthView()
         }

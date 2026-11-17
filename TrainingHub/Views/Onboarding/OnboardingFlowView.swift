@@ -148,13 +148,16 @@ struct OnboardingFlowView: View {
         }
     }
 
-    private var pageHeading: some View {
+    /// One page heading. Each page has its own title and
+    /// subtitle: a single shared headline on all four pages made
+    /// them read as the same page.
+    private func pageHeading(title: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: PFSpacing.sm) {
-            Text("Learn payments, properly.")
+            Text(title)
                 .font(.pfScreenTitle)
                 .foregroundColor(.pfNavy)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("The full payments course: short lessons, real cases, and practice, in plain language.")
+            Text(subtitle)
                 .font(.pfBody)
                 .foregroundColor(.pfSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -164,7 +167,8 @@ struct OnboardingFlowView: View {
     /// Page 1: why this app exists.
     private var whyPage: some View {
         pageScroll {
-            pageHeading
+            pageHeading(title: "Learn payments, properly.", subtitle: "The full payments course: short lessons, real cases, and practice, in plain language.")
+            PaymentJourneyAnimation()
             Text("Why this app")
                 .font(.pfSectionTitle)
                 .foregroundColor(.pfRoyal)
@@ -193,7 +197,8 @@ struct OnboardingFlowView: View {
     /// Page 2: who the app is built for.
     private var whoPage: some View {
         pageScroll {
-            pageHeading
+            pageHeading(title: "Built for the people who move money.", subtitle: "From your first payments job to the most senior role, the course meets you where you are.")
+            RoleHighlightAnimation()
             Text("Who it is for")
                 .font(.pfSectionTitle)
                 .foregroundColor(.pfRoyal)
@@ -232,7 +237,7 @@ struct OnboardingFlowView: View {
     /// Page 3: what the app can do.
     private var capabilitiesPage: some View {
         pageScroll {
-            pageHeading
+            pageHeading(title: "Everything you need, in one place.", subtitle: "Lessons, cases, labs, simulators and interview prep, all in reading order.")
             Text("What it can do")
                 .font(.pfSectionTitle)
                 .foregroundColor(.pfRoyal)
@@ -286,7 +291,8 @@ struct OnboardingFlowView: View {
     /// Get started lives in the fixed footer, always visible.
     private var freePage: some View {
         pageScroll {
-            pageHeading
+            pageHeading(title: "Start free, then unlock what you need.", subtitle: "Try the course free. Buy a course only when you want the full content, for 1 year.")
+            FreeRingAnimation()
             Text("What is free")
                 .font(.pfSectionTitle)
                 .foregroundColor(.pfRoyal)
@@ -332,9 +338,7 @@ struct OnboardingFlowView: View {
 
     private func countRow(value: Int, label: String) -> some View {
         HStack(spacing: PFSpacing.sm) {
-            Text("\(value)")
-                .font(.pfSectionTitle)
-                .foregroundColor(.pfNavy)
+            CountUpNumber(value: value)
             Text(label)
                 .font(.pfBody)
                 .foregroundColor(.pfSecondaryText)
@@ -526,5 +530,143 @@ private struct AnimatedGIFView: UIViewRepresentable {
             return clamped
         }
         return 0.1
+    }
+}
+
+// MARK: - Page animations
+
+/// Page 1: a payment travelling from sender to beneficiary
+/// through five stages, looping. The gold dot is the payment;
+/// the stages are labelled so the motion teaches the journey.
+/// A new payment starts each loop.
+private struct PaymentJourneyAnimation: View {
+    private let stages = ["You", "Your bank", "Scheme", "Their bank", "Paid"]
+    @State private var progress: Double = 0
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let nodeWidth = width / CGFloat(stages.count)
+            let startX = nodeWidth / 2
+            let track = width - nodeWidth
+            ZStack(alignment: .topLeading) {
+                Rectangle()
+                    .fill(Color.pfBorder)
+                    .frame(width: track, height: 3)
+                    .offset(x: startX, y: 11)
+                Rectangle()
+                    .fill(Color.pfRoyal)
+                    .frame(width: CGFloat(progress) * track, height: 3)
+                    .offset(x: startX, y: 11)
+                HStack(spacing: 0) {
+                    ForEach(stages, id: \.self) { stage in
+                        VStack(spacing: 6) {
+                            Circle()
+                                .fill(Color.pfCard)
+                                .frame(width: 24, height: 24)
+                                .overlay(Circle().stroke(Color.pfRoyal, lineWidth: 2))
+                            Text(stage)
+                                .font(.pfCaption)
+                                .foregroundColor(.pfSecondaryText)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(width: nodeWidth)
+                    }
+                }
+                Circle()
+                    .fill(Color.pfGold)
+                    .frame(width: 14, height: 14)
+                    .offset(x: startX + CGFloat(progress) * track - 7, y: 5)
+            }
+        }
+        .frame(height: 64)
+        .onAppear {
+            withAnimation(.linear(duration: 4).repeatForever(autoreverses: false)) {
+                progress = 1
+            }
+        }
+    }
+}
+
+/// Page 2: the roles the course is built for, one at a time,
+/// crossfading in a loop so the page keeps moving.
+private struct RoleHighlightAnimation: View {
+    private let roles = ["Business analysts", "Product owners", "Freshers", "Testers", "Engineers"]
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1.6)) { timeline in
+            let index = Int(timeline.date.timeIntervalSinceReferenceDate / 1.6) % roles.count
+            HStack(spacing: PFSpacing.sm) {
+                Image(systemName: "person.fill")
+                    .foregroundColor(.pfRoyal)
+                Text("Built for \(roles[index])")
+                    .font(.pfBody.weight(.semibold))
+                    .foregroundColor(.pfNavy)
+            }
+            .padding(.horizontal, PFSpacing.md)
+            .padding(.vertical, PFSpacing.sm)
+            .background(Color.pfNavySoft)
+            .cornerRadius(20)
+            .id(index)
+            .transition(.opacity.combined(with: .move(edge: .trailing)))
+            .animation(.easeInOut(duration: 0.4), value: index)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 40)
+    }
+}
+
+/// Page 3: a number that counts up from zero when it appears.
+/// The Double state is what animates; the label shows its
+/// whole part.
+private struct CountUpNumber: View {
+    let value: Int
+    @State private var displayed: Double = 0
+
+    var body: some View {
+        Text("\(Int(displayed))")
+            .font(.pfSectionTitle)
+            .foregroundColor(.pfNavy)
+            .onAppear {
+                withAnimation(.easeOut(duration: 1.2)) {
+                    displayed = Double(value)
+                }
+            }
+    }
+}
+
+/// Page 4: a ring that fills, then a checkmark that pops in.
+/// The ring is the free start; the checkmark is the first
+/// lesson unlocked.
+private struct FreeRingAnimation: View {
+    @State private var progress: Double = 0
+    @State private var checked = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.pfBorder, lineWidth: 6)
+                .frame(width: 72, height: 72)
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(Color.pfSuccess, lineWidth: 6)
+                .frame(width: 72, height: 72)
+                .rotationEffect(.degrees(-90))
+            Image(systemName: "checkmark")
+                .font(.title2.weight(.bold))
+                .foregroundColor(.pfSuccess)
+                .scaleEffect(checked ? 1 : 0.3)
+                .opacity(checked ? 1 : 0)
+        }
+        .frame(maxWidth: .infinity)
+        .onAppear {
+            withAnimation(.easeOut(duration: 1.0)) {
+                progress = 1
+            }
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.6).delay(0.8)) {
+                checked = true
+            }
+        }
     }
 }
