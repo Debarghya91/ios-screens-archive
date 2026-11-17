@@ -25,7 +25,15 @@ extension Notification.Name {
 }
 
 /// Plays lesson narration with automatic failover between audio hosts.
-final class AudioPlayerService: ObservableObject {
+// NSObject is REQUIRED, not stylistic: this service registers
+// itself with NotificationCenter selector observers and
+// MPRemoteCommandCenter targets, both of which deliver via
+// Objective-C message dispatch. As a pure Swift class it had no
+// methodSignatureForSelector:, so the first delivered selector
+// killed the process with an unrecognized-selector exception
+// (gate runs 44165658277-44198996345: the app died ~0.35s after
+// the lesson sheet requested, before LessonView.body ever ran).
+final class AudioPlayerService: NSObject, ObservableObject {
     // MARK: - Published state
 
     @Published private(set) var isPlaying = false
@@ -163,7 +171,8 @@ final class AudioPlayerService: ObservableObject {
         return min(1, currentTime / duration)
     }
 
-    init() {
+    override init() {
+        super.init()
         AccountScopedStorage.adoptLegacyKey(Keys.playbackRate)
         AccountScopedStorage.adoptLegacyKey(Keys.autoAdvance)
         AccountScopedStorage.adoptLegacyKeys(withPrefix: Keys.positionPrefix)

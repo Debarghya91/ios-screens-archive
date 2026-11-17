@@ -28,12 +28,19 @@ import Combine
 /// display. Observed from UIScreen.capturedDidChangeNotification;
 /// the initial value is read live so a view opened mid-recording
 /// starts hidden.
-final class PFScreenCaptureMonitor: ObservableObject {
+// NSObject is REQUIRED: this monitor registers itself with a
+// NotificationCenter selector observer, which delivers via
+// Objective-C message dispatch. As a pure Swift class it would
+// die with an unrecognized-selector exception the first time
+// the capture notification fires; see AudioPlayerService, which
+// crashed the gate this exact way.
+final class PFScreenCaptureMonitor: NSObject, ObservableObject {
     static let shared = PFScreenCaptureMonitor()
 
     @Published private(set) var isCaptured: Bool = UIScreen.main.isCaptured
 
-    private init() {
+    private override init() {
+        super.init()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(captureChanged),
