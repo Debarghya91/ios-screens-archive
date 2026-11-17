@@ -129,7 +129,7 @@ struct HomeView: View {
     @SceneStorage("home.learnSection") private var learnSectionRaw: String = LearnSection.courses.rawValue
     private var learnSection: LearnSection {
         get { LearnSection(rawValue: learnSectionRaw) ?? .courses }
-        set { learnSectionRaw = newValue.rawValue }
+        nonmutating set { learnSectionRaw = newValue.rawValue }
     }
 
     /// A scroll request raised inside Home (journey buttons, the

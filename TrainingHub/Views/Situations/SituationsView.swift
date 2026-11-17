@@ -410,7 +410,7 @@ struct SituationsView: View {
     @SceneStorage("situations.levelFilter") private var storedLevelFilter = ""
     private var levelFilter: SituationLevel? {
         get { storedLevelFilter.isEmpty ? nil : SituationLevel(rawValue: storedLevelFilter) }
-        set { storedLevelFilter = newValue?.rawValue ?? "" }
+        nonmutating set { storedLevelFilter = newValue?.rawValue ?? "" }
     }
     @State private var selectedCategory: SituationCategory = .all
     @State private var isCategoryDrawerOpen = false
@@ -422,7 +422,7 @@ struct SituationsView: View {
     @SceneStorage("situations.searchText") private var storedSearchText = ""
     private var searchText: String {
         get { storedSearchText }
-        set { storedSearchText = newValue }
+        nonmutating set { storedSearchText = newValue }
     }
     private var searchTextBinding: Binding<String> {
         Binding(get: { searchText }, set: { searchText = $0 })
@@ -433,7 +433,7 @@ struct SituationsView: View {
     @SceneStorage("situations.schemeFilter") private var storedSchemeFilter = ""
     private var schemeFilter: String? {
         get { storedSchemeFilter.isEmpty ? nil : storedSchemeFilter }
-        set { storedSchemeFilter = newValue ?? "" }
+        nonmutating set { storedSchemeFilter = newValue ?? "" }
     }
     @ObservedObject private var bookmarkStore = PFBookmarkStore.shared
 

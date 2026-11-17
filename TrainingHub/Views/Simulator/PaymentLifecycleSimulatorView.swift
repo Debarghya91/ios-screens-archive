@@ -85,17 +85,17 @@ struct PaymentLifecycleSimulatorView: View {
     @SceneStorage("simulator.mode") private var modeRaw: String = SimulatorMode.guided.rawValue
     private var mode: SimulatorMode {
         get { SimulatorMode(rawValue: modeRaw) ?? .guided }
-        set { modeRaw = newValue.rawValue }
+        nonmutating set { modeRaw = newValue.rawValue }
     }
     @SceneStorage("simulator.selectedSampleID") private var selectedSampleID: String = SamplePaymentCatalogue.defaultSample.id
     private var selectedSample: SamplePayment {
         get { SamplePaymentCatalogue.samples.first { $0.id == selectedSampleID } ?? SamplePaymentCatalogue.defaultSample }
-        set { selectedSampleID = newValue.id }
+        nonmutating set { selectedSampleID = newValue.id }
     }
     @SceneStorage("simulator.currentStage") private var currentStageRaw: Int = PaymentLifecycleStage.initiation.rawValue
     private var currentStage: PaymentLifecycleStage {
         get { PaymentLifecycleStage(rawValue: currentStageRaw) ?? .initiation }
-        set { currentStageRaw = newValue.rawValue }
+        nonmutating set { currentStageRaw = newValue.rawValue }
     }
     @State private var journey = LifecycleJourney()
     @State private var showingSummary: Bool = false

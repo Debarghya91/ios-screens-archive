@@ -785,6 +785,19 @@ extension View {
     func pfScrollToTopOnAppear<Value: Equatable>(_ anchor: String, resetWhen value: Value) -> some View {
         modifier(PFScrollToTopModifier(anchor: anchor, resetToken: value))
     }
+
+    /// Tuple forms of the reset token: tuples cannot conform to
+    /// Equatable, so a tuple of reset values cannot use the
+    /// generic form above. These overloads fold the tuple into
+    /// one string token that changes exactly when any element
+    /// changes, which is the same reset behaviour.
+    func pfScrollToTopOnAppear<A: Equatable, B: Equatable>(_ anchor: String, resetWhen value: (A, B)) -> some View {
+        modifier(PFScrollToTopModifier(anchor: anchor, resetToken: "\(value.0)|\(value.1)"))
+    }
+
+    func pfScrollToTopOnAppear<A: Equatable, B: Equatable, C: Equatable>(_ anchor: String, resetWhen value: (A, B, C)) -> some View {
+        modifier(PFScrollToTopModifier(anchor: anchor, resetToken: "\(value.0)|\(value.1)|\(value.2)"))
+    }
 }
 
 /// The scroll-rule mechanism behind pfScrollToTopOnAppear: a

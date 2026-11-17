@@ -59,7 +59,7 @@ struct SearchView: View {
     @SceneStorage("search.query") private var storedQuery = ""
     private var query: String {
         get { storedQuery }
-        set { storedQuery = newValue }
+        nonmutating set { storedQuery = newValue }
     }
     private var queryBinding: Binding<String> {
         Binding(get: { query }, set: { query = $0 })
@@ -106,7 +106,7 @@ struct SearchView: View {
     @SceneStorage("search.selectedLevels") private var storedLevels = ""
     private var selectedLevels: Set<SituationLevel> {
         get { Set(storedLevels.split(separator: ",").compactMap { SituationLevel(rawValue: String($0)) }) }
-        set { storedLevels = newValue.map(\.rawValue).sorted().joined(separator: ",") }
+        nonmutating set { storedLevels = newValue.map(\.rawValue).sorted().joined(separator: ",") }
     }
 
     /// Numbered pagination: 20 results per page, the current page

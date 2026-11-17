@@ -42,7 +42,7 @@ struct ISO20022ExplorerView: View {
     @SceneStorage("iso20022.selectedFamily") private var selectedFamilyRaw: String = ""
     private var selectedFamily: ISO20022Family? {
         get { ISO20022Family(rawValue: selectedFamilyRaw) }
-        set { selectedFamilyRaw = newValue?.rawValue ?? "" }
+        nonmutating set { selectedFamilyRaw = newValue?.rawValue ?? "" }
     }
     @State private var initialDetailActive = false
     @State private var didOpenInitialMessage = false
