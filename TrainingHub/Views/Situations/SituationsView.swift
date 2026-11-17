@@ -3,6 +3,15 @@
 // Native SwiftUI only, no WebView.
 
 import SwiftUI
+import os
+
+/// Gate diagnosis for the Payment Cases main-thread freeze (run
+/// 44078305813): these lines show in the simulator log inside the
+/// run xcresult whether the tab appeared and whether its list
+/// snapshot completed, so the next frozen run can be placed
+/// before the first render, between render and data, or after
+/// the populated render, instead of guessing.
+private let situationsLog = Logger(subsystem: "PaymentsTrainingHub", category: "Situations")
 
 // MARK: - SearchEntry to Situation mapping
 
@@ -785,6 +794,7 @@ struct SituationsView: View {
                         let snapshot = await computeSnapshot()
                         guard !Task.isCancelled else { return }
                         listSnapshot = snapshot
+                        situationsLog.info("Snapshot assigned: \(snapshot.all.count) cases, \(snapshot.filtered.count) filtered, \(snapshot.schemes.count) schemes.")
                     }
                     // A page jump from the pagination bar: the
                     // list returns to its top.
@@ -794,6 +804,7 @@ struct SituationsView: View {
                         }
                     }
                     .onAppear {
+                        situationsLog.info("Payment Cases appeared.")
                         // The scroll rule: Back and tab switches land
                         // at the top, never at the restored offset.
                         // Dispatched async so the scroll lands after

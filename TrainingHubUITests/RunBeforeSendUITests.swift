@@ -74,8 +74,15 @@ private enum RunBeforeSendFixture {
     /// catalogue has loaded, so it is the load proof.
     static let catalogueCountSnippet = "chapters in the catalogue"
     /// Chapter 1 lesson count line on a fresh install (nothing
-    /// complete yet): "7 lessons".
-    static let chapterOneCount = "7 lessons"
+    /// complete yet): "<N> lessons", matched as a pattern, not an
+    /// exact count. The count is catalogue data, not copy:
+    /// Chapter 1 holds 7 regular lessons plus 1 supplemental
+    /// lesson ("Book payments: moving money inside one bank"),
+    /// so the line reads "8 lessons" today, and it moves again
+    /// whenever content is added. The pattern proves the count
+    /// line rendered once the catalogue loaded; the first-lesson
+    /// row wait below is the proof the lessons themselves listed.
+    static let chapterOneCountPattern = "^[0-9]+ lessons$"
     /// The lesson sheet's navigation bar title.
     static let lessonNavTitle = "Lesson"
     /// The Done button that closes the lesson sheet.
@@ -319,8 +326,13 @@ final class ChapterLessonUITests: XCTestCase {
             app.navigationBars[RunBeforeSendFixture.chapterOneCaption].waitForExistence(timeout: 10),
             "The chapter page must open with the Chapter 1 title."
         )
+        // The chapter page lists its lessons: the "<N> lessons"
+        // count line renders once the catalogue has loaded.
+        let chapterCount = app.staticTexts.matching(
+            NSPredicate(format: "label MATCHES %@", RunBeforeSendFixture.chapterOneCountPattern)
+        ).firstMatch
         XCTAssertTrue(
-            app.staticTexts[RunBeforeSendFixture.chapterOneCount].waitForExistence(timeout: 30),
+            chapterCount.waitForExistence(timeout: 30),
             "The chapter page must list its lessons once the catalogue has loaded."
         )
 

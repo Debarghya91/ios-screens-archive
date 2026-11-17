@@ -729,9 +729,23 @@ struct MainTabView: View {
             // now that the cover is gone.
             resolvePendingDeepLink()
             // An introduction card tap requested its content
-            // while the cover was up: open it now that the
-            // cover is gone, through the lesson sheet.
-            lessonSheetRouter.openPendingAfterIntroduction()
+            // while the cover was up: open it through the lesson
+            // sheet only after the cover dismissal has finished.
+            // Presenting the sheet in the same transaction as
+            // the cover dismiss wedges the presentation
+            // hierarchy and kills the app: gate run 44078305813
+            // lost connection about 1s after the first-lesson
+            // card tap, with no crash report, while the runs
+            // with no pending sheet survived. The cover animation
+            // is about 0.4s; 0.6s leaves the hierarchy settled
+            // before the sheet presents. Opening nothing when
+            // nothing is pending keeps this a no-op for plain
+            // Skip taps.
+            let router = lessonSheetRouter
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                router.openPendingAfterIntroduction()
+            }
             // Onboarding completing arms the permission check.
             maybeShowNotificationPermissionPrompt()
         }
