@@ -21,6 +21,18 @@
 // failing on an introduction that must not exist. The app honors
 // no launch argument to reset onboarding, and none was added.
 //
+// CATALOGUE NAVIGATION (17 Nov correction): the Catalogue section
+// does NOT render on Home's default view. Home opens on the
+// Learning Journey tab; the catalogue lives on the Courses Home
+// tab, behind the "Browse section" segmented picker, whose
+// default segment is Courses. Tests reach it with
+// openCatalogueSection(): tap the Courses Home tab, tap the
+// Catalogue picker segment, then assert. Scrolling the default
+// tab never reaches the catalogue, and the "Catalogue" heading
+// must never be awaited there. The CoursesView struct itself is
+// unconstructed dead code; the live catalogue UI is
+// LearnSectionsView in the same file, embedded in HomeView.
+//
 // UNEXECUTED: written on a Linux VM with no Xcode. Never compiled
 // or run here. Statically checked only. The cloud workflow run is
 // the first execution, and its xcresult is the proof.
@@ -42,6 +54,25 @@ private enum RunBeforeSendFixture {
     static let firstLessonTitle = "A payment, in plain words"
     /// Chapter 1 caption in the catalogue chapter row.
     static let chapterOneCaption = "Chapter 1"
+    /// The Courses button in Home's pinned three-tab bar
+    /// (Learning Journey, Courses, Practice). Home opens on
+    /// Learning Journey; the catalogue needs this tap first.
+    static let coursesHomeTabLabel = "Courses"
+    /// The section header on Home's Courses tab.
+    static let browseFullCourseHeading = "Browse the full course"
+    /// The segmented picker on the Courses tab, offering the
+    /// Courses and Catalogue sections.
+    static let browseSectionPickerLabel = "Browse section"
+    /// The Catalogue segment of that picker, and the heading of
+    /// the section it selects.
+    static let catalogueLabel = "Catalogue"
+    /// The catalogue table's column headers.
+    static let tableHeaderNumber = "Ch."
+    static let tableHeaderChapter = "Chapter"
+    /// Substring of the catalogue count line ("10 courses, 99
+    /// chapters in the catalogue."): it renders only once the
+    /// catalogue has loaded, so it is the load proof.
+    static let catalogueCountSnippet = "chapters in the catalogue"
     /// Chapter 1 lesson count line on a fresh install (nothing
     /// complete yet): "7 lessons".
     static let chapterOneCount = "7 lessons"
@@ -99,6 +130,43 @@ private extension XCUIApplication {
         )
         plain.tap()
     }
+
+    /// Navigate to the Catalogue section on Home: tap the
+    /// Courses Home tab, then the Catalogue segment of the
+    /// "Browse section" picker, and wait for the Catalogue
+    /// heading. Home opens on the Learning Journey tab and the
+    /// picker defaults to Courses, so both taps are required;
+    /// the heading renders as soon as the section is selected,
+    /// before the catalogue loads, so callers still wait for
+    /// the count line as the load proof.
+    func openCatalogueSection() {
+        let coursesTab = buttons[RunBeforeSendFixture.coursesHomeTabLabel]
+        XCTAssertTrue(
+            coursesTab.waitForExistence(timeout: 10),
+            "The Courses Home tab must exist."
+        )
+        coursesTab.tap()
+        XCTAssertTrue(
+            staticTexts[RunBeforeSendFixture.browseFullCourseHeading].waitForExistence(timeout: 10),
+            "The Courses tab must show its 'Browse the full course' section."
+        )
+        let segment = segmentedControls[RunBeforeSendFixture.browseSectionPickerLabel]
+            .buttons[RunBeforeSendFixture.catalogueLabel]
+        if segment.waitForExistence(timeout: 5) {
+            segment.tap()
+        } else {
+            let plainSegment = buttons[RunBeforeSendFixture.catalogueLabel]
+            XCTAssertTrue(
+                plainSegment.waitForExistence(timeout: 5),
+                "The Catalogue picker segment must exist."
+            )
+            plainSegment.tap()
+        }
+        XCTAssertTrue(
+            staticTexts[RunBeforeSendFixture.catalogueLabel].waitForExistence(timeout: 10),
+            "The Catalogue heading must render after the Catalogue segment is selected."
+        )
+    }
 }
 
 /// (a) Launch, skip the introduction, chapter list renders.
@@ -121,22 +189,24 @@ final class IntroSkipUITests: XCTestCase {
             throw XCTSkip("Needs a first launch: the introduction already completed, so there is nothing to skip. The gate run uninstalls the app first.")
         }
 
-        // The chapter list is the Catalogue section on Home:
-        // scroll to it and assert the table renders.
-        let catalogueHeading = app.staticTexts["Catalogue"]
-        XCTAssertTrue(
-            app.scrollUntilHittable(catalogueHeading),
-            "The Catalogue heading must render on Home after the introduction is skipped."
-        )
-        XCTAssertTrue(app.staticTexts["Ch."].exists, "The catalogue table header must render.")
-        XCTAssertTrue(app.staticTexts["Chapter"].exists, "The catalogue table header must render.")
+        // The chapter list is the Catalogue section: Home's
+        // Courses tab, "Browse section" picker, Catalogue
+        // segment. It never renders on the default Learning
+        // Journey tab, so scrolling alone cannot reach it.
+        app.openCatalogueSection()
+        // The count line renders only once the catalogue has
+        // loaded, so it is awaited before the table headers:
+        // the headers render in the same branch and cannot
+        // precede it.
         let countText = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@", "chapters in the catalogue")
+            NSPredicate(format: "label CONTAINS %@", RunBeforeSendFixture.catalogueCountSnippet)
         ).firstMatch
         XCTAssertTrue(
             countText.waitForExistence(timeout: 30),
             "The catalogue count line must render once the catalogue has loaded."
         )
+        XCTAssertTrue(app.staticTexts[RunBeforeSendFixture.tableHeaderNumber].exists, "The catalogue table header must render.")
+        XCTAssertTrue(app.staticTexts[RunBeforeSendFixture.tableHeaderChapter].exists, "The catalogue table header must render.")
         let chapterRow = app.buttons.containing(
             .staticText, identifier: RunBeforeSendFixture.chapterOneCaption
         ).firstMatch
@@ -232,12 +302,9 @@ final class ChapterLessonUITests: XCTestCase {
         )
         app.tapTab("Home")
 
-        // Open chapter 1 from the Catalogue.
-        let catalogueHeading = app.staticTexts["Catalogue"]
-        XCTAssertTrue(
-            app.scrollUntilHittable(catalogueHeading),
-            "The Catalogue heading must render on Home."
-        )
+        // Open chapter 1 from the Catalogue: Courses Home tab,
+        // then the Catalogue picker segment.
+        app.openCatalogueSection()
         let chapterRow = app.buttons.containing(
             .staticText, identifier: RunBeforeSendFixture.chapterOneCaption
         ).firstMatch
