@@ -94,9 +94,24 @@ struct LessonView: View {
     @EnvironmentObject private var contentService: ContentService
     @EnvironmentObject private var progressStore: ProgressStore
     @EnvironmentObject private var storeManager: StoreManager
+    @EnvironmentObject private var authService: AuthService
     @ObservedObject private var bookmarkStore = PFBookmarkStore.shared
     @ObservedObject private var downloadStore = LessonDownloadStore.shared
     @StateObject private var audioService = AudioPlayerService()
+
+    /// Binding for the sign-in sheet: shown when a Buy action
+    /// found no session. Dismissing it without signing in clears
+    /// the flag; signing in clears it through the entitlement
+    /// sync and dismisses the sheet, returning the learner to
+    /// the Buy button.
+    private var signInSheetBinding: Binding<Bool> {
+        Binding(
+            get: { storeManager.signInRequiredForPurchase != nil && !authService.isSignedIn },
+            set: { isPresented in
+                if !isPresented { storeManager.clearSignInRequiredForPurchase() }
+            }
+        )
+    }
 
     /// Content / Transcript / Resources tab below the player.
     @State private var lessonTab = 0
@@ -697,6 +712,9 @@ struct LessonView: View {
         )
         .sheet(isPresented: $showCheckout) {
             CheckoutView()
+        }
+        .sheet(isPresented: signInSheetBinding) {
+            WelcomeView()
         }
         .task {
             // Locked lessons start nothing: no progress event, no
@@ -2267,7 +2285,7 @@ struct LessonView: View {
                 PFSecondaryButton(title: "See purchase options") {
                     showCheckout = true
                 }
-                Text(StoreManager.buildPhaseBuyOpensContent ? "For now, Buy opens the course on this device. No payment is taken." : "Pay securely with your Apple ID. No account needed.")
+                Text(StoreManager.buildPhaseBuyOpensContent ? "For now, Buy opens the course on this device. No payment is taken." : "Sign in first, then pay securely with your Apple ID.")
                     .font(.pfCaption)
                     .foregroundColor(.pfSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2282,6 +2300,7 @@ struct LessonView: View {
     /// or when a purchase unlocks it while this view is open. The
     /// load and audio guards inside make repeat calls safe.
     private func setupLesson() async {
+        CrashBreadcrumbs.record("lesson open \(entry.id)")
         progressStore.recordLessonStarted(lessonID: entry.id, title: lessonTitle)
         // Recently opened, for the Home "Pick up where you left
         // off" list. Recorded on every open, even when the lesson
@@ -2308,6 +2327,7 @@ struct LessonView: View {
         if let loaded = await contentService.loadLessonDetailWithSource(entry: entry) {
             detail = loaded.detail
             detailSource = loaded.source
+            CrashBreadcrumbs.record("lesson detail loaded \(entry.id)")
             // The full detail replaces the summary paragraphs: a
             // highlight left over from the summary could point at
             // the wrong paragraph in the full text.

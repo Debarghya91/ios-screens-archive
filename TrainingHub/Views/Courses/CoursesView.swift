@@ -96,7 +96,11 @@ struct LearnSectionsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.xl) {
+        // Lazy: sections below the fold are built only when
+        // scrolled to, so opening the tab never builds the whole
+        // catalogue, journeys and extras at once. No behaviour
+        // change: every section renders exactly as before.
+        LazyVStack(alignment: .leading, spacing: PFSpacing.xl) {
             loadStateView
 
             if sections.count > 1 {
@@ -395,7 +399,8 @@ struct LearnSectionsView: View {
     /// from the catalogue and ProgressStore. Tapping a card opens
     /// the same PathDetailView as before.
     private var guidedPathsSection: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.md) {
+        // Lazy: journey cards below the fold build on scroll.
+        LazyVStack(alignment: .leading, spacing: PFSpacing.md) {
             PFSectionHeader(title: "Learning journeys")
             Text("Showing \(filteredPaths.count) of \(LearningPath.all.count) journeys")
                 .font(.pfCaption)
@@ -430,7 +435,8 @@ struct LearnSectionsView: View {
     /// top is the one place that names the next lesson, so the
     /// index never points at a different lesson from Home.
     private var coursesSection: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.md) {
+        // Lazy: course rows below the fold build on scroll.
+        LazyVStack(alignment: .leading, spacing: PFSpacing.md) {
             Text("Courses")
                 .font(.pfScreenTitle)
                 .foregroundColor(.pfNavy)
@@ -489,7 +495,8 @@ struct LearnSectionsView: View {
     /// Sessions are never level-filtered. Tapping a card opens the
     /// same GuidedPathDetailView as before.
     private var pathwaysSection: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.md) {
+        // Lazy: session cards below the fold build on scroll.
+        LazyVStack(alignment: .leading, spacing: PFSpacing.md) {
             PFSectionHeader(title: "Sessions in order")
             Text("Eight sessions that take you through the curriculum in order, from what a payment is to practice and interview preparation.")
                 .font(.pfBody)
@@ -590,13 +597,21 @@ struct LearnSectionsView: View {
             .padding(.horizontal, PFSpacing.md)
             .padding(.vertical, PFSpacing.sm)
             .background(Color.pfNavy)
-            ForEach(chapterBundles) { product in
-                catalogueCourseBand(product: product)
-                ForEach(Array(PFChapterHelper.readingOrderChapterNumbers(for: product).enumerated()), id: \.element) { index, number in
-                    PFGuardedNavigationLink(key: "chapter-\(number)", destination: { ChapterDetailView(chapterNumber: number) }) {
-                        CatalogueChapterRow(chapterNumber: number, isAlternate: index % 2 == 1)
+            // Lazy: course bands and chapter rows below the fold
+            // build on scroll, so opening the Catalogue never
+            // builds all ~100 rows at once. The header row above
+            // stays eager. The bordered container grows as rows
+            // materialize and settles at the true bottom once the
+            // table has been fully scrolled.
+            LazyVStack(spacing: 0) {
+                ForEach(chapterBundles) { product in
+                    catalogueCourseBand(product: product)
+                    ForEach(Array(PFChapterHelper.readingOrderChapterNumbers(for: product).enumerated()), id: \.element) { index, number in
+                        PFGuardedNavigationLink(key: "chapter-\(number)", destination: { ChapterDetailView(chapterNumber: number) }) {
+                            CatalogueChapterRow(chapterNumber: number, isAlternate: index % 2 == 1)
+                        }
+                        .buttonStyle(PFCardButtonStyle())
                     }
-                    .buttonStyle(PFCardButtonStyle())
                 }
             }
         }
@@ -1514,7 +1529,7 @@ struct ChapterDetailView: View {
                         .buttonStyle(PFCardButtonStyle())
                         .accessibilityLabel("\(lesson.title), locked. Tap to see the price.")
                     } else {
-                        PFGuardedNavigationLink(key: lesson.id, destination: { LessonView(entry: lesson) }) {
+                        PFGuardedNavigationLink(key: lesson.id, breadcrumb: "lesson tap \(lesson.id)", destination: { LessonView(entry: lesson) }) {
                             LessonRow(entry: lesson, showsLessonNumber: true)
                                 .contentShape(Rectangle())
                         }

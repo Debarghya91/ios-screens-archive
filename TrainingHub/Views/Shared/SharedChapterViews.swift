@@ -22,8 +22,11 @@ enum PFChapterHelper {
     }
 
     /// Lessons belonging to exactly one chapter number, in catalogue order.
+    /// Reads the service's memoized per-chapter map: the same
+    /// membership and order as filtering allLessons, without the
+    /// full scan on every call.
     static func lessons(forChapter number: Int, in service: ContentService) -> [SearchEntry] {
-        service.allLessons.filter { chapterNumber(from: $0.id) == number }
+        service.lessons(forChapterNumber: number)
     }
 
     /// The citation for an entry, via the service: regular lessons
@@ -186,9 +189,10 @@ enum PFChapterHelper {
     }
 
     /// All chapter numbers present in the loaded index, numeric order.
+    /// Reads the service's memoized map keys: the same set and
+    /// order as scanning allLessons, without the full scan.
     static func chapterNumbers(in service: ContentService) -> [Int] {
-        let numbers = Set(service.allLessons.compactMap { chapterNumber(from: $0.id) })
-        return numbers.sorted()
+        service.chapterNumbers
     }
 
     /// The next lessons to recommend: the first lessons in book

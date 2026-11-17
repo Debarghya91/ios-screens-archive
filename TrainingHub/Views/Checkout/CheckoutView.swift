@@ -2,11 +2,11 @@
 // Payments Training Hub iOS - Purchases and Entitlements.
 // My Purchases: the catalogue products, transaction history,
 // restore and upgrade. In-App Purchase only.
-// No account or sign-in is needed to buy or restore: StoreKit
-// purchases are tied to the Apple ID, so guests can buy and restore.
-// When the user is signed in, a verified purchase is also recorded
-// on the server for cross-device sync, but sign-in never blocks a
-// purchase or a restore.
+// Buying needs a sign-in: tapping Buy while signed out prompts
+// the learner to sign in or sign up, then returns to the
+// purchase. Restore stays Apple-ID-only: no account is needed
+// to restore. When the user is signed in, a verified purchase
+// is also recorded on the server for cross-device sync.
 // Payment method: Apple In-App Purchase only. Card, Net banking
 // and Wallet are NOT available in this version and are shown
 // disabled, never as working options.
@@ -43,9 +43,24 @@ struct CheckoutView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var storeManager: StoreManager
     @EnvironmentObject private var contentService: ContentService
+    @EnvironmentObject private var authService: AuthService
     @ObservedObject private var finalAssessmentStore = FinalAssessmentStore.shared
 
     @State private var showTransactionHistory = false
+
+    /// Binding for the sign-in sheet: shown when a Buy action
+    /// found no session. Dismissing it without signing in clears
+    /// the flag; signing in clears it through the entitlement
+    /// sync and dismisses the sheet, returning the learner to
+    /// the Buy button.
+    private var signInSheetBinding: Binding<Bool> {
+        Binding(
+            get: { storeManager.signInRequiredForPurchase != nil && !authService.isSignedIn },
+            set: { isPresented in
+                if !isPresented { storeManager.clearSignInRequiredForPurchase() }
+            }
+        )
+    }
 
     /// Purchase results show in the single purchase alert owned
     /// by the tab view, so no alert or banner is kept here: one
@@ -94,6 +109,9 @@ struct CheckoutView: View {
                     Button("Close") { dismiss() }
                 }
             }
+            .sheet(isPresented: signInSheetBinding) {
+                WelcomeView()
+            }
         }
     }
 
@@ -139,7 +157,7 @@ struct CheckoutView: View {
                     }
                     Spacer(minLength: PFSpacing.sm)
                     PFPill(
-                        text: storeManager.unlockedProductCount == ProductCatalogue.products.count ? "All owned" : "\(storeManager.unlockedProductCount) of \(ProductCatalogue.products.count) owned",
+                        text: summaryPillText(),
                         background: Color.pfSuccess.opacity(0.12),
                         foreground: .pfSuccess
                     )
@@ -302,6 +320,25 @@ struct CheckoutView: View {
         }
     }
 
+    /// The products summary pill: "All unlocked" for an admin
+    /// (every product unlocked without a purchase), else the
+    /// owned count. Never claims ownership the learner lacks.
+    private func summaryPillText() -> String {
+        if authService.isAdmin { return "All unlocked" }
+        if storeManager.unlockedProductCount == ProductCatalogue.products.count { return "All owned" }
+        return "\(storeManager.unlockedProductCount) of \(ProductCatalogue.products.count) owned"
+    }
+
+    /// The card pill for an unlocked product: "Owned" when the
+    /// product itself is owned, "Unlocked" for an admin without
+    /// a purchase, else "Included" (unlocked through The
+    /// Integrated Course).
+    private func cardPillText(for course: CourseProduct) -> String {
+        if storeManager.isProductOwned(course.productID) { return "Owned" }
+        if authService.isAdmin { return "Unlocked" }
+        return "Included"
+    }
+
     /// One buyable product: name, short description, what the buyer
     /// receives, price, and a Buy button, or an Owned pill plus the
     /// access-until date and a Renew button when it is already
@@ -337,7 +374,7 @@ struct CheckoutView: View {
                     Spacer(minLength: PFSpacing.sm)
                     if storeManager.isProductUnlocked(course.productID) {
                         PFPill(
-                            text: storeManager.isProductOwned(course.productID) ? "Owned" : "Included",
+                            text: cardPillText(for: course),
                             background: Color.pfSuccess.opacity(0.12),
                             foreground: .pfSuccess
                         )
@@ -404,7 +441,7 @@ struct CheckoutView: View {
                             .foregroundColor(.pfSecondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text(StoreManager.buildPhaseBuyOpensContent ? "For now, Buy opens the course on this device. No payment is taken." : "Pay securely with your Apple ID, the same way you pay in any App Store app. No account needed.")
+                    Text(StoreManager.buildPhaseBuyOpensContent ? "For now, Buy opens the course on this device. No payment is taken." : "Sign in first, then pay securely with your Apple ID, the same way you pay in any App Store app.")
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -522,6 +559,9 @@ struct CheckoutView: View {
     }
 
     private func unlockedNote(for course: CourseProduct) -> String {
+        if authService.isAdmin && !storeManager.isProductOwned(course.productID) {
+            return "\(course.name) is unlocked for your account."
+        }
         if course.productID == ProductCatalogue.fullCourseProductID {
             return "Everything is unlocked on this device."
         }
@@ -652,14 +692,18 @@ struct CheckoutView: View {
                             Text("The Integrated Course")
                                 .font(.pfCardTitle)
                                 .foregroundColor(.pfNavy)
-                            Text("You own the Integrated Course: everything is unlocked, all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and every standalone product.")
+                            Text(integratedCourseUnlockedText())
                                 .font(.pfBody)
                                 .foregroundColor(.pfSecondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: PFSpacing.sm)
                         PFPill(
-                            text: "Owned",
+                            // Unlocked here means owned, except for
+                            // an admin, who is unlocked without a
+                            // purchase: the pill must not claim
+                            // ownership the learner lacks.
+                            text: storeManager.isProductOwned(ProductCatalogue.fullCourseProductID) ? "Owned" : "Unlocked",
                             background: Color.pfSuccess.opacity(0.12),
                             foreground: .pfSuccess
                         )
@@ -678,6 +722,17 @@ struct CheckoutView: View {
                 }
             }
         }
+    }
+
+    /// The Integrated Course action-row text when it is unlocked:
+    /// the ownership claim only when the learner owns it; an
+    /// admin without a purchase sees the unlocked-for-account
+    /// wording instead, never "You own".
+    private func integratedCourseUnlockedText() -> String {
+        if authService.isAdmin && !storeManager.isProductOwned(ProductCatalogue.fullCourseProductID) {
+            return "Everything is unlocked for your account: all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and every standalone product."
+        }
+        return "You own the Integrated Course: everything is unlocked, all \(ContentManifest.chapterCount) chapters, all \(ContentManifest.lessonCount) lessons and every standalone product."
     }
 
     /// The Integrated Course action-row subtitle: what the buyer

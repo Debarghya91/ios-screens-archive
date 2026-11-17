@@ -9145,20 +9145,35 @@ extension StudioLesson {
 }
 
 extension StudioLesson {
+    /// The lessons for one level, grouped once: the concatenation
+    /// and filter run a single time, on first access, instead of
+    /// on every call. The grouping preserves the display order
+    /// exactly: key concepts, tasks, techniques, competency
+    /// groups followed by their individual competencies,
+    /// perspectives, then orientation lessons.
+    private static let lessonsByLevel: [StudioLevel: [StudioLesson]] = {
+        let combined = keyConcepts + tasks + techniques + competencies + individualCompetencies + perspectives + orientations
+        var map: [StudioLevel: [StudioLesson]] = [:]
+        for level in StudioLevel.allCases {
+            map[level] = combined.filter { $0.level == level }
+        }
+        return map
+    }()
+
     /// All lessons, in learning order: Level 1, then Level 2,
     /// then Level 3. Within a level: concepts, tasks,
     /// techniques, competencies, perspectives, then orientation
-    /// lessons.
-    static var all: [StudioLesson] {
-        StudioLevel.allCases.flatMap { lessons(for: $0) }
-    }
+    /// lessons. Evaluated once: the old computed property
+    /// re-concatenated and re-filtered all 156 lessons on every
+    /// access, including once per row for the gating checks.
+    static let all: [StudioLesson] = StudioLevel.allCases.flatMap { lessonsByLevel[$0] ?? [] }
 
     /// The lessons for one level, in display order: key concepts
     /// first, then tasks, techniques, competency groups followed
     /// by their individual competencies, perspectives, then
     /// orientation lessons.
     static func lessons(for level: StudioLevel) -> [StudioLesson] {
-        (keyConcepts + tasks + techniques + competencies + individualCompetencies + perspectives + orientations).filter { $0.level == level }
+        lessonsByLevel[level] ?? []
     }
 
     /// The task lessons for one knowledge area, in order.

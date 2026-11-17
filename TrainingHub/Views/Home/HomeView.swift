@@ -1430,7 +1430,7 @@ struct HomeView: View {
                         )
                     }
                     ForEach(weakRevisionLessons) { lesson in
-                        PFGuardedNavigationLink(key: lesson.id, destination: { LessonView(entry: lesson) }) {
+                        PFGuardedNavigationLink(key: lesson.id, breadcrumb: "lesson tap \(lesson.id)", destination: { LessonView(entry: lesson) }) {
                             PFHomeTopBarCard(accent: .navy) {
                                 HStack(spacing: PFSpacing.md) {
                                     if lesson.thumbnail != nil {
@@ -1494,7 +1494,7 @@ struct HomeView: View {
     private func weakQuizLessonRow(lesson: SearchEntry, average: Double, attempts: Int) -> some View {
         let percent = Int((average * 100).rounded())
         let attemptWord = attempts == 1 ? "attempt" : "attempts"
-        return PFGuardedNavigationLink(key: lesson.id, destination: { LessonView(entry: lesson) }) {
+        return PFGuardedNavigationLink(key: lesson.id, breadcrumb: "lesson tap \(lesson.id)", destination: { LessonView(entry: lesson) }) {
             PFHomeTopBarCard(accent: .navy) {
                 HStack(spacing: PFSpacing.md) {
                     if lesson.thumbnail != nil {
@@ -1981,7 +1981,7 @@ struct HomeView: View {
                 }
             } else {
                 ForEach(recentUnfinishedLessons) { lesson in
-                    PFGuardedNavigationLink(key: lesson.id, destination: { LessonView(entry: lesson) }) {
+                    PFGuardedNavigationLink(key: lesson.id, breadcrumb: "lesson tap \(lesson.id)", destination: { LessonView(entry: lesson) }) {
                         LessonRow(entry: lesson)
                             .contentShape(Rectangle())
                     }
@@ -2571,7 +2571,7 @@ struct GuidedPathDetailView: View {
                         .foregroundColor(.pfSecondaryText)
                 }
                 ForEach(visibleLessons) { lesson in
-                    PFGuardedNavigationLink(key: lesson.id, destination: { LessonView(entry: lesson) }) {
+                    PFGuardedNavigationLink(key: lesson.id, breadcrumb: "lesson tap \(lesson.id)", destination: { LessonView(entry: lesson) }) {
                         LessonRow(entry: lesson)
                     }
                     .buttonStyle(PFCardButtonStyle())

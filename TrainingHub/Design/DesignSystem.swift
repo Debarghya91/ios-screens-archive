@@ -876,10 +876,16 @@ struct PFGuardedNavigationLink<Destination: View, Label: View>: View {
     let key: String
     let destination: Destination
     let label: Label
+    /// A diagnostic breadcrumb recorded on a tap that passes the
+    /// debounce, when set. Nil by default, so call sites without
+    /// one are unaffected. Lesson taps pass one so a crash on
+    /// the lesson path leaves a trace in the diagnostics.
+    let breadcrumb: String?
     @State private var isActive = false
 
-    init(key: String, @ViewBuilder destination: () -> Destination, @ViewBuilder label: () -> Label) {
+    init(key: String, breadcrumb: String? = nil, @ViewBuilder destination: () -> Destination, @ViewBuilder label: () -> Label) {
         self.key = key
+        self.breadcrumb = breadcrumb
         self.destination = destination()
         self.label = label()
     }
@@ -887,6 +893,9 @@ struct PFGuardedNavigationLink<Destination: View, Label: View>: View {
     var body: some View {
         Button {
             guard PFNavigationDebouncer.shared.allow(key: key) else { return }
+            if let breadcrumb {
+                CrashBreadcrumbs.record(breadcrumb)
+            }
             isActive = true
         } label: { label }
         .background(

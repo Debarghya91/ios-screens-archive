@@ -52,12 +52,40 @@ struct DailyChallengeView: View {
         return Calendar.current.dateComponents([.day], from: epoch, to: start).day ?? 0
     }
 
+    /// The mapped situations, snapshotted once per data change.
+    /// The 564-item remap ran on every body evaluation before,
+    /// through the pick, the options and the loading check. The
+    /// reader below falls back to a synchronous map while the
+    /// snapshot is empty, so the first frame already shows the
+    /// challenge when the data has loaded; once the refresh task
+    /// has run, rendering reads the snapshot only.
+    @State private var situationsSnapshot: [Situation] = []
+
+    /// The data key the snapshot refreshes on: the catalogue
+    /// revision (which bumps on every index assignment,
+    /// including the agendas join) and the loaded full-data size.
+    private var situationsWorkKey: String {
+        "\(contentService.catalogueRevision)|\(contentService.fullSituations?.count ?? -1)"
+    }
+
     /// All real situations, full data first, search index fallback.
     private var situations: [Situation] {
+        situationsSnapshot.isEmpty ? mappedSituations() : situationsSnapshot
+    }
+
+    /// The mapping itself, shared by the snapshot refresh and
+    /// the first-frame fallback above.
+    private func mappedSituations() -> [Situation] {
         if let full = contentService.fullSituations, !full.isEmpty {
             return full.map { situation(fromFull: $0) }
         }
         return contentService.allSituations.map { situation(from: $0) }
+    }
+
+    /// Refresh the snapshot from the currently loaded data.
+    /// Runs only when the data key changes, never per render.
+    private func refreshSnapshot() {
+        situationsSnapshot = mappedSituations()
     }
 
     // MARK: - Entitlement gate (v70)
@@ -272,6 +300,9 @@ struct DailyChallengeView: View {
             // catalogue fallback pick applies, exactly as in the
             // weekly view.
             await contentService.loadWeeklyCases()
+        }
+        .task(id: situationsWorkKey) {
+            refreshSnapshot()
         }
     }
 

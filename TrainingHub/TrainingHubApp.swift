@@ -44,41 +44,30 @@ struct TrainingHubApp: App {
 
     var body: some Scene {
         WindowGroup {
-            // Sign-in is the mandatory first step: until a session
-            // exists, the app shows the sign-in screen and nothing
-            // else. No tab, lesson, case or sheet is reachable
-            // without a session. AuthService restores a stored
-            // session synchronously from the Keychain before the
-            // first frame, so a signed-in learner never sees the
-            // sign-in screen flash. Signing out, deleting the
-            // account, or a dead session drops the gate back to
-            // the sign-in screen. The gate waits for the
-            // post-sign-in prompts too (see isReadyForContent), so
-            // the guest-data migration offer and the registration
-            // welcome popup are answered on the sign-in screens
-            // before the tabs appear.
-            Group {
-                if authService.isReadyForContent {
-                    MainTabView()
-                        .task {
-                            // Load the catalogue, the agendas, the full situations
-                            // and the store in parallel: they are independent, and
-                            // running them in sequence delayed the store
-                            // behind a slow catalogue load. This runs only
-                            // behind the gate, so no content loads before
-                            // sign-in; every load is guarded against
-                            // re-entry, so signing out and back in never
-                            // duplicates work.
-                            async let index: Void = contentService.loadSearchIndex()
-                            async let agendas: Void = contentService.loadAgendas()
-                            async let situations: Void = contentService.loadFullSituations()
-                            async let store: Void = storeManager.start()
-                            _ = await (index, agendas, situations, store)
-                        }
-                } else {
-                    WelcomeView()
+            // The app opens to browsable content with no session:
+            // no sign-in gate stands in front of the tabs. Content
+            // stays locked unless purchased (free samples stay
+            // free), and the sign-in prompt appears only when the
+            // learner taps a Buy action while signed out.
+            // AuthService restores a stored session synchronously
+            // from the Keychain before the first frame, so a
+            // signed-in learner's entitlements are in place from
+            // the start. The onboarding introduction stays as the
+            // first-launch experience, presented by MainTabView.
+            MainTabView()
+                .task {
+                    // Load the catalogue, the agendas, the full situations
+                    // and the store in parallel: they are independent, and
+                    // running them in sequence delayed the store
+                    // behind a slow catalogue load. Every load is
+                    // guarded against re-entry, so signing out and
+                    // back in never duplicates work.
+                    async let index: Void = contentService.loadSearchIndex()
+                    async let agendas: Void = contentService.loadAgendas()
+                    async let situations: Void = contentService.loadFullSituations()
+                    async let store: Void = storeManager.start()
+                    _ = await (index, agendas, situations, store)
                 }
-            }
                 .environmentObject(contentService)
                 .environmentObject(progressStore)
                 .environmentObject(storeManager)
@@ -98,11 +87,13 @@ struct TrainingHubApp: App {
                     // sign-in error. Only URLs that are not deep
                     // links reach the auth handler. See
                     // ReferralInvite.swift for the link formats.
-                    // A deep link received while the sign-in gate
-                    // is up stays pending in the router: MainTabView
-                    // routes it once it appears, after sign-in and
-                    // onboarding, so a link can never open content
-                    // ahead of authentication.
+                    // A deep link received before MainTabView can
+                    // route it (cold start, splash, onboarding)
+                    // stays pending in the router: MainTabView
+                    // routes it once it appears. No sign-in stands
+                    // in front of routing: content is browsable
+                    // without a session, and purchase-gated
+                    // content keeps its lock state.
                     if let link = TrainingHubDeepLink(url: url) {
                         Task { @MainActor in deepLinkRouter.receive(link) }
                         return

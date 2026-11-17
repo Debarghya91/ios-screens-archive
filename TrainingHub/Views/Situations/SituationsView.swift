@@ -461,20 +461,67 @@ struct SituationsView: View {
         PFPagination.clampedPage(currentPage, totalPages: totalCasePages)
     }
 
-    /// The situations to show. The full data file wins when it has
-    /// loaded (full explain, visual and stage); the compact
-    /// situations index is next (authoritative stage and level,
-    /// no body text, detail fetched per case on open); the search
-    /// index entries are the fallback so the list never goes empty.
+    /// The computed list state: the mapped situations, the
+    /// filtered lists, the available schemes and the drawer
+    /// counts. Computed once per work key, off the main thread,
+    /// by the task keyed on situationsWorkKey below. Rendering
+    /// reads this state and never re-maps, re-filters or
+    /// re-counts, however many times the body evaluates.
+    private struct SituationsListSnapshot {
+        let all: [Situation]
+        let base: [Situation]
+        let filtered: [Situation]
+        let schemes: [String]
+        let counts: [SituationCategory: Int]
+        static let empty = SituationsListSnapshot(all: [], base: [], filtered: [], schemes: [], counts: [:])
+    }
+
+    /// The latest computed snapshot. Empty until the first
+    /// computation finishes; the previous snapshot stays on
+    /// screen while a recompute runs, so filter changes never
+    /// flash the list empty.
+    @State private var listSnapshot = SituationsListSnapshot.empty
+
+    /// The debounced search text, updated 150ms after the last
+    /// keystroke, so typing never re-filters on every keystroke.
+    /// Mirrors the Search tab debounce exactly.
+    @State private var debouncedSearchText = ""
+
+    /// The work key the snapshot task reruns on: the debounced
+    /// search text, the scheme and difficulty filters, the
+    /// category, the catalogue revision (which bumps on every
+    /// index assignment, including the agendas join), and the
+    /// loaded situations sizes. Typing alone never recomputes
+    /// anything, because the raw text is not part of the key.
+    private var situationsWorkKey: String {
+        [
+            debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            schemeFilter ?? "",
+            levelFilter?.rawValue ?? "",
+            Self.categoryKey(selectedCategory),
+            "\(contentService.catalogueRevision)",
+            "\(contentService.fullSituations?.count ?? -1)",
+            "\(contentService.situationsIndex?.items.count ?? -1)"
+        ].joined(separator: "|")
+    }
+
+    /// A stable key for one category, for the work key above.
+    private static func categoryKey(_ category: SituationCategory) -> String {
+        switch category {
+        case .all: return "all"
+        case .freeSamples: return "free"
+        case .stage(let stage): return "stage-\(stage)"
+        }
+    }
+
+    /// The situations to show, from the latest snapshot. The full
+    /// data file wins when it has loaded (full explain, visual
+    /// and stage); the compact situations index is next
+    /// (authoritative stage and level, no body text, detail
+    /// fetched per case on open); the search index entries are
+    /// the fallback so the list never goes empty.
     private var allSituations: [Situation] {
-        if let full = contentService.fullSituations, !full.isEmpty {
-            return full.map { situation(fromFull: $0) }
-        }
-        if let index = contentService.situationsIndex, !index.items.isEmpty {
-            let byID = Dictionary(uniqueKeysWithValues: contentService.allSituations.map { ($0.id, $0) })
-            return index.items.map { situation(fromIndex: $0, indexEntry: byID[$0.id]) }
-        }
-        return contentService.allSituations.map { situation(from: $0) }
+        listSnapshot.all
     }
 
     private var freeSamples: [Situation] {
@@ -485,43 +532,101 @@ struct SituationsView: View {
 
     /// Schemes actually named by at least one situation title, in
     /// candidate order. Only these get a chip; a scheme with no
-    /// situation never appears as a filter.
+    /// situation never appears as a filter. From the snapshot.
     private var availableSchemes: [String] {
-        situationSchemeCandidates.compactMap { candidate in
-            allSituations.contains { scheme(for: $0) == candidate.label } ? candidate.label : nil
-        }
+        listSnapshot.schemes
     }
 
+    /// The situations filtered by everything including the
+    /// category. From the snapshot.
     private var filteredSituations: [Situation] {
-        var list = categoryBase
-        switch selectedCategory {
-        case .all:
-            break
-        case .freeSamples:
-            list = list.filter { $0.isFreeSample }
-        case .stage(let stage):
-            list = list.filter { $0.stage == stage }
-        }
-        return list
+        listSnapshot.filtered
     }
 
-    /// The situations filtered by everything except the category:
-    /// the search text, the scheme chip, and the difficulty chip.
-    /// The category drawer counts each category against this list,
-    /// so its counts respect the other filters, and the flat list
-    /// applies the category on top of it. The search matches the
-    /// title, the explain text, and the takeaway: title-only
-    /// matching hid cases whose title never names the search term.
-    /// Index-mode situations carry no body text, so the search
-    /// also matches the backing search index entry (its tags and
-    /// excerpt), which keeps in-list search working without
-    /// downloading the full file.
-    private var categoryBase: [Situation] {
-        var list = allSituations
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    /// The count of one category against the current other
+    /// filters, for the drawer rows. From the snapshot counts.
+    private func count(for category: SituationCategory) -> Int {
+        listSnapshot.counts[category] ?? 0
+    }
+
+    /// Compute the list snapshot off the main thread: gather the
+    /// plain sendable inputs here, then hand them to the detached
+    /// sync computation, so the main thread stays free. The
+    /// source order, the search matching, the scheme and level
+    /// rules and the category rules are exactly the old computed
+    /// properties': only the thread and the frequency change.
+    private func computeSnapshot() async -> SituationsListSnapshot {
+        let query = debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let full = contentService.fullSituations
+        let index = contentService.situationsIndex
+        let entries = contentService.allSituations
+        let scheme = schemeFilter
+        let level = levelFilter
+        let category = selectedCategory
+        return await Task.detached(priority: .userInitiated) {
+            Self.computeSnapshotSync(
+                fullSituations: full,
+                situationsIndex: index,
+                entries: entries,
+                query: query,
+                schemeFilter: scheme,
+                levelFilter: level,
+                category: category
+            )
+        }.value
+    }
+
+    /// The snapshot computation itself: the source mapping, the
+    /// search/scheme/level filter, the category filter, the
+    /// available schemes and the drawer counts. Nonisolated and
+    /// synchronous, so it runs on the detached task with no hop
+    /// back to the main actor.
+    private nonisolated static func computeSnapshotSync(
+        fullSituations: [FullSituationItem]?,
+        situationsIndex: SituationsIndexDoc?,
+        entries: [SearchEntry],
+        query: String,
+        schemeFilter: String?,
+        levelFilter: SituationLevel?,
+        category: SituationCategory
+    ) -> SituationsListSnapshot {
+        // The source order is the old allSituations order exactly:
+        // the full data file wins, then the compact index, then
+        // the search index entries.
+        let all: [Situation]
+        if let full = fullSituations, !full.isEmpty {
+            all = full.map { situation(fromFull: $0) }
+        } else if let index = situationsIndex, !index.items.isEmpty {
+            let byID = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
+            all = index.items.map { situation(fromIndex: $0, indexEntry: byID[$0.id]) }
+        } else {
+            all = entries.map { situation(from: $0) }
+        }
+        // Each situation's scheme, derived once (first id wins)
+        // and reused for both the available-schemes list and the
+        // scheme filter: the old code re-ran the regex match per
+        // candidate per row on every render.
+        var schemeByID: [String: String] = [:]
+        var seenIDs: Set<String> = []
+        for item in all where seenIDs.insert(item.id).inserted {
+            if let found = scheme(for: item) {
+                schemeByID[item.id] = found
+            }
+        }
+        let usedSchemes = Set(schemeByID.values)
+        let schemes = situationSchemeCandidates
+            .filter { usedSchemes.contains($0.label) }
+            .map(\.label)
+        // The situations filtered by everything except the
+        // category: the search text, the scheme chip, and the
+        // difficulty chip. The search matches the title, the
+        // explain text, and the takeaway, plus the backing search
+        // index entry (its tags and excerpt) for index-mode
+        // situations, exactly as before.
+        var base = all
         if !query.isEmpty {
-            let entriesByID = Dictionary(uniqueKeysWithValues: contentService.allSituations.map { ($0.id, $0) })
-            list = list.filter {
+            let entriesByID = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
+            base = base.filter {
                 $0.title.lowercased().contains(query)
                     || $0.explain.lowercased().contains(query)
                     || $0.takeaway.lowercased().contains(query)
@@ -529,25 +634,34 @@ struct SituationsView: View {
             }
         }
         if let schemeFilter {
-            list = list.filter { scheme(for: $0) == schemeFilter }
+            base = base.filter { schemeByID[$0.id] == schemeFilter }
         }
         if let levelFilter {
-            list = list.filter { $0.level == levelFilter }
+            base = base.filter { $0.level == levelFilter }
         }
-        return list
-    }
-
-    /// The count of one category against the current other
-    /// filters, for the drawer rows.
-    private func count(for category: SituationCategory) -> Int {
+        let filtered: [Situation]
         switch category {
         case .all:
-            return categoryBase.count
+            filtered = base
         case .freeSamples:
-            return categoryBase.count { $0.isFreeSample }
+            filtered = base.filter { $0.isFreeSample }
         case .stage(let stage):
-            return categoryBase.count { $0.stage == stage }
+            filtered = base.filter { $0.stage == stage }
         }
+        var counts: [SituationCategory: Int] = [.all: base.count, .freeSamples: 0]
+        for item in base {
+            if item.isFreeSample {
+                counts[.freeSamples, default: 0] += 1
+            }
+            counts[.stage(item.stage), default: 0] += 1
+        }
+        return SituationsListSnapshot(
+            all: all,
+            base: base,
+            filtered: filtered,
+            schemes: schemes,
+            counts: counts
+        )
     }
 
     /// The cases actually rendered: the current page of the
@@ -648,6 +762,30 @@ struct SituationsView: View {
                             proxy.scrollTo("allSituations", anchor: .top)
                         }
                     }
+                    // The search debounce: the filter text settles
+                    // 150ms after the last keystroke, so typing
+                    // never re-filters on every keystroke. Mirrors
+                    // the Search tab debounce exactly. The task
+                    // restarts (and the previous one is cancelled)
+                    // on each keystroke.
+                    .task(id: searchText) {
+                        try? await Task.sleep(nanoseconds: 150_000_000)
+                        guard !Task.isCancelled else { return }
+                        debouncedSearchText = searchText
+                    }
+                    // The list snapshot: source mapping, search,
+                    // scheme and difficulty filters, the category
+                    // filter, the available schemes and the drawer
+                    // counts, computed once per work key, off the
+                    // main thread. The task restarts only when the
+                    // key changes (debounced text, filter, category
+                    // or data load), never per keystroke or render.
+                    // A stale result is discarded, never shown.
+                    .task(id: situationsWorkKey) {
+                        let snapshot = await computeSnapshot()
+                        guard !Task.isCancelled else { return }
+                        listSnapshot = snapshot
+                    }
                     // A page jump from the pagination bar: the
                     // list returns to its top.
                     .onChange(of: pageScrollTick) { _, _ in
@@ -694,9 +832,6 @@ struct SituationsView: View {
             }
             .sheet(isPresented: $showCheckout) {
                 CheckoutView()
-            }
-            .task {
-                await contentService.loadFullSituations()
             }
         }
     }

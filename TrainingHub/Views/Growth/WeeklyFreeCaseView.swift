@@ -109,10 +109,34 @@ struct WeeklyFreeCaseView: View {
 
     @State private var linkedInTextCopied = false
 
+    /// The mapped situations, snapshotted once per data change.
+    /// The 564-item remap ran on every body evaluation before
+    /// (twice per pass through weeklySituation alone). The
+    /// readers below fall back to a synchronous map while the
+    /// snapshot is empty, so the first frame already shows the
+    /// case when the data has loaded; once the refresh task has
+    /// run, rendering reads the snapshot only.
+    @State private var situationsSnapshot: [Situation] = []
+    @State private var weeklyItemsSnapshot: [Situation]? = nil
+
+    /// The data key the snapshots refresh on: the catalogue
+    /// revision (which bumps on every index assignment,
+    /// including the agendas join) and the loaded situations
+    /// sizes.
+    private var situationsWorkKey: String {
+        "\(contentService.catalogueRevision)|\(contentService.fullSituations?.count ?? -1)|\(contentService.weeklyCases?.count ?? -1)"
+    }
+
     /// All situations, full data first and search index fallback,
     /// in catalogue order, the same order SituationsView shows.
     /// The weekly pick depends on this order staying stable.
     private var allSituations: [Situation] {
+        situationsSnapshot.isEmpty ? mappedSituations() : situationsSnapshot
+    }
+
+    /// The mapping itself, shared by the snapshot refresh and
+    /// the first-frame fallback above.
+    private func mappedSituations() -> [Situation] {
         if let full = contentService.fullSituations, !full.isEmpty {
             return full.map { situation(fromFull: $0) }
         }
@@ -123,8 +147,21 @@ struct WeeklyFreeCaseView: View {
     /// week order: the order the website build ships it in. The
     /// weekly pick prefers this list; see weeklySituation.
     private var weeklyCaseItems: [Situation]? {
+        weeklyItemsSnapshot ?? mappedWeeklyItems()
+    }
+
+    /// The weekly-list mapping, shared by the snapshot refresh
+    /// and the first-frame fallback above.
+    private func mappedWeeklyItems() -> [Situation]? {
         guard let weekly = contentService.weeklyCases, !weekly.isEmpty else { return nil }
         return weekly.map { situation(fromFull: $0) }
+    }
+
+    /// Refresh both snapshots from the currently loaded data.
+    /// Runs only when the data key changes, never per render.
+    private func refreshSnapshots() {
+        situationsSnapshot = mappedSituations()
+        weeklyItemsSnapshot = mappedWeeklyItems()
     }
 
     private var today: Date { Date() }
@@ -228,6 +265,9 @@ struct WeeklyFreeCaseView: View {
         .task {
             await contentService.loadFullSituations()
             await contentService.loadWeeklyCases()
+        }
+        .task(id: situationsWorkKey) {
+            refreshSnapshots()
         }
     }
 

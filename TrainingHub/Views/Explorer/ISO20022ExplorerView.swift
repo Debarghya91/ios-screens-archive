@@ -615,7 +615,11 @@ struct ISO20022RelatedLessonsSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: PFSpacing.sm) {
+        // Computed once per body evaluation: the filter scans the
+        // catalogue with two lowercased string matches per entry,
+        // and the branches below used to run it three times.
+        let related = relatedLessons
+        return VStack(alignment: .leading, spacing: PFSpacing.sm) {
             PFSectionHeader(title: "Related lessons")
             Text("Lessons whose title or catalogue text mentions \(message.id).")
                 .font(.pfCallout)
@@ -633,7 +637,7 @@ struct ISO20022RelatedLessonsSection: View {
                 } else {
                     PFLoadingView(message: "Loading the course catalogue...")
                 }
-            } else if relatedLessons.isEmpty {
+            } else if related.isEmpty {
                 PFCard {
                     Text("No lesson in the loaded catalogue mentions \(message.id) in its title or text. The catalogue may still teach this message under a different name, so try searching for the message name.")
                         .font(.pfBody)
@@ -644,11 +648,11 @@ struct ISO20022RelatedLessonsSection: View {
                 if contentService.isShowingCachedContent {
                     PFOfflineBanner()
                 }
-                ForEach(Array(relatedLessons.prefix(Self.maxShown))) { entry in
+                ForEach(Array(related.prefix(Self.maxShown))) { entry in
                     lessonRow(entry)
                 }
-                if relatedLessons.count > Self.maxShown {
-                    Text("Showing \(Self.maxShown) of \(relatedLessons.count) matching lessons. Search the catalogue for the full list.")
+                if related.count > Self.maxShown {
+                    Text("Showing \(Self.maxShown) of \(related.count) matching lessons. Search the catalogue for the full list.")
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)

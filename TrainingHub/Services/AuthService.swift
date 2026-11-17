@@ -58,12 +58,44 @@ private struct SupabaseUserReply: Decodable {
     let email: String?
     let emailConfirmedAt: String?
     let userMetadata: SupabaseUserMetadata?
+    let appMetadata: SupabaseAppMetadata?
 
     enum CodingKeys: String, CodingKey {
         case id
         case email
         case emailConfirmedAt = "email_confirmed_at"
         case userMetadata = "user_metadata"
+        case appMetadata = "app_metadata"
+    }
+
+    /// True when the server marks this user an admin in
+    /// app_metadata. Lenient: a missing block, a missing flag,
+    /// or any other shape means not an admin, never an error.
+    var isAdmin: Bool {
+        appMetadata?.isAdmin ?? false
+    }
+}
+
+/// The app_metadata block in a GoTrue user reply. Only is_admin
+/// is decoded, leniently: a boolean true, or the string "true".
+/// Any other shape decodes as false and never throws, so an
+/// unexpected metadata shape cannot break sign-in.
+private struct SupabaseAppMetadata: Decodable {
+    let isAdmin: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case isAdmin = "is_admin"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let flag = try? container.decode(Bool.self, forKey: .isAdmin) {
+            isAdmin = flag
+        } else if let text = try? container.decode(String.self, forKey: .isAdmin) {
+            isAdmin = text.lowercased() == "true"
+        } else {
+            isAdmin = false
+        }
     }
 }
 
@@ -247,21 +279,10 @@ final class AuthService: ObservableObject {
     /// True when a user is signed in.
     var isSignedIn: Bool { currentUser != nil }
 
-    /// True when sign-in is fully complete and content may show: a
-    /// session exists, and neither the one-time guest-data
-    /// migration offer nor the registration welcome popup is still
-    /// waiting for an answer. TrainingHubApp gates the main tabs
-    /// on this, not on isSignedIn alone: both post-sign-in prompts
-    /// live on the sign-in screens, and flipping to the tabs the
-    /// moment the session lands would destroy them before the
-    /// learner can answer. Both flags are decided before
-    /// currentUser is set in saveSession, so the gate never sees a
-    /// half-decided state, and neither flag is ever set by a
-    /// launch restore, so a returning learner is never held at
-    /// the gate.
-    var isReadyForContent: Bool {
-        isSignedIn && !offersGuestMigration && !showRegistrationWelcome
-    }
+    /// True when the signed-in user is an admin (app_metadata
+    /// is_admin). Admins see all content, never locked, never
+    /// prompted to buy. False for guests and non-admin users.
+    var isAdmin: Bool { currentUser?.isAdmin ?? false }
 
     /// True when Supabase is configured and sign-in can work.
     var canSignIn: Bool { client.isConfigured }
@@ -1388,7 +1409,8 @@ final class AuthService: ObservableObject {
                 id: user.id,
                 email: reply.email ?? user.email,
                 displayName: displayName,
-                isEmailVerified: reply.emailConfirmedAt != nil
+                isEmailVerified: reply.emailConfirmedAt != nil,
+                isAdmin: user.isAdmin
             )
             currentUser = updated
             if let session = storedSession {
@@ -1532,7 +1554,8 @@ final class AuthService: ObservableObject {
             id: user.id,
             email: user.email,
             displayName: name,
-            isEmailVerified: user.isEmailVerified
+            isEmailVerified: user.isEmailVerified,
+            isAdmin: user.isAdmin
         )
         currentUser = updated
         if let session = storedSession {
@@ -1643,7 +1666,8 @@ final class AuthService: ObservableObject {
             id: reply.user.id,
             email: reply.user.email,
             displayName: displayName,
-            isEmailVerified: reply.user.emailConfirmedAt != nil
+            isEmailVerified: reply.user.emailConfirmedAt != nil,
+            isAdmin: reply.user.isAdmin
         )
         await saveSession(
             accessToken: reply.accessToken,
@@ -1677,7 +1701,8 @@ final class AuthService: ObservableObject {
                 id: reply.id,
                 email: reply.email,
                 displayName: profileName ?? metadataName,
-                isEmailVerified: reply.emailConfirmedAt != nil
+                isEmailVerified: reply.emailConfirmedAt != nil,
+                isAdmin: reply.isAdmin
             )
             await saveSession(accessToken: accessToken, refreshToken: refreshToken, expiresIn: expiresIn, user: user)
         } catch {

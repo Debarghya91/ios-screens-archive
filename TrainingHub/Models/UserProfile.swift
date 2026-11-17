@@ -14,6 +14,39 @@ struct AuthUser: Codable, Equatable, Identifiable {
     let email: String?
     let displayName: String?
     let isEmailVerified: Bool
+    /// True when the Supabase Auth user's app_metadata carries
+    /// is_admin: the admin bypass, which unlocks all content.
+    /// Set only from the server reply, never locally.
+    let isAdmin: Bool
+
+    init(id: String, email: String?, displayName: String?, isEmailVerified: Bool, isAdmin: Bool) {
+        self.id = id
+        self.email = email
+        self.displayName = displayName
+        self.isEmailVerified = isEmailVerified
+        self.isAdmin = isAdmin
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case email
+        case displayName
+        case isEmailVerified
+        case isAdmin
+    }
+
+    /// Decodes stored sessions written before isAdmin existed:
+    /// the flag defaults to false, so an old Keychain session
+    /// still restores and the next sign-in refreshes the flag.
+    /// Encoding stays synthesized, using the keys above.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        email = try container.decodeIfPresent(String.self, forKey: .email)
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+        isEmailVerified = try container.decode(Bool.self, forKey: .isEmailVerified)
+        isAdmin = try container.decodeIfPresent(Bool.self, forKey: .isAdmin) ?? false
+    }
 
     /// Initials for the avatar placeholder circle, from the display
     /// name or the email. Falls back to "G" for a guest.

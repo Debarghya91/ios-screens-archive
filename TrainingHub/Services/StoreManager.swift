@@ -311,6 +311,21 @@ final class StoreManager: ObservableObject {
     /// The last user-facing purchase status message, shown in Checkout.
     @Published private(set) var statusMessage: String?
 
+    /// The product id a signed-out learner tried to buy, set when
+    /// a Buy action finds no session. Views present the sign-in
+    /// sheet while this is set and the learner is signed out;
+    /// after sign-in the learner returns to the Buy button and
+    /// taps it again: the purchase is never auto-executed.
+    /// Cleared on sign-in sync and on sign-out, so a stale flag
+    /// never pops an unsolicited sign-in prompt.
+    @Published private(set) var signInRequiredForPurchase: String?
+
+    /// Clear the pending sign-in-for-purchase flag, for example
+    /// when the sign-in sheet is dismissed without signing in.
+    func clearSignInRequiredForPurchase() {
+        signInRequiredForPurchase = nil
+    }
+
     /// Clear the last purchase message, for example after the
     /// learner dismisses the alert that showed it.
     func clearStatusMessage() { statusMessage = nil }
@@ -384,8 +399,10 @@ final class StoreManager: ObservableObject {
     /// an active entitlement. The Integrated Course unlocks every
     /// product. Owning one product does NOT unlock another: the
     /// parts and the standalone products are independent unless
-    /// the Integrated Course is owned.
+    /// the Integrated Course is owned. An admin (app_metadata
+    /// is_admin) sees every product unlocked, always.
     func isProductUnlocked(_ productID: String) -> Bool {
+        if AuthService.shared.isAdmin { return true }
         if isProductOwned(productID) { return true }
         if productID == Self.fullCourseProductID { return false }
         return isProductOwned(Self.fullCourseProductID)
@@ -443,12 +460,15 @@ final class StoreManager: ObservableObject {
 
     /// True when a chapter is unlocked. The held-out ch37 is always
     /// reachable: it is in no product and is never sold, so it is
-    /// never locked behind a product that does not exist. For every
-    /// other chapter, the Integrated Course being owned unlocks it,
-    /// or the part containing this chapter being owned unlocks it.
-    /// A chapter that is in no part (unknown) is LOCKED: fail
-    /// closed, so unmapped content is never free by accident.
+    /// never locked behind a product that does not exist. An admin
+    /// (app_metadata is_admin) sees every chapter unlocked. For
+    /// every other chapter, the Integrated Course being owned
+    /// unlocks it, or the part containing this chapter being owned
+    /// unlocks it. A chapter that is in no part (unknown) is
+    /// LOCKED: fail closed, so unmapped content is never free by
+    /// accident.
     func isChapterUnlocked(_ chapterID: String) -> Bool {
+        if AuthService.shared.isAdmin { return true }
         if ProductCatalogue.isHeldOutChapter(chapterID) { return true }
         if isProductOwned(Self.fullCourseProductID) { return true }
         guard let part = ProductCatalogue.productContaining(chapterID: chapterID) else { return false }
@@ -601,6 +621,10 @@ final class StoreManager: ObservableObject {
             statusMessage = "That product is not available. Please try again."
             return
         }
+        if !AuthService.shared.isSignedIn {
+            signInRequiredForPurchase = productID
+            return
+        }
         if isProductUnlocked(productID) {
             statusMessage = "\(catalogueProduct.name) is already unlocked."
             return
@@ -623,6 +647,10 @@ final class StoreManager: ObservableObject {
     func purchaseRenewal(for baseProductID: String) async {
         guard let catalogueProduct = ProductCatalogue.product(for: baseProductID) else {
             statusMessage = "That product is not available. Please try again."
+            return
+        }
+        if !AuthService.shared.isSignedIn {
+            signInRequiredForPurchase = catalogueProduct.renewalProductID
             return
         }
         guard isProductOwned(baseProductID) else {
@@ -800,6 +828,7 @@ final class StoreManager: ObservableObject {
     /// revokes for this account (including orphans filed while
     /// signed out) are retried last.
     func syncEntitlementsAfterSignIn() async {
+        signInRequiredForPurchase = nil
         await refreshEntitlement()
         await refreshEntitlementFromServer()
         await syncOwnedTransactionsToServer()
@@ -817,6 +846,7 @@ final class StoreManager: ObservableObject {
     /// namespace. A different account reads different keys and can
     /// never replay this account's cache.
     func clearAccountEntitlements() {
+        signInRequiredForPurchase = nil
         serverEntitledProductIDs = []
         serverEntitlementExpiries = [:]
         serverEntitlementSyncPending = false

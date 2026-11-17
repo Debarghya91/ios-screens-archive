@@ -80,9 +80,29 @@ final class ContentService: ObservableObject {
 
     // MARK: - Published state
 
-    @Published private(set) var searchIndex: SearchIndex? = nil
+    @Published private(set) var searchIndex: SearchIndex? = nil {
+        didSet {
+            catalogueCache = Self.deriveCatalogue(from: searchIndex)
+            catalogueRevision += 1
+        }
+    }
     @Published private(set) var isLoadingIndex = false
     @Published private(set) var indexError: String? = nil
+
+    /// Memoized catalogue derivations, rebuilt eagerly on every
+    /// search-index assignment (once per load, never per view
+    /// pass). Views read the derived arrays on every body
+    /// evaluation; rebuilding them per access re-scanned all
+    /// 1,835 entries and re-sorted every time.
+    private var catalogueCache = CatalogueDerivations.empty
+
+    /// Bumps on every search-index assignment, including the
+    /// agendas join (same entry count, changed agendas and
+    /// thumbnails). Views key @State snapshots on it so a join
+    /// refreshes them even when nothing else changed. A plain
+    /// var, not @Published: views read it during body evaluation
+    /// driven by the searchIndex publish.
+    private(set) var catalogueRevision = 0
 
     /// True when the catalogue or situations on screen came from the
     /// local cache because the live fetch failed. Views show the
@@ -222,8 +242,7 @@ final class ContentService: ObservableObject {
                 throw ContentError.badResponse
             }
             let decoded = try await Self.decodeSearchIndexOffMainThread(data)
-            searchIndex = decoded
-            applyAgendasToIndex()
+            assignSearchIndex(decoded)
             await Self.saveCacheOffMainThread(data, fileName: Self.searchIndexCacheFile)
             isShowingCachedContent = false
             isLoadingIndex = false
@@ -242,8 +261,7 @@ final class ContentService: ObservableObject {
                     throw ContentError.badResponse
                 }
                 let decoded = try await Self.decodeSearchIndexOffMainThread(data)
-                searchIndex = decoded
-                applyAgendasToIndex()
+                assignSearchIndex(decoded)
                 await Self.saveCacheOffMainThread(data, fileName: Self.searchIndexCacheFile)
                 isShowingCachedContent = false
                 isLoadingIndex = false
@@ -260,8 +278,7 @@ final class ContentService: ObservableObject {
         }
         if let cached = await Self.loadCacheOffMainThread(fileName: Self.searchIndexCacheFile),
            let decoded = try? await Self.decodeSearchIndexOffMainThread(cached) {
-            searchIndex = decoded
-            applyAgendasToIndex()
+            assignSearchIndex(decoded)
             isShowingCachedContent = true
             indexError = nil
         } else {
@@ -302,6 +319,70 @@ final class ContentService: ObservableObject {
     private static func loadCacheOffMainThread(fileName: String) async -> Data? {
         await Task.detached(priority: .userInitiated) {
             loadCache(fileName: fileName)
+        }.value
+    }
+
+    /// Decode a JS-assignment situation file (a `window.X = `
+    /// prefix, a JSON array, and an optional trailing semicolon)
+    /// off the main thread. The prefix strip, the string
+    /// conversion and the JSON decode all run in the detached
+    /// task; only the result crosses back. Throws
+    /// ContentError.badResponse when the prefix is missing or
+    /// the bytes are not UTF-8, exactly as the inline code did.
+    /// Shared by the public situations file and the weekly-cases
+    /// file, which differ only in prefix.
+    private static func decodeSituationAssignmentFile(_ data: Data, prefix: String) async throws -> [FullSituationItem] {
+        try await Task.detached(priority: .userInitiated) {
+            try decodeSituationAssignment(data, prefix: prefix)
+        }.value
+    }
+
+    /// The synchronous prefix-strip and decode, nonisolated so it
+    /// can run on a detached task. The only caller is the helper
+    /// above.
+    private static func decodeSituationAssignment(_ data: Data, prefix: String) throws -> [FullSituationItem] {
+        guard var text = String(data: data, encoding: .utf8) else { throw ContentError.badResponse }
+        guard text.hasPrefix(prefix) else { throw ContentError.badResponse }
+        text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasSuffix(";") { text = String(text.dropLast()) }
+        guard let jsonData = text.data(using: .utf8) else { throw ContentError.badResponse }
+        return try JSONDecoder().decode([FullSituationItem].self, from: jsonData)
+    }
+
+    /// Decode the compact situations index off the main thread.
+    /// Pure: no published state is touched here, so the detached
+    /// task never races the UI.
+    private static func decodeSituationsIndexOffMainThread(_ data: Data) async throws -> SituationsIndexDoc {
+        try await Task.detached(priority: .userInitiated) {
+            try JSONDecoder().decode(SituationsIndexDoc.self, from: data)
+        }.value
+    }
+
+    /// Decode one situations detail chunk off the main thread.
+    /// Chunks are small, but the decode still leaves the main
+    /// thread so opening a case never stalls the interface.
+    private static func decodeSituationChunkOffMainThread(_ data: Data) async throws -> [FullSituationItem] {
+        try await Task.detached(priority: .userInitiated) {
+            try JSONDecoder().decode([FullSituationItem].self, from: data)
+        }.value
+    }
+
+    /// Decode the agendas document off the main thread. Pure: no
+    /// published state is touched here, so the detached task
+    /// never races the UI.
+    private static func decodeAgendasOffMainThread(_ data: Data) async throws -> AgendasDocument {
+        try await Task.detached(priority: .userInitiated) {
+            try JSONDecoder().decode(AgendasDocument.self, from: data)
+        }.value
+    }
+
+    /// Decode one response from the authenticated
+    /// situations-content endpoint off the main thread. Pure: no
+    /// published state is touched here, so the detached task
+    /// never races the UI.
+    private static func decodeAuthenticatedSituationsOffMainThread(_ data: Data) async throws -> AuthenticatedSituationsResponse {
+        try await Task.detached(priority: .userInitiated) {
+            try JSONDecoder().decode(AuthenticatedSituationsResponse.self, from: data)
         }.value
     }
 
@@ -506,9 +587,116 @@ final class ContentService: ObservableObject {
         return SearchIndex(counts: counts, entries: index.entries + extra)
     }
 
-    /// All lessons, in catalogue order.
+    /// Memoized derivations from one search index. Built once
+    /// per index assignment by deriveCatalogue(from:); every
+    /// reader below returns a stored array or a dictionary
+    /// lookup, never a fresh scan. The build preserves the
+    /// exact semantics of the scans it replaces: catalogue
+    /// order within every array, first-wins for duplicate ids
+    /// (as firstIndex was), and the same held-out and
+    /// supplemental filtering for the position maps.
+    private struct CatalogueDerivations {
+        static let empty = CatalogueDerivations(
+            allLessons: [],
+            readingOrderLessons: [],
+            lessonsByChapter: [:],
+            chapterNumbers: [],
+            allGuides: [],
+            allSituations: [],
+            allLabs: [],
+            allFAQs: [],
+            bookPositions: [:],
+            bookTotal: 0,
+            lessonPositionsInChapter: [:]
+        )
+
+        let allLessons: [SearchEntry]
+        let readingOrderLessons: [SearchEntry]
+        let lessonsByChapter: [Int: [SearchEntry]]
+        let chapterNumbers: [Int]
+        let allGuides: [SearchEntry]
+        let allSituations: [SearchEntry]
+        let allLabs: [SearchEntry]
+        let allFAQs: [SearchEntry]
+        let bookPositions: [String: Int]
+        let bookTotal: Int
+        /// 1-based position within the chapter by lesson id,
+        /// with the chapter the position belongs to, so a
+        /// stale entry whose chapter differs from the
+        /// catalogue entry with the same id still resolves
+        /// exactly as the old filter-plus-firstIndex did.
+        let lessonPositionsInChapter: [String: (chapter: Int, position: Int)]
+    }
+
+    /// Build the memoized derivations for one index. Pure: no
+    /// published state is touched, so the didSet rebuild is a
+    /// single self-contained step.
+    private static func deriveCatalogue(from index: SearchIndex?) -> CatalogueDerivations {
+        guard let index else { return .empty }
+        var lessons: [SearchEntry] = []
+        var guides: [SearchEntry] = []
+        var situations: [SearchEntry] = []
+        var labs: [SearchEntry] = []
+        var faqs: [SearchEntry] = []
+        var byChapter: [Int: [SearchEntry]] = [:]
+        for entry in index.entries {
+            switch entry.type {
+            case .lesson:
+                lessons.append(entry)
+                if let number = entry.chapterNumber {
+                    byChapter[number, default: []].append(entry)
+                }
+            case .guide:
+                guides.append(entry)
+            case .situation:
+                situations.append(entry)
+            case .lab:
+                labs.append(entry)
+            case .faq:
+                faqs.append(entry)
+            case .test:
+                break
+            }
+        }
+        let readingOrder = PFBookModeReadingOrder.sortedForReading(lessons)
+        var bookPositions: [String: Int] = [:]
+        var bookTotal = 0
+        for lesson in readingOrder {
+            guard let chapter = lesson.chapterNumber,
+                  !PFBookModeReadingOrder.isHeldOut(internalNumber: chapter) else { continue }
+            bookTotal += 1
+            if bookPositions[lesson.id] == nil {
+                bookPositions[lesson.id] = bookTotal
+            }
+        }
+        var positions: [String: (chapter: Int, position: Int)] = [:]
+        var chapterCounts: [Int: Int] = [:]
+        for lesson in lessons where !lesson.isSupplemental {
+            guard let number = lesson.chapterNumber else { continue }
+            chapterCounts[number, default: 0] += 1
+            if positions[lesson.id] == nil {
+                positions[lesson.id] = (chapter: number, position: chapterCounts[number, default: 0])
+            }
+        }
+        return CatalogueDerivations(
+            allLessons: lessons,
+            readingOrderLessons: readingOrder,
+            lessonsByChapter: byChapter,
+            chapterNumbers: byChapter.keys.sorted(),
+            allGuides: guides,
+            allSituations: situations,
+            allLabs: labs,
+            allFAQs: faqs,
+            bookPositions: bookPositions,
+            bookTotal: bookTotal,
+            lessonPositionsInChapter: positions
+        )
+    }
+
+    /// All lessons, in catalogue order. Memoized: rebuilt only
+    /// when the search index is reassigned.
     var allLessons: [SearchEntry] {
-        searchIndex?.entries.filter { $0.type == .lesson } ?? []
+        catalogueCache.allLessons
     }
 
     /// All lessons in book reading order: chapters in the order
@@ -516,9 +704,22 @@ final class ContentService: ObservableObject {
     /// lessons within a chapter. The order for prev/next lesson
     /// navigation and for "continue reading". Catalogue order
     /// (allLessons) is unchanged: it feeds position and gating
-    /// logic that must not move.
+    /// logic that must not move. Memoized with allLessons.
     var readingOrderLessons: [SearchEntry] {
-        PFBookModeReadingOrder.sortedForReading(allLessons)
+        catalogueCache.readingOrderLessons
+    }
+
+    /// The lessons of one chapter, in catalogue order, from the
+    /// memoized per-chapter map. Empty when the catalogue has
+    /// not loaded or the chapter has no lessons.
+    func lessons(forChapterNumber number: Int) -> [SearchEntry] {
+        catalogueCache.lessonsByChapter[number] ?? []
+    }
+
+    /// All chapter numbers present in the loaded index, numeric
+    /// order, from the memoized per-chapter map.
+    var chapterNumbers: [Int] {
+        catalogueCache.chapterNumbers
     }
 
     /// True once the reading-order refresh has been attempted
@@ -543,13 +744,9 @@ final class ContentService: ObservableObject {
     /// their chapter in reading order.
     func bookPosition(for entry: SearchEntry) -> (position: Int, total: Int)? {
         guard let number = entry.chapterNumber,
-              !PFBookModeReadingOrder.isHeldOut(internalNumber: number) else { return nil }
-        let sequence = readingOrderLessons.filter {
-            guard let chapter = $0.chapterNumber else { return false }
-            return !PFBookModeReadingOrder.isHeldOut(internalNumber: chapter)
-        }
-        guard let index = sequence.firstIndex(where: { $0.id == entry.id }) else { return nil }
-        return (index + 1, sequence.count)
+              !PFBookModeReadingOrder.isHeldOut(internalNumber: number),
+              let position = catalogueCache.bookPositions[entry.id] else { return nil }
+        return (position, catalogueCache.bookTotal)
     }
 
     /// The sequential position (1-based) of a regular lesson
@@ -561,12 +758,10 @@ final class ContentService: ObservableObject {
     /// the loaded index.
     func lessonPositionInChapter(for entry: SearchEntry) -> Int? {
         guard entry.type == .lesson, !entry.isSupplemental,
-              let number = entry.chapterNumber else { return nil }
-        let chapterLessons = allLessons.filter {
-            $0.chapterNumber == number && !$0.isSupplemental
-        }
-        guard let index = chapterLessons.firstIndex(where: { $0.id == entry.id }) else { return nil }
-        return index + 1
+              let number = entry.chapterNumber,
+              let found = catalogueCache.lessonPositionsInChapter[entry.id],
+              found.chapter == number else { return nil }
+        return found.position
     }
 
     /// The citation for an entry, numbering regular lessons by
@@ -587,26 +782,26 @@ final class ContentService: ObservableObject {
         return entry.citation
     }
 
-    /// All guides, in catalogue order.
+    /// All guides, in catalogue order. Memoized with allLessons.
     var allGuides: [SearchEntry] {
-        searchIndex?.entries.filter { $0.type == .guide } ?? []
+        catalogueCache.allGuides
     }
 
-    /// All situations, in catalogue order.
+    /// All situations, in catalogue order. Memoized with allLessons.
     var allSituations: [SearchEntry] {
-        searchIndex?.entries.filter { $0.type == .situation } ?? []
+        catalogueCache.allSituations
     }
 
     /// All labs, in catalogue order. The order decides the free
-    /// lab samples (see EntryAccessRules).
+    /// lab samples (see EntryAccessRules). Memoized with allLessons.
     var allLabs: [SearchEntry] {
-        searchIndex?.entries.filter { $0.type == .lab } ?? []
+        catalogueCache.allLabs
     }
 
     /// All FAQ entries, in catalogue order. The order decides the
-    /// free FAQ samples (see EntryAccessRules).
+    /// free FAQ samples (see EntryAccessRules). Memoized with allLessons.
     var allFAQs: [SearchEntry] {
-        searchIndex?.entries.filter { $0.type == .faq } ?? []
+        catalogueCache.allFAQs
     }
 
     // MARK: - Full situations data
@@ -661,18 +856,12 @@ final class ContentService: ObservableObject {
         for attempt in 0..<3 {
             do {
                 let (data, response) = try await URLSession.shared.data(from: Self.situationsDataURL)
-                guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-                      var text = String(data: data, encoding: .utf8) else {
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                     throw ContentError.badResponse
                 }
-                let prefix = "window.PA_SITUATIONS = "
-                guard text.hasPrefix(prefix) else { throw ContentError.badResponse }
-                text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-                if text.hasSuffix(";") { text = String(text.dropLast()) }
-                guard let jsonData = text.data(using: .utf8) else { throw ContentError.badResponse }
-                let decoded = try JSONDecoder().decode([FullSituationItem].self, from: jsonData)
+                let decoded = try await Self.decodeSituationAssignmentFile(data, prefix: "window.PA_SITUATIONS = ")
                 fullSituations = Self.dedupedSituations(decoded)
-                Self.saveCache(data, fileName: Self.situationsCacheFile)
+                await Self.saveCacheOffMainThread(data, fileName: Self.situationsCacheFile)
                 // Do not clear isShowingCachedContent here: the flag
                 // belongs to the catalogue load, which may have fallen
                 // back to cache even when this file loads live.
@@ -684,18 +873,10 @@ final class ContentService: ObservableObject {
                 }
             }
         }
-        if let cached = Self.loadCache(fileName: Self.situationsCacheFile),
-           var text = String(data: cached, encoding: .utf8) {
-            let prefix = "window.PA_SITUATIONS = "
-            if text.hasPrefix(prefix) {
-                text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-                if text.hasSuffix(";") { text = String(text.dropLast()) }
-                if let jsonData = text.data(using: .utf8),
-                   let decoded = try? JSONDecoder().decode([FullSituationItem].self, from: jsonData) {
-                    fullSituations = Self.dedupedSituations(decoded)
-                    isShowingCachedContent = true
-                }
-            }
+        if let cached = await Self.loadCacheOffMainThread(fileName: Self.situationsCacheFile),
+           let decoded = try? await Self.decodeSituationAssignmentFile(cached, prefix: "window.PA_SITUATIONS = ") {
+            fullSituations = Self.dedupedSituations(decoded)
+            isShowingCachedContent = true
         }
         isLoadingSituations = false
     }
@@ -734,9 +915,9 @@ final class ContentService: ObservableObject {
         if let url = Self.situationsContentURL {
             do {
                 let data = try await SupabaseClient.shared.request(url: url, method: "GET", accessToken: accessToken)
-                let decoded = try JSONDecoder().decode(AuthenticatedSituationsResponse.self, from: data)
+                let decoded = try await Self.decodeAuthenticatedSituationsOffMainThread(data)
                 fullSituations = Self.dedupedSituations(decoded.items)
-                Self.saveCache(data, fileName: Self.authenticatedSituationsCacheFile)
+                await Self.saveCacheOffMainThread(data, fileName: Self.authenticatedSituationsCacheFile)
                 // Do not clear isShowingCachedContent here: the flag
                 // belongs to the catalogue load, which may have fallen
                 // back to cache even when this fetch loads live.
@@ -745,8 +926,8 @@ final class ContentService: ObservableObject {
                 // Fall through to the endpoint cache below.
             }
         }
-        if let cached = Self.loadCache(fileName: Self.authenticatedSituationsCacheFile),
-           let decoded = try? JSONDecoder().decode(AuthenticatedSituationsResponse.self, from: cached) {
+        if let cached = await Self.loadCacheOffMainThread(fileName: Self.authenticatedSituationsCacheFile),
+           let decoded = try? await Self.decodeAuthenticatedSituationsOffMainThread(cached) {
             fullSituations = Self.dedupedSituations(decoded.items)
             isShowingCachedContent = true
         }
@@ -778,9 +959,9 @@ final class ContentService: ObservableObject {
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                     throw ContentError.badResponse
                 }
-                let decoded = try JSONDecoder().decode(SituationsIndexDoc.self, from: data)
+                let decoded = try await Self.decodeSituationsIndexOffMainThread(data)
                 situationsIndex = decoded
-                Self.saveCache(data, fileName: Self.situationsIndexCacheFile)
+                await Self.saveCacheOffMainThread(data, fileName: Self.situationsIndexCacheFile)
                 return
             } catch {
                 if Task.isCancelled { return }
@@ -789,8 +970,8 @@ final class ContentService: ObservableObject {
                 }
             }
         }
-        if let cached = Self.loadCache(fileName: Self.situationsIndexCacheFile),
-           let decoded = try? JSONDecoder().decode(SituationsIndexDoc.self, from: cached) {
+        if let cached = await Self.loadCacheOffMainThread(fileName: Self.situationsIndexCacheFile),
+           let decoded = try? await Self.decodeSituationsIndexOffMainThread(cached) {
             situationsIndex = decoded
             isShowingCachedContent = true
         }
@@ -831,7 +1012,7 @@ final class ContentService: ObservableObject {
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                     throw ContentError.badResponse
                 }
-                let decoded = try JSONDecoder().decode([FullSituationItem].self, from: data)
+                let decoded = try await Self.decodeSituationChunkOffMainThread(data)
                 let items = Self.dedupedSituations(decoded)
                 chunkCache[chunk] = items
                 return items
@@ -862,18 +1043,12 @@ final class ContentService: ObservableObject {
         for attempt in 0..<3 {
             do {
                 let (data, response) = try await URLSession.shared.data(from: Self.weeklyCasesDataURL)
-                guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-                      var text = String(data: data, encoding: .utf8) else {
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                     throw ContentError.badResponse
                 }
-                let prefix = "window.PA_WEEKLY_CASES = "
-                guard text.hasPrefix(prefix) else { throw ContentError.badResponse }
-                text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-                if text.hasSuffix(";") { text = String(text.dropLast()) }
-                guard let jsonData = text.data(using: .utf8) else { throw ContentError.badResponse }
-                let decoded = try JSONDecoder().decode([FullSituationItem].self, from: jsonData)
+                let decoded = try await Self.decodeSituationAssignmentFile(data, prefix: "window.PA_WEEKLY_CASES = ")
                 weeklyCases = decoded
-                Self.saveCache(data, fileName: Self.weeklyCasesCacheFile)
+                await Self.saveCacheOffMainThread(data, fileName: Self.weeklyCasesCacheFile)
                 // Do not clear isShowingCachedContent here: the flag
                 // belongs to the catalogue load, which may have fallen
                 // back to cache even when this file loads live.
@@ -885,18 +1060,10 @@ final class ContentService: ObservableObject {
                 }
             }
         }
-        if let cached = Self.loadCache(fileName: Self.weeklyCasesCacheFile),
-           var text = String(data: cached, encoding: .utf8) {
-            let prefix = "window.PA_WEEKLY_CASES = "
-            if text.hasPrefix(prefix) {
-                text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-                if text.hasSuffix(";") { text = String(text.dropLast()) }
-                if let jsonData = text.data(using: .utf8),
-                   let decoded = try? JSONDecoder().decode([FullSituationItem].self, from: jsonData) {
-                    weeklyCases = decoded
-                    isShowingCachedContent = true
-                }
-            }
+        if let cached = await Self.loadCacheOffMainThread(fileName: Self.weeklyCasesCacheFile),
+           let decoded = try? await Self.decodeSituationAssignmentFile(cached, prefix: "window.PA_WEEKLY_CASES = ") {
+            weeklyCases = decoded
+            isShowingCachedContent = true
         }
         isLoadingWeeklyCases = false
     }
@@ -930,9 +1097,9 @@ final class ContentService: ObservableObject {
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                     throw ContentError.badResponse
                 }
-                let decoded = try JSONDecoder().decode(AgendasDocument.self, from: data)
+                let decoded = try await Self.decodeAgendasOffMainThread(data)
                 agendas = decoded
-                Self.saveCache(data, fileName: Self.agendasCacheFile)
+                await Self.saveCacheOffMainThread(data, fileName: Self.agendasCacheFile)
                 applyAgendasToIndex()
                 isLoadingAgendas = false
                 return
@@ -942,8 +1109,8 @@ final class ContentService: ObservableObject {
                 }
             }
         }
-        if let cached = Self.loadCache(fileName: Self.agendasCacheFile),
-           let decoded = try? JSONDecoder().decode(AgendasDocument.self, from: cached) {
+        if let cached = await Self.loadCacheOffMainThread(fileName: Self.agendasCacheFile),
+           let decoded = try? await Self.decodeAgendasOffMainThread(cached) {
             agendas = decoded
             applyAgendasToIndex()
         } else {
@@ -971,7 +1138,19 @@ final class ContentService: ObservableObject {
     /// reassigned when the join adds data.
     @MainActor
     private func applyAgendasToIndex() {
-        guard let agendas, let index = searchIndex, !agendas.lessons.isEmpty else { return }
+        guard let agendas, let index = searchIndex,
+              let joined = Self.indexJoiningAgendas(index, agendas: agendas) else { return }
+        searchIndex = joined
+    }
+
+    /// The agendas join as a pure function: the index with each
+    /// entry's agenda and thumbnail taken from the agendas
+    /// document, or nil when the join would change nothing (an
+    /// empty lessons map, or every entry already carrying the
+    /// joined values). Nil means the caller keeps the index it
+    /// has, so no publish happens for a join that adds nothing.
+    private static func indexJoiningAgendas(_ index: SearchIndex, agendas: AgendasDocument) -> SearchIndex? {
+        guard !agendas.lessons.isEmpty else { return nil }
         var changed = false
         let entries = index.entries.map { entry -> SearchEntry in
             guard let item = agendas.lessons[entry.id] else { return entry }
@@ -993,8 +1172,22 @@ final class ContentService: ObservableObject {
                 domain: entry.domain
             )
         }
-        guard changed else { return }
-        searchIndex = SearchIndex(counts: index.counts, entries: entries)
+        guard changed else { return nil }
+        return SearchIndex(counts: index.counts, entries: entries)
+    }
+
+    /// Assign a freshly decoded index, joining already-loaded
+    /// agendas into it first so the join never costs a second
+    /// publish (and a second derivation rebuild). When agendas
+    /// have not loaded yet, loadAgendas runs the join through
+    /// applyAgendasToIndex when they do.
+    @MainActor
+    private func assignSearchIndex(_ decoded: SearchIndex) {
+        if let agendas, let joined = Self.indexJoiningAgendas(decoded, agendas: agendas) {
+            searchIndex = joined
+        } else {
+            searchIndex = decoded
+        }
     }
 
     /// A string trimmed of whitespace, nil when blank or absent.
@@ -1346,7 +1539,7 @@ final class ContentService: ObservableObject {
         do {
             return try await fetchLiveLessonDetail(entry: entry)
         } catch {
-            if let cached = cachedLessonDetail(entry: entry) {
+            if let cached = await cachedLessonDetail(entry: entry) {
                 return cached
             }
             throw error
@@ -1363,7 +1556,7 @@ final class ContentService: ObservableObject {
             let detail = try await fetchLiveLessonDetail(entry: entry)
             return (detail, .live)
         } catch {
-            if let cached = cachedLessonDetail(entry: entry) {
+            if let cached = await cachedLessonDetail(entry: entry) {
                 return (cached, .cached)
             }
             return nil
@@ -1388,10 +1581,10 @@ final class ContentService: ObservableObject {
             return LessonDetail(
                 id: entry.id,
                 title: entry.title,
-                chapterTitle: chapterTitle(for: entry),
+                chapterTitle: Self.chapterTitle(for: entry),
                 audioFileName: entry.audioFileName ?? (entry.id + ".mp3"),
                 transcript: entry.text,
-                takeaways: defaultTakeaways(for: entry),
+                takeaways: Self.defaultTakeaways(for: entry),
                 doThisAtWork: [],
                 sources: [],
                 quiz: [],
@@ -1413,7 +1606,7 @@ final class ContentService: ObservableObject {
                     throw ContentError.badResponse
                 }
                 Self.saveLessonDetailCache(html: html, lessonID: entry.id)
-                return parseLessonHTML(html, entry: entry)
+                return await Self.parseLessonHTMLInBackground(html, entry: entry)
             } catch {
                 lastError = error
                 if attempt < 2 {
@@ -1428,11 +1621,24 @@ final class ContentService: ObservableObject {
     /// no cached copy exists. Parsing never throws: a cached page
     /// that no longer parses yields the entry fallback detail, the
     /// same fallback the live path uses. Supplemental lessons never
-    /// reach the cache; they are built locally.
-    private func cachedLessonDetail(entry: SearchEntry) -> LessonDetail? {
+    /// reach the cache; they are built locally. The parse runs off
+    /// the main thread, like the live path.
+    private func cachedLessonDetail(entry: SearchEntry) async -> LessonDetail? {
         guard !entry.isSupplemental,
               let html = Self.cachedLessonHTML(for: entry.id) else { return nil }
-        return parseLessonHTML(html, entry: entry)
+        return await Self.parseLessonHTMLInBackground(html, entry: entry)
+    }
+
+    /// Parse a lesson page off the main thread. The parse scans
+    /// the full page HTML (regex strips, a JSON scan, list
+    /// extraction) and ran inline on the caller before, stalling
+    /// the interface on every lesson open. Pure: the parser
+    /// touches no instance state, so the detached task never
+    /// races the UI.
+    private static func parseLessonHTMLInBackground(_ html: String, entry: SearchEntry) async -> LessonDetail {
+        await Task.detached(priority: .userInitiated) {
+            parseLessonHTML(html, entry: entry)
+        }.value
     }
 
     /// Extract the lesson from its page. The page embeds the full lesson
@@ -1444,7 +1650,7 @@ final class ContentService: ObservableObject {
     /// extraction, so markup can never leak into lesson text. When the
     /// JSON blob is missing, the static HTML sections are used and the
     /// search index entry text is the fallback.
-    private func parseLessonHTML(_ html: String, entry: SearchEntry) -> LessonDetail {
+    private static func parseLessonHTML(_ html: String, entry: SearchEntry) -> LessonDetail {
         let diagramSVG = extractDiagramSVG(html)
         let quizIntro = extractQuizIntro(html)
         let cleaned = stripSVGAndScriptBlocks(html)
@@ -1526,7 +1732,7 @@ final class ContentService: ObservableObject {
         )
     }
 
-    private func chapterTitle(for entry: SearchEntry) -> String {
+    private static func chapterTitle(for entry: SearchEntry) -> String {
         // The chapter name parsed from the single-line catalogue
         // text (`<lesson title> <chapter name> Part N: <domain> <body>`).
         // Falls back to the book chapter label, never to the app
@@ -1537,7 +1743,7 @@ final class ContentService: ObservableObject {
         return "Chapter"
     }
 
-    private func defaultTakeaways(for entry: SearchEntry) -> [String] {
+    private static func defaultTakeaways(for entry: SearchEntry) -> [String] {
         [entry.title, "Listen to the full narration for the worked example.", "Try the quiz below to check your understanding."]
     }
 
@@ -1640,7 +1846,7 @@ final class ContentService: ObservableObject {
     /// window.__PA_STUDIO_QUEUE.push([...]) and decode it. The scan
     /// respects JSON strings and escapes, so braces inside quoted text
     /// cannot end the object early.
-    private func extractStudioJSON(_ html: String) -> StudioPayload? {
+    private static func extractStudioJSON(_ html: String) -> StudioPayload? {
         guard let marker = html.range(of: "window.__PA_STUDIO_QUEUE.push([\"studio-") else { return nil }
         guard let braceIndex = html[marker.upperBound...].firstIndex(of: "{") else { return nil }
         var depth = 0
@@ -1677,7 +1883,7 @@ final class ContentService: ObservableObject {
     /// The lesson diagram SVG from the studio-canvas div. The mobile flow
     /// fits phone widths better, so it is preferred; the desktop flow is
     /// the fallback. Returns the whole <svg>...</svg> string.
-    private func extractDiagramSVG(_ html: String) -> String? {
+    private static func extractDiagramSVG(_ html: String) -> String? {
         guard let canvasStart = html.range(of: "<div class=\"studio-canvas\"") else { return nil }
         for flowClass in ["flow-mobile", "flow-desktop"] {
             let marker = "<svg class=\"\(flowClass)\""
@@ -1690,7 +1896,7 @@ final class ContentService: ObservableObject {
 
     /// The quiz intro line from the page, for example "Answer all 3
     /// questions to see your score. ...". Empty when the page has none.
-    private func extractQuizIntro(_ html: String) -> String {
+    private static func extractQuizIntro(_ html: String) -> String {
         guard let pStart = html.range(of: "<p class=\"studio-note\" id=\"pf-quiz-score-"),
               let tagEnd = html.range(of: ">", range: pStart.upperBound..<html.endIndex),
               let pEnd = html.range(of: "</p>", range: tagEnd.upperBound..<html.endIndex) else { return "" }
@@ -1700,7 +1906,7 @@ final class ContentService: ObservableObject {
     /// Build real quiz questions from the studio JSON quiz items. Items
     /// with no question, no options, or no resolvable correct option are
     /// skipped instead of inventing True/False options.
-    private func quizQuestions(from items: [StudioQuizItem]?, lessonID: String) -> [QuizQuestion] {
+    private static func quizQuestions(from items: [StudioQuizItem]?, lessonID: String) -> [QuizQuestion] {
         guard let items = items else { return [] }
         var questions: [QuizQuestion] = []
         for (index, item) in items.enumerated() {
@@ -1731,7 +1937,7 @@ final class ContentService: ObservableObject {
     /// runs BEFORE any HTML text extraction, so SVG attribute text and
     /// script source can never leak into lesson text, lists or the
     /// transcript.
-    private func stripSVGAndScriptBlocks(_ html: String) -> String {
+    private static func stripSVGAndScriptBlocks(_ html: String) -> String {
         var result = html
         for pattern in ["<script\\b[^>]*>.*?</script>", "<svg\\b[^>]*>.*?</svg>"] {
             guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) else { continue }
@@ -1741,7 +1947,7 @@ final class ContentService: ObservableObject {
         return result
     }
 
-    private func stripTags(_ html: String) -> String {
+    private static func stripTags(_ html: String) -> String {
         var result = ""
         var inTag = false
         for ch in html {
@@ -1762,7 +1968,7 @@ final class ContentService: ObservableObject {
     /// The static "Full lesson text" transcript div, used only when the
     /// studio JSON blob is missing. Paragraphs are kept apart with blank
     /// lines so the text reads as paragraphs, not one run-on block.
-    private func extractTranscriptFromHTML(_ html: String) -> String? {
+    private static func extractTranscriptFromHTML(_ html: String) -> String? {
         guard let divStart = html.range(of: "<div id=\"studio-transcript-full-"),
               let tagEnd = html.range(of: ">", range: divStart.upperBound..<html.endIndex),
               let divEnd = html.range(of: "</div>", range: tagEnd.upperBound..<html.endIndex) else { return nil }
@@ -1773,7 +1979,7 @@ final class ContentService: ObservableObject {
         return cleaned.isEmpty ? nil : cleaned
     }
 
-    private func extractListItems(_ html: String, sectionMarker: String) -> [String] {
+    private static func extractListItems(_ html: String, sectionMarker: String) -> [String] {
         // Anchor on the real <h2> heading. The page <style> block holds a
         // CSS comment that mentions "Do this at work", so bare text would
         // match the stylesheet instead of the section.
@@ -1817,7 +2023,7 @@ final class ContentService: ObservableObject {
         return items
     }
 
-    private func extractNextLessonID(_ html: String, currentID: String) -> String? {
+    private static func extractNextLessonID(_ html: String, currentID: String) -> String? {
         // Next lesson links use the lessons/<id> path.
         let pattern = "lessons/(ch\\d+s\\d+)"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
