@@ -25,28 +25,29 @@ struct SearchEntry: Codable, Identifiable, Hashable {
     /// The agenda for this entry ("why take it"), when the website
     /// exposes one. Optional: entries without it show no agenda
     /// block, never a placeholder. Defaults to nil so existing
-    /// memberwise construction in tests keeps compiling.
-    let agenda: String? = nil
+    /// construction in tests keeps compiling through the explicit
+    /// init below, whose parameters carry the same defaults.
+    let agenda: String?
     /// The thumbnail path for this entry, relative to the site
     /// root (for example "assets/thumbs/ch1s1.svg"), when the
     /// website exposes one. Optional: entries without it show the
     /// standard icon tile, never a broken image. Resolve with
     /// PFThumbnailURL, which prepends the site base URL.
-    let thumbnail: String? = nil
+    let thumbnail: String?
     /// Keywords for this entry, from the compact index. Empty for
     /// full-index entries and for types the compact index keeps
     /// whole (guides, labs, tests, FAQs).
-    let tags: [String] = []
+    let tags: [String]
     /// A short excerpt of the entry text, from the compact index,
     /// for entries that carry no full text. Nil otherwise.
-    let excerpt: String? = nil
+    let excerpt: String?
     /// The chapter name, from the compact index, for lessons that
     /// carry it. Nil otherwise: the name is then parsed from the
     /// text, as before.
-    let chapter: String? = nil
+    let chapter: String?
     /// The domain label, from the compact index, for lessons that
     /// carry it. Nil otherwise.
-    let domain: String? = nil
+    let domain: String?
 
     /// Explicit init: the memberwise form takes only the five
     /// properties without defaults on this toolchain, so the
