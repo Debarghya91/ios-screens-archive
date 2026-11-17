@@ -732,11 +732,27 @@ struct LessonView: View {
         .toolbarBackground(Color.pfBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .background(
-            NavigationLink(
-                destination: LessonView(entry: pendingNavEntry ?? entry),
-                isActive: $isNavLinkActive
-            ) { EmptyView() }
-            .hidden()
+            // The prev/next link exists only while a navigation is
+            // actually requested. An always-present link to this
+            // same view makes every LessonView build a nested
+            // LessonView at graph-build time, which recurses and
+            // kills the process before the first frame: gate runs
+            // 44078305813 and 44089979766 both died within a
+            // second of any lesson tap, on the chapter-row path
+            // and the introduction-card path alike, with no crash
+            // report. navigateToLesson sets the pending entry
+            // before it flips the link active, so the link appears
+            // with the right destination already in place, and the
+            // pushed lesson starts with its own link inactive.
+            Group {
+                if isNavLinkActive {
+                    NavigationLink(
+                        destination: LessonView(entry: pendingNavEntry ?? entry),
+                        isActive: $isNavLinkActive
+                    ) { EmptyView() }
+                    .hidden()
+                }
+            }
         )
         .sheet(isPresented: $showCheckout) {
             CheckoutView()

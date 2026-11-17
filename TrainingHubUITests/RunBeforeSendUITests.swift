@@ -157,17 +157,29 @@ private extension XCUIApplication {
             staticTexts[RunBeforeSendFixture.browseFullCourseHeading].waitForExistence(timeout: 10),
             "The Courses tab must show its 'Browse the full course' section."
         )
-        let segment = segmentedControls[RunBeforeSendFixture.browseSectionPickerLabel]
-            .buttons[RunBeforeSendFixture.catalogueLabel]
-        if segment.waitForExistence(timeout: 5) {
-            segment.tap()
-        } else {
-            let plainSegment = buttons[RunBeforeSendFixture.catalogueLabel]
-            XCTAssertTrue(
-                plainSegment.waitForExistence(timeout: 5),
-                "The Catalogue picker segment must exist."
-            )
-            plainSegment.tap()
+        // Tap the Catalogue segment. The tap can land while the
+        // tab switch is still settling (scroll and alert
+        // animations), dropping the selection without failing:
+        // gate run 44089979766 tapped it and the picker stayed
+        // on Courses. If the heading does not appear, re-tap
+        // once with a fresh query before failing.
+        func tapCatalogueSegment() {
+            let segment = segmentedControls[RunBeforeSendFixture.browseSectionPickerLabel]
+                .buttons[RunBeforeSendFixture.catalogueLabel]
+            if segment.waitForExistence(timeout: 5) {
+                segment.tap()
+            } else {
+                let plainSegment = buttons[RunBeforeSendFixture.catalogueLabel]
+                XCTAssertTrue(
+                    plainSegment.waitForExistence(timeout: 5),
+                    "The Catalogue picker segment must exist."
+                )
+                plainSegment.tap()
+            }
+        }
+        tapCatalogueSegment()
+        if !staticTexts[RunBeforeSendFixture.catalogueLabel].waitForExistence(timeout: 5) {
+            tapCatalogueSegment()
         }
         XCTAssertTrue(
             staticTexts[RunBeforeSendFixture.catalogueLabel].waitForExistence(timeout: 10),

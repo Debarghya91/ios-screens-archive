@@ -518,7 +518,7 @@ struct MainTabView: View {
                 .toolbarBackground(Color.pfCard, for: .tabBar)
                 .toolbarBackground(.visible, for: .tabBar)
             }
-            .sheet(item: $presentedSheet) { destination in
+            .sheet(item: $presentedSheet, onDismiss: { maybeShowNotificationPermissionPrompt() }) { destination in
                 switch destination {
                 case .myPurchases:
                     CheckoutView()
@@ -608,7 +608,7 @@ struct MainTabView: View {
         .coordinateSpace(name: TourCoordinateSpace.name)
         // Deep-link lesson sheet: a lesson link opens here, in its
         // own NavigationStack with a Done button, over any tab.
-        .sheet(item: $deepLinkLessonEntry) { entry in
+        .sheet(item: $deepLinkLessonEntry, onDismiss: { maybeShowNotificationPermissionPrompt() }) { entry in
             NavigationStack {
                 LessonView(entry: entry)
                     .toolbar {
@@ -624,7 +624,7 @@ struct MainTabView: View {
         // tab, the same presentation a deep-link lesson gets. No
         // push transition is involved, so a tap can never strand
         // the learner on a list.
-        .sheet(item: lessonSheetBinding) { entry in
+        .sheet(item: lessonSheetBinding, onDismiss: { maybeShowNotificationPermissionPrompt() }) { entry in
             NavigationStack {
                 LessonView(entry: entry)
                     .toolbar {
@@ -638,7 +638,7 @@ struct MainTabView: View {
         // Free-case sheet: the introduction's free-case card
         // opens here once the introduction is gone, same
         // presentation as the lesson sheet.
-        .sheet(item: lessonCaseSheetBinding) { situation in
+        .sheet(item: lessonCaseSheetBinding, onDismiss: { maybeShowNotificationPermissionPrompt() }) { situation in
             NavigationStack {
                 SituationDetailLoaderView(situation: situation)
                     .toolbar {
@@ -715,38 +715,37 @@ struct MainTabView: View {
         // dismisses. The set side is intentionally empty: nothing
         // else may dismiss onboarding, and the flow always offers
         // Skip, so the tabs are never blocked behind it.
-        .fullScreenCover(isPresented: Binding(
-            get: { !onboardingStore.hasCompletedOnboarding && !showSplash },
-            set: { _ in }
-        )) {
+        .fullScreenCover(
+            isPresented: Binding(
+                get: { !onboardingStore.hasCompletedOnboarding && !showSplash },
+                set: { _ in }
+            ),
+            onDismiss: {
+                // The cover is actually gone: this is the moment
+                // a deep link that arrived during onboarding
+                // routes, and an introduction card's requested
+                // content opens through the lesson sheet. The
+                // previous 0.6s sleep in the flag's onChange
+                // guessed at the dismissal and still presented
+                // into an unsettled hierarchy: gate run
+                // 44089979766 lost the app right after the
+                // first-lesson card tap, with the reminders
+                // alert up and no sheet. onDismiss is the
+                // dismissal itself, not a guess at it. Opening
+                // nothing when nothing is pending keeps this a
+                // no-op for plain Skip taps.
+                resolvePendingDeepLink()
+                lessonSheetRouter.openPendingAfterIntroduction()
+            }
+        ) {
             OnboardingFlowView(onFinish: {})
         }
-        // A deep link that arrived during onboarding routes once
-        // the cover is gone, and onboarding completing arms the
-        // permission check.
+        // Onboarding completing arms the permission check. The
+        // check itself waits while a sheet is pending or up (see
+        // maybeShowNotificationPermissionPrompt), so the
+        // explanation never stacks over a lesson the
+        // introduction just opened.
         .onChange(of: onboardingStore.hasCompletedOnboarding) { _, _ in
-            // A deep link that arrived during onboarding routes
-            // now that the cover is gone.
-            resolvePendingDeepLink()
-            // An introduction card tap requested its content
-            // while the cover was up: open it through the lesson
-            // sheet only after the cover dismissal has finished.
-            // Presenting the sheet in the same transaction as
-            // the cover dismiss wedges the presentation
-            // hierarchy and kills the app: gate run 44078305813
-            // lost connection about 1s after the first-lesson
-            // card tap, with no crash report, while the runs
-            // with no pending sheet survived. The cover animation
-            // is about 0.4s; 0.6s leaves the hierarchy settled
-            // before the sheet presents. Opening nothing when
-            // nothing is pending keeps this a no-op for plain
-            // Skip taps.
-            let router = lessonSheetRouter
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 600_000_000)
-                router.openPendingAfterIntroduction()
-            }
-            // Onboarding completing arms the permission check.
             maybeShowNotificationPermissionPrompt()
         }
         .task {
@@ -876,8 +875,14 @@ struct MainTabView: View {
     /// pf.onboarding.completed.v1, read through
     /// OnboardingStore.hasCompletedOnboarding), the splash
     /// gone, the learner not yet asked (install-level flag
-    /// pf.notifications.permissionAsked.v1), and the system
-    /// decision still not determined. Both answers in the
+    /// pf.notifications.permissionAsked.v1), the system
+    /// decision still not determined, and no sheet pending or
+    /// up: presenting the alert while a sheet presents (or the
+    /// reverse) wedges the presentation hierarchy, which is how
+    /// gate run 44089979766 lost the app after the
+    /// first-lesson card tap. A deferred check is not lost:
+    /// every sheet re-checks on dismiss, so the explanation
+    /// shows as soon as the sheet closes. Both answers in the
     /// alert record the asked flag, so the explanation can
     /// never nag.
     private func maybeShowNotificationPermissionPrompt() {
@@ -885,7 +890,13 @@ struct MainTabView: View {
               !showSplash,
               !showNotificationPermissionPrompt,
               !notificationService.hasAskedPermission,
-              notificationService.authorizationStatus == .notDetermined
+              notificationService.authorizationStatus == .notDetermined,
+              lessonSheetRouter.pendingEntry == nil,
+              lessonSheetRouter.pendingCase == nil,
+              lessonSheetRouter.presentedEntry == nil,
+              lessonSheetRouter.presentedCase == nil,
+              deepLinkLessonEntry == nil,
+              presentedSheet == nil
         else { return }
         showNotificationPermissionPrompt = true
     }
