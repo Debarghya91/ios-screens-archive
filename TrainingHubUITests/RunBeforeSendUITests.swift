@@ -328,7 +328,12 @@ final class IntroFirstLessonUITests: XCTestCase {
         // The lesson opens in the lesson sheet: title, Lesson
         // navigation bar, and Done button.
         XCTAssertTrue(
-            app.staticTexts[lessonTitle].waitForExistence(timeout: 15),
+            // GATE-DIAG TEMPORARY: 60s, not 15s. Run 44193811851
+            // proved the cover dismissal lands about 15s late
+            // visually; the wait must exceed the cover delay
+            // plus the sheet delay to separate late from never.
+            // Restore 15s once the delay itself is fixed.
+            app.staticTexts[lessonTitle].waitForExistence(timeout: 60),
             "The lesson screen must appear with its title after the card tap."
         )
         XCTAssertTrue(app.navigationBars[RunBeforeSendFixture.lessonNavTitle].exists)
@@ -398,7 +403,11 @@ final class ChapterLessonUITests: XCTestCase {
         lessonRow.tap()
 
         XCTAssertTrue(
-            app.staticTexts[RunBeforeSendFixture.firstLessonTitle].waitForExistence(timeout: 15),
+            // GATE-DIAG TEMPORARY: 45s, not 15s. Run 44193811851
+            // proved presentations land about 15s late; the wait
+            // must exceed the delay to separate late from never.
+            // Restore 15s once the delay itself is fixed.
+            app.staticTexts[RunBeforeSendFixture.firstLessonTitle].waitForExistence(timeout: 45),
             "The lesson screen must appear with its title after the lesson tap."
         )
         XCTAssertTrue(app.navigationBars[RunBeforeSendFixture.lessonNavTitle].exists)

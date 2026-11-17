@@ -85,16 +85,27 @@ enum GateDiag {
         }
     }
 
-    /// Budget for _printChanges output: the first 30 calls per
-    /// view print, then silence. The re-evaluation loop would
-    /// otherwise flood the log with identical dependency
-    /// reports. The first reports name the trigger.
-    static func printChangesBudget(_ name: String) -> Bool {
+    /// Sample _printChanges output: every 100th body evaluation
+    /// per view, up to 20 samples. The first-30 budget was
+    /// consumed by launch evaluations before the loop started;
+    /// sampling across the run catches the loop's trigger.
+    /// Call after count(_:) so counts[name] is this evaluation.
+    static func printChangesSample(_ name: String) -> Bool {
         lock.lock()
-        let next = (counts["printChanges-\(name)"] ?? 0) + 1
-        counts["printChanges-\(name)"] = next
-        lock.unlock()
-        return next <= 30
+        defer { lock.unlock() }
+        let n = counts[name] ?? 0
+        guard n > 0, n % 100 == 0 else { return false }
+        let key = "printSamples-\(name)"
+        let taken = counts[key] ?? 0
+        guard taken < 20 else { return false }
+        counts[key] = taken + 1
+        return true
+    }
+
+    /// Main-actor heartbeat: one log line per tick. Gaps in the
+    /// heartbeat timestamps mark main-thread stalls precisely.
+    static func heartbeat(_ tick: Int) {
+        log.info("Heartbeat #\(tick, privacy: .public)")
     }
 
     private static var tapsInstalled = false

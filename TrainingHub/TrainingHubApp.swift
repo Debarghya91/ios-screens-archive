@@ -637,28 +637,36 @@ struct MainTabView: View {
         let windows = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .flatMap { $0.windows }
-        guard let window = windows.first(where: { $0.isKeyWindow }) ?? windows.first else {
+        guard !windows.isEmpty else {
             CrashBreadcrumbs.record("PROBE \(tag): no window")
             return
         }
-        var parts: [String] = ["root=\(window.rootViewController.map { String(describing: type(of: $0)) } ?? "nil")"]
-        var current = window.rootViewController?.presentedViewController
-        var depth = 0
-        while let presented = current, depth < 5 {
-            parts.append("presented=\(String(describing: type(of: presented))) dismissing=\(presented.isBeingDismissed) presenting=\(presented.isBeingPresented) coordinator=\(presented.transitionCoordinator != nil) hasWindow=\(presented.viewIfLoaded?.window != nil)")
-            current = presented.presentedViewController
-            depth += 1
+        // One short line per window: breadcrumb entries are
+        // capped, and a combined line truncates the tail.
+        for (index, window) in windows.enumerated() {
+            let short: (UIViewController) -> String = { vc in
+                String(String(describing: type(of: vc)).split(separator: "<").first ?? "?")
+            }
+            var parts = "root=\(window.rootViewController.map(short) ?? "nil")"
+            var current = window.rootViewController?.presentedViewController
+            var depth = 0
+            while let presented = current, depth < 3 {
+                parts += " | p=\(short(presented)) dis=\(presented.isBeingDismissed ? 1 : 0) pres=\(presented.isBeingPresented ? 1 : 0) coord=\(presented.transitionCoordinator != nil ? 1 : 0)"
+                current = presented.presentedViewController
+                depth += 1
+            }
+            CrashBreadcrumbs.record("PROBE \(tag) w\(index) key=\(window.isKeyWindow ? 1 : 0) L=\(window.windowLevel.rawValue) \(parts)")
         }
-        CrashBreadcrumbs.record("PROBE \(tag): " + parts.joined(separator: " | "))
     }
 
-    /// GATE-DIAG TEMPORARY (Test B isolation): the cover's
-    /// dismissal runs ONLY the UIKit probe, at fire time and at
-    /// +100ms, +1s and +5s. No arbitration, no pending open, no
-    /// notification check: the experiment is whether the cover
-    /// dismisses cleanly with nothing else requested. Restore
-    /// presentationDidDismiss here once the lifecycle failure
-    /// is proven and fixed.
+    /// GATE-DIAG TEMPORARY (Test C): the cover's dismissal runs
+    /// the UIKit probe sequence AND the restored arbitration.
+    /// Test B (run 44193811851) proved the cover dismisses with
+    /// a clean UIKit hierarchy, about 15 seconds late visually.
+    /// Test C asks whether the pending presentation survives
+    /// that delayed dismissal: the probe runs alongside the
+    /// arbitration, so a collision and a delay stay
+    /// distinguishable.
     private func coverDidDismiss() {
         CrashBreadcrumbs.record("cover onDismiss fired")
         probePresentationHierarchy(tag: "cover-onDismiss")
@@ -670,11 +678,12 @@ struct MainTabView: View {
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             probePresentationHierarchy(tag: "cover+5s")
         }
+        presentationDidDismiss()
     }
 
     var body: some View {
         GateDiag.count("MainTabView") // GATE-DIAG TEMPORARY
-        if GateDiag.printChangesBudget("MainTabView") { let _ = Self._printChanges() } // GATE-DIAG TEMPORARY
+        if GateDiag.printChangesSample("MainTabView") { let _ = Self._printChanges() } // GATE-DIAG TEMPORARY
         return ZStack {
             // Invisible tab bar frame reader: measures the real
             // tab bar geometry in window coordinates for the
@@ -1011,6 +1020,23 @@ struct MainTabView: View {
                 showOnboarding = true
             }
         }
+        .onChange(of: lessonSheetRouter.presentedEntry) { _, entry in
+            // GATE-DIAG TEMPORARY: probe the UIKit hierarchy
+            // when a lesson sheet is requested, and after it,
+            // to learn whether the sheet's view controller
+            // exists (late render) or never materialises
+            // (dropped presentation).
+            guard entry != nil else { return }
+            probePresentationHierarchy(tag: "sheet-requested")
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                probePresentationHierarchy(tag: "sheet+1s")
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                probePresentationHierarchy(tag: "sheet+5s")
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                probePresentationHierarchy(tag: "sheet+15s")
+            }
+        }
         .task {
             // GATE-DIAG TEMPORARY: count every objectWillChange fire
             // from each observed object, to catch @Published streams
@@ -1025,6 +1051,17 @@ struct MainTabView: View {
                 ("NotificationService", notificationService.objectWillChange),
                 ("BookmarkStore", PFBookmarkStore.shared.objectWillChange),
             ])
+        }
+        .task {
+            // GATE-DIAG TEMPORARY: main-actor heartbeat, one
+            // line every 2 seconds. Gaps in the heartbeat
+            // timestamps mark main-thread stalls precisely.
+            var tick = 0
+            while !Task.isCancelled {
+                tick += 1
+                GateDiag.heartbeat(tick)
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
         }
         .task {
             // Keep the splash fast: about 1.2 seconds, then fade out.

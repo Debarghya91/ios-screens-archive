@@ -709,7 +709,7 @@ struct SituationsView: View {
 
     var body: some View {
         GateDiag.count("SituationsView") // GATE-DIAG TEMPORARY
-        if GateDiag.printChangesBudget("SituationsView") { let _ = Self._printChanges() } // GATE-DIAG TEMPORARY
+        if GateDiag.printChangesSample("SituationsView") { let _ = Self._printChanges() } // GATE-DIAG TEMPORARY
         return NavigationStack {
             ZStack(alignment: .leading) {
                 ScrollViewReader { proxy in
