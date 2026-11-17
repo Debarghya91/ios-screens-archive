@@ -94,14 +94,17 @@ jobs:
             if [ "$CLASS" = "InvestigationTimelineUITests" ]; then
               SAMPLER_N=1
               (
+                set +e
+                echo "$(date -u +%H:%M:%S) sampler started, waiting 45s for the build" >> samples/sampler.log
                 sleep 45
                 while true; do
-                  PID="$(pgrep -f "TrainingHub.app" | head -n 1)"
+                  PID="$(pgrep -f "TrainingHub.app" | head -n 1)" || true
+                  echo "$(date -u +%H:%M:%S) sampler tick: PID=${PID:-none}" >> samples/sampler.log
                   if [ -n "$PID" ]; then
-                    sample "$PID" 5 -file "samples/timeline-sample-$SAMPLER_N.txt" || true
+                    sample "$PID" 5 -file "samples/timeline-sample-$SAMPLER_N.txt" >> samples/sampler.log 2>&1 || echo "sample $SAMPLER_N failed for PID $PID" >> samples/sampler.log
                     SAMPLER_N=$((SAMPLER_N + 1))
                   fi
-                sleep 20
+                  sleep 20
                 done
               ) &
               SAMPLER_PID=$!
@@ -123,6 +126,7 @@ jobs:
             if [ -n "${SAMPLER_PID:-}" ]; then
               kill "$SAMPLER_PID" 2>/dev/null || true
               SAMPLER_PID=""
+              echo "Sampler output:"; ls -la samples/ || true
             fi
           done
           exit $FAILED
