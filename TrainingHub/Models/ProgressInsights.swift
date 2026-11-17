@@ -568,15 +568,15 @@ enum ProgressInsights {
                     dimensionLessons.append(lesson)
                 }
             }
-            let fractions = dimensionLessons.flatMap { fractions(for: history[$0.id] ?? []) }
+            let quizFractions = dimensionLessons.flatMap { fractions(for: history[$0.id] ?? []) }
             let attempts = dimensionLessons.reduce(0) { $0 + (history[$1.id]?.count ?? 0) }
             return ProgressDimensionInsight(
                 dimension: dimension,
                 competencyScorePercent: competencyScores[dimension],
-                quizAverageFraction: fractions.isEmpty ? nil : fractions.reduce(0, +) / Double(fractions.count),
+                quizAverageFraction: quizFractions.isEmpty ? nil : quizFractions.reduce(0, +) / Double(quizFractions.count),
                 quizAttemptCount: attempts,
-                quizAttemptsWithTotal: fractions.count,
-                quizAttemptsWithoutTotal: attempts - fractions.count,
+                quizAttemptsWithTotal: quizFractions.count,
+                quizAttemptsWithoutTotal: attempts - quizFractions.count,
                 demonstratedLessonCount: dimensionLessons.filter { evidence[$0.id]?.isDemonstrated == true }.count,
                 lessonsCompleted: dimensionLessons.filter { completedLessonIDs.contains($0.id) }.count,
                 lessonsTotal: dimensionLessons.count

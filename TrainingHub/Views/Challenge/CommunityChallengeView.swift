@@ -361,6 +361,21 @@ private struct CommunityChallengePlayView: View {
     /// scroll the new step to the top: the scroll rule.
     let onStepChange: () -> Void = {}
 
+    /// Explicit init: the memberwise form did not accept the
+    /// onStepChange argument on the cloud build, so the four
+    /// inputs are spelled out. Behaviour is unchanged.
+    init(
+        weekKey: String,
+        exceptionCase: ExceptionCase,
+        store: CommunityChallengeStore,
+        onStepChange: @escaping () -> Void = {}
+    ) {
+        self.weekKey = weekKey
+        self.exceptionCase = exceptionCase
+        self._store = ObservedObject(wrappedValue: store)
+        self.onStepChange = onStepChange
+    }
+
     @State private var stepIndex = 0
     @State private var triedOptionIndices: Set<Int> = []
     @State private var lastTriedIndex: Int? = nil
