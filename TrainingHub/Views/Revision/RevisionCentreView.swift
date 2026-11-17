@@ -16,9 +16,7 @@ struct RevisionCentreView: View {
     @State private var reviewingConcept: RevisionService.RevisionConcept? = nil
     @State private var showAddLesson = false
     @State private var selectedTab = 0
-    @State private var visibleCount: Int = 20
-
-    private static let pageSize = 20
+    @State private var currentPage = 1
 
     private static let dueDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -34,8 +32,16 @@ struct RevisionCentreView: View {
         return "Next due \(dueDateFormatter.string(from: concept.nextDue))"
     }
 
+    private var totalConceptPages: Int {
+        PFPagination.totalPages(totalCount: revisionService.allConcepts.count)
+    }
+
+    private var effectiveConceptPage: Int {
+        PFPagination.clampedPage(currentPage, totalPages: totalConceptPages)
+    }
+
     private var visibleAllConcepts: [RevisionService.RevisionConcept] {
-        Array(revisionService.allConcepts.prefix(visibleCount))
+        PFPagination.slice(revisionService.allConcepts, page: currentPage)
     }
 
     var body: some View {
@@ -60,7 +66,7 @@ struct RevisionCentreView: View {
             .padding(PFSpacing.lg)
             .id("revisionTop")
         }
-        .pfScrollToTopOnAppear("revisionTop", resetWhen: selectedTab)
+        .pfScrollToTopOnAppear("revisionTop", resetWhen: (selectedTab, currentPage))
         // Copy protection: revision content cannot be selected, a
         // faint identity watermark sits over it, and recording blurs
         // it out. The review and add-lesson sheets sit outside this
@@ -77,7 +83,7 @@ struct RevisionCentreView: View {
             AddLessonSheet()
         }
         .onChange(of: selectedTab) { _, _ in
-            visibleCount = Self.pageSize
+            currentPage = 1
         }
     }
 
@@ -153,13 +159,14 @@ struct RevisionCentreView: View {
                         reviewingConcept = concept
                     }
                 }
-                if revisionService.allConcepts.count > visibleAllConcepts.count {
-                    Text("Showing \(visibleAllConcepts.count) of \(revisionService.allConcepts.count) concepts")
+                if totalConceptPages > 1 {
+                    let bounds = PFPagination.rangeBounds(page: effectiveConceptPage, totalCount: revisionService.allConcepts.count)
+                    Text("Showing \(bounds.first)-\(bounds.last) of \(revisionService.allConcepts.count) concepts")
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    PFSecondaryButton(title: "Load more concepts") {
-                        visibleCount += Self.pageSize
+                    PFPaginationBar(currentPage: effectiveConceptPage, totalPages: totalConceptPages) { page in
+                        currentPage = page
                     }
                 }
             }
@@ -326,9 +333,7 @@ private struct AddLessonSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var revisionService = RevisionService.shared
 
-    @State private var visibleCount: Int = 20
-
-    private static let pageSize = 20
+    @State private var currentPage = 1
 
     private var completedLessons: [SearchEntry] {
         contentService.allLessons.filter { progressStore.isLessonComplete($0.id) }
@@ -338,8 +343,16 @@ private struct AddLessonSheet: View {
         completedLessons.filter { !revisionService.isScheduled(lessonID: $0.id) }
     }
 
+    private var totalUnscheduledPages: Int {
+        PFPagination.totalPages(totalCount: unscheduled.count)
+    }
+
+    private var effectiveUnscheduledPage: Int {
+        PFPagination.clampedPage(currentPage, totalPages: totalUnscheduledPages)
+    }
+
     private var visibleUnscheduled: [SearchEntry] {
-        Array(unscheduled.prefix(visibleCount))
+        PFPagination.slice(unscheduled, page: currentPage)
     }
 
     var body: some View {
@@ -378,19 +391,22 @@ private struct AddLessonSheet: View {
                             }
                             .buttonStyle(.plain)
                         }
-                        if unscheduled.count > visibleUnscheduled.count {
-                            Text("Showing \(visibleUnscheduled.count) of \(unscheduled.count) lessons")
+                        if totalUnscheduledPages > 1 {
+                            let bounds = PFPagination.rangeBounds(page: effectiveUnscheduledPage, totalCount: unscheduled.count)
+                            Text("Showing \(bounds.first)-\(bounds.last) of \(unscheduled.count) lessons")
                                 .font(.pfCaption)
                                 .foregroundColor(.pfSecondaryText)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            PFSecondaryButton(title: "Load more lessons") {
-                                visibleCount += Self.pageSize
+                            PFPaginationBar(currentPage: effectiveUnscheduledPage, totalPages: totalUnscheduledPages) { page in
+                                currentPage = page
                             }
                         }
                     }
                 }
                 .padding(PFSpacing.lg)
+                .id("addLessonTop")
             }
+            .pfScrollToTopOnAppear("addLessonTop", resetWhen: currentPage)
             .background(Color.pfBackground)
             .navigationTitle("Add a lesson")
             .navigationBarTitleDisplayMode(.inline)

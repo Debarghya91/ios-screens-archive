@@ -1,8 +1,11 @@
 // AssessmentView.swift
 // Payments Training Hub iOS - Short assessments drawn from real lesson quizzes.
 // Each assessment is 5 questions taken from the real quiz questions of
-// lessons in the dimension's chapters (or the path's chapters). The
-// explanation shown is the real quiz explanation when the lesson page
+// lessons in the dimension's chapters (or the path's chapters). Only
+// readable lessons supply questions: free samples and unlocked
+// chapters. A locked lesson's quiz is never fetched, so an assessment
+// over locked chapters asks only what the learner may already read.
+// The explanation shown is the real quiz explanation when the lesson page
 // supplies one, otherwise a note pointing to the lesson. The result is
 // recorded in CompetencyStore only; no score is shown that was not earned.
 // Two modes, both optional, are offered on the setup screen:
@@ -21,6 +24,7 @@ import SwiftUI
 
 struct AssessmentView: View {
     @EnvironmentObject private var contentService: ContentService
+    @EnvironmentObject private var storeManager: StoreManager
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var competencyStore = CompetencyStore.shared
     @StateObject private var session: AssessmentSession
@@ -58,6 +62,23 @@ struct AssessmentView: View {
     @State private var selectedOption: Int? = nil
     @State private var timedMode = false
     @State private var randomisedMode = true
+    @State private var showCheckout = false
+
+    /// True when every chapter this assessment draws on is
+    /// locked, so no readable lesson could supply a question.
+    /// Used only for the empty-state copy: the question filter
+    /// below is what enforces access.
+    private var isFullyLocked: Bool {
+        !chapterNumbers.isEmpty && chapterNumbers.allSatisfy { !storeManager.isChapterUnlocked("ch\($0)") }
+    }
+
+    /// True when this lesson's quiz may be shown: the lesson is
+    /// a free sample, or its chapter is unlocked (which also
+    /// covers admins, held-out chapters and Integrated owners).
+    private func isLessonReadable(_ entry: SearchEntry, chapterNumber: Int) -> Bool {
+        if PFChapterHelper.isFreeLesson(entry, in: contentService) { return true }
+        return storeManager.isChapterUnlocked("ch\(chapterNumber)")
+    }
 
     var body: some View {
         ScrollView {
@@ -87,11 +108,28 @@ struct AssessmentView: View {
                 } else if session.isFinished {
                     resultsView
                 } else if loadedQuestions.isEmpty {
-                    PFCard {
-                        Text("No quiz questions were found in these lessons yet. The lesson pages may still be loading, or these lessons have no quiz on the site.")
-                            .font(.pfBody)
-                            .foregroundColor(.pfSecondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
+                    if isFullyLocked {
+                        PFCard {
+                            VStack(alignment: .leading, spacing: PFSpacing.sm) {
+                                Label("Assessment locked", systemImage: "lock.fill")
+                                    .font(.pfCardTitle)
+                                    .foregroundColor(.pfNavy)
+                                Text("This assessment draws on chapters you have not unlocked yet. Unlock the course to take it.")
+                                    .font(.pfBody)
+                                    .foregroundColor(.pfSecondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                PFPrimaryButton(title: "See purchase options") {
+                                    showCheckout = true
+                                }
+                            }
+                        }
+                    } else {
+                        PFCard {
+                            Text("No quiz questions were found in these lessons yet. The lesson pages may still be loading, or these lessons have no quiz on the site.")
+                                .font(.pfBody)
+                                .foregroundColor(.pfSecondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 } else if !session.isStarted {
                     setupView
@@ -107,6 +145,9 @@ struct AssessmentView: View {
         .pfTabBarClearance()
         .navigationTitle("Assessment")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showCheckout) {
+            CheckoutView()
+        }
         .task {
             await loadQuestions()
         }
@@ -161,6 +202,10 @@ struct AssessmentView: View {
         outer: for number in chapterNumbers {
             for entry in PFChapterHelper.lessons(forChapter: number, in: contentService) {
                 if collected.count >= 5 || tried >= 12 { break outer }
+                // Only readable lessons supply questions: a locked
+                // lesson's quiz is locked content, so it is never
+                // fetched and never counts toward the tried cap.
+                guard isLessonReadable(entry, chapterNumber: number) else { continue }
                 tried += 1
                 guard let detail = try? await contentService.loadLessonDetail(entry: entry) else { continue }
                 for quiz in detail.quiz {

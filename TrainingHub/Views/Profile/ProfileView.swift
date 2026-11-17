@@ -817,7 +817,10 @@ private struct EditProfileSheet: View {
                         Text("Email")
                         Spacer()
                         Text(authService.currentUser?.email ?? "")
-                            .foregroundColor(.pfSecondaryText)
+                            // Adaptive grey: Form cells go dark in
+                            // dark mode, so the fixed slate would
+                            // be unreadable there.
+                            .foregroundColor(.secondary)
                     }
                     TextField("Designation", text: $designation)
                         .autocorrectionDisabled()
@@ -834,7 +837,10 @@ private struct EditProfileSheet: View {
                 if let saveMessage {
                     Section {
                         Text(saveMessage)
-                            .foregroundColor(.pfSuccess)
+                            // Adaptive green: Form cells go dark in
+                            // dark mode, where the fixed green
+                            // would fall below a readable contrast.
+                            .foregroundColor(.green)
                     }
                 }
             }

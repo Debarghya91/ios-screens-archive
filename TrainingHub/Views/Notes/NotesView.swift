@@ -16,16 +16,22 @@ struct NotesView: View {
 
     @State private var searchText = ""
     @State private var showComposer = false
-    @State private var visibleCount: Int = 20
-
-    private static let pageSize = 20
+    @State private var currentPage = 1
 
     private var filteredNotes: [NotesStore.Note] {
         notesStore.searchNotes(query: searchText)
     }
 
+    private var totalNotePages: Int {
+        PFPagination.totalPages(totalCount: filteredNotes.count)
+    }
+
+    private var effectiveNotePage: Int {
+        PFPagination.clampedPage(currentPage, totalPages: totalNotePages)
+    }
+
     private var visibleNotes: [NotesStore.Note] {
-        Array(filteredNotes.prefix(visibleCount))
+        PFPagination.slice(filteredNotes, page: currentPage)
     }
 
     var body: some View {
@@ -38,7 +44,7 @@ struct NotesView: View {
             .padding(PFSpacing.lg)
             .id("notesTop")
         }
-        .pfScrollToTopOnAppear("notesTop")
+        .pfScrollToTopOnAppear("notesTop", resetWhen: currentPage)
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle("My Notes")
@@ -57,7 +63,7 @@ struct NotesView: View {
             NoteComposerSheet()
         }
         .onChange(of: searchText) { _, _ in
-            visibleCount = Self.pageSize
+            currentPage = 1
         }
     }
 
@@ -124,13 +130,14 @@ struct NotesView: View {
                     }
                     .buttonStyle(PFCardButtonStyle())
                 }
-                if filteredNotes.count > visibleNotes.count {
-                    Text("Showing \(visibleNotes.count) of \(filteredNotes.count) notes")
+                if totalNotePages > 1 {
+                    let bounds = PFPagination.rangeBounds(page: effectiveNotePage, totalCount: filteredNotes.count)
+                    Text("Showing \(bounds.first)-\(bounds.last) of \(filteredNotes.count) notes")
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    PFSecondaryButton(title: "Load more notes") {
-                        visibleCount += Self.pageSize
+                    PFPaginationBar(currentPage: effectiveNotePage, totalPages: totalNotePages) { page in
+                        currentPage = page
                     }
                 }
             }
@@ -302,6 +309,7 @@ private struct NoteComposerSheet: View {
                                 }
                             }
                             .pickerStyle(.menu)
+                            .foregroundColor(.pfNavy)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(PFSpacing.sm)
                             .background(Color.pfCard)
@@ -318,6 +326,7 @@ private struct NoteComposerSheet: View {
                             .foregroundColor(.pfSecondaryText)
                         TextEditor(text: $noteText)
                             .font(.pfBody)
+                            .foregroundColor(.pfNavy)
                             .frame(minHeight: 140)
                             .padding(PFSpacing.sm)
                             .background(Color.pfCard)
@@ -331,6 +340,7 @@ private struct NoteComposerSheet: View {
                             .foregroundColor(.pfSecondaryText)
                         TextField("Paste a line from the lesson", text: $highlightedText)
                             .font(.pfBody)
+                            .foregroundColor(.pfNavy)
                             .padding(PFSpacing.sm)
                             .background(Color.pfCard)
                             .cornerRadius(PFSpacing.cornerRadius)

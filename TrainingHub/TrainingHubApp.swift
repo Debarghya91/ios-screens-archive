@@ -514,7 +514,7 @@ struct MainTabView: View {
                         }
                         .accessibilityLabel("My Progress")
                 }
-                .tint(.pfRoyal)
+                .tint(.pfTint)
                 .toolbarBackground(Color.pfCard, for: .tabBar)
                 .toolbarBackground(.visible, for: .tabBar)
             }

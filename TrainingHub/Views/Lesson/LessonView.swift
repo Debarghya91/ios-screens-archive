@@ -120,6 +120,9 @@ struct LessonView: View {
 
     /// Content / Transcript / Resources tab below the player.
     @State private var lessonTab = 0
+    /// True when the Content tab shows the full detailed
+    /// explanation instead of its first two paragraphs.
+    @State private var isExplanationExpanded = false
 
     @State private var detail: LessonDetail? = nil
     @State private var isLoadingDetail = true
@@ -526,13 +529,33 @@ struct LessonView: View {
         audioService.seek(to: beat.startTime)
     }
 
-    /// Detailed explanation: the first paragraphs of the transcript,
-    /// split into readable paragraphs so each reads as its own
-    /// block with breathing room, never one wall of text. The
-    /// splitting never changes any wording: it only breaks long
-    /// blocks at paragraph and sentence boundaries.
+    /// Detailed explanation: the first two paragraphs of the
+    /// transcript, or the full explanation when expanded, split
+    /// into readable paragraphs so each reads as its own block
+    /// with breathing room, never one wall of text. The splitting
+    /// never changes any wording: it only breaks long blocks at
+    /// paragraph and sentence boundaries.
     private var detailedExplanationParagraphs: [String] {
-        transcriptParagraphs.prefix(2).flatMap { splitIntoReadableParagraphs($0) }
+        let source = isExplanationExpanded ? expandedExplanationSource : Array(transcriptParagraphs.prefix(2))
+        return source.flatMap { splitIntoReadableParagraphs($0) }
+    }
+
+    /// The paragraphs the expanded explanation shows: every
+    /// transcript paragraph except the last when it serves as
+    /// the real-world example fallback, so the expanded text
+    /// never duplicates the example section below it.
+    private var expandedExplanationSource: [String] {
+        if realWorldExamples.isEmpty, transcriptParagraphs.count > 2 {
+            return Array(transcriptParagraphs.dropLast())
+        }
+        return transcriptParagraphs
+    }
+
+    /// True when the explanation has more to show than its
+    /// collapsed first two paragraphs: the expand button appears
+    /// only then, so it never promises content that is not there.
+    private var canExpandExplanation: Bool {
+        expandedExplanationSource.count > 2
     }
 
     /// Split a block of lesson text into readable paragraphs
@@ -1587,7 +1610,8 @@ struct LessonView: View {
     }
 
     /// Content tab: key takeaways, the detailed explanation (the
-    /// first paragraphs of the transcript), and the real-world example.
+    /// first two paragraphs of the transcript, expandable to the
+    /// full explanation), and the real-world example.
     private var contentTabSection: some View {
         VStack(alignment: .leading, spacing: PFSpacing.xl) {
             if !takeaways.isEmpty {
@@ -1613,6 +1637,13 @@ struct LessonView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if canExpandExplanation {
+                PFSecondaryButton(title: isExplanationExpanded ? "Show less" : "Show the full explanation") {
+                    withAnimation {
+                        isExplanationExpanded.toggle()
+                    }
+                }
             }
         }
     }

@@ -372,7 +372,59 @@ struct EntryRow: View {
 /// not the full item, so no truthful read time can be computed
 /// here, and a stamped label would mislead.
 struct EntryDetailView: View {
+    @EnvironmentObject private var contentService: ContentService
+    @EnvironmentObject private var storeManager: StoreManager
     let entry: SearchEntry
+
+    @State private var showCheckout = false
+
+    /// The entry's position among entries of its type, in catalogue
+    /// order. Nil when the entry is not in the loaded list (the
+    /// access rules fail closed for FAQ and lab then).
+    private var indexInType: Int? {
+        switch entry.type {
+        case .faq:
+            return contentService.allFAQs.firstIndex(of: entry)
+        case .lab:
+            return contentService.allLabs.firstIndex(of: entry)
+        case .lesson, .guide, .situation, .test:
+            return nil
+        }
+    }
+
+    /// Whether the entry's chapters are unlocked, for tests:
+    /// false when any chapter the test draws on is locked (see
+    /// EntryAccessRules.testChapters). True for every other type.
+    private var isChapterUnlocked: Bool {
+        guard entry.type == .test else { return true }
+        return !EntryAccessRules.isTestLocked(entry.id, isChapterUnlocked: { storeManager.isChapterUnlocked($0) })
+    }
+
+    /// True when this entry's full text must stay locked. Guides
+    /// stay open under the existing rule (their product home is
+    /// undecided); lessons and situations never reach this view.
+    private var isLocked: Bool {
+        EntryAccessRules.isLocked(
+            entry,
+            indexInType: indexInType,
+            isPracticeUnlocked: storeManager.isPracticeUnlocked,
+            isInterviewUnlocked: storeManager.isInterviewUnlocked,
+            isChapterUnlocked: isChapterUnlocked
+        )
+    }
+
+    /// The product that unlocks this entry, for the lock card.
+    private var unlockingProduct: CourseProduct? {
+        let chapterProductID: String?
+        if entry.type == .test {
+            chapterProductID = EntryAccessRules.testUnlockingProductID(entry.id)
+        } else {
+            chapterProductID = nil
+        }
+        guard let productID = EntryAccessRules.unlockingProductID(
+            for: entry, chapterUnlockingProductID: chapterProductID) else { return nil }
+        return ProductCatalogue.product(for: productID)
+    }
 
     var body: some View {
         ScrollView {
@@ -381,7 +433,11 @@ struct EntryDetailView: View {
                 Text(entry.title)
                     .font(.pfSectionTitle)
                     .foregroundColor(.pfNavy)
-                PFBodyText(text: entry.text)
+                if isLocked {
+                    lockCard
+                } else {
+                    PFBodyText(text: entry.text)
+                }
             }
             .padding(PFSpacing.lg)
         }
@@ -389,6 +445,48 @@ struct EntryDetailView: View {
         .pfTabBarClearance()
         .navigationTitle(entry.type.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showCheckout) {
+            CheckoutView()
+        }
+    }
+
+    /// The lock card shown in place of locked full text, mirroring
+    /// the search sheet: the title stays visible (discovery) and
+    /// the buy prompt opens the Purchases screen.
+    private var lockCard: some View {
+        VStack(alignment: .leading, spacing: PFSpacing.md) {
+            Label("\(entry.type.displayName) locked", systemImage: "lock.fill")
+                .font(.pfCaptionBold)
+                .foregroundColor(.pfNavy)
+            if let product = unlockingProduct {
+                Text(lockCopy(for: product))
+                    .font(.pfBody)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                PFPrimaryButton(title: "View \(product.name)") {
+                    showCheckout = true
+                }
+            }
+        }
+    }
+
+    private func lockCopy(for product: CourseProduct) -> String {
+        let pricePart = storeManager.isPriceAvailable(for: product.productID)
+            ? " for \(storeManager.priceText(for: product.productID))"
+            : ""
+        let integratedNote = product.productID == ProductCatalogue.integratedProductID
+            ? ""
+            : " The Integrated Course includes it too."
+        switch entry.type {
+        case .faq:
+            return "This FAQ answer is part of Interview Ready: \(ContentManifest.faqCount) FAQ answers and \(ContentManifest.interviewQuestionCount) interview questions\(pricePart), with 1 year of access.\(integratedNote)"
+        case .lab:
+            return "This lab is part of \(product.name)\(pricePart), with 1 year of access.\(integratedNote)"
+        case .test:
+            return "This test belongs to \(product.name)\(pricePart), with 1 year of access.\(integratedNote)"
+        case .lesson, .guide, .situation:
+            return ""
+        }
     }
 }
 

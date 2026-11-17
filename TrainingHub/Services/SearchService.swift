@@ -337,7 +337,10 @@ enum SearchService {
     /// and lessons in the learner's current chapter (the chapter of
     /// the last lesson they opened) rank higher. Completed items are
     /// not hidden and get no penalty: the row marks them Completed.
-    /// Capped at 60 hits. The fuzzy pass runs on title words first and
+    /// The caller chooses the hit limit (the search screen passes
+    /// the full catalogue size, so no match is hidden behind a
+    /// cap; the 60 default only applies to callers that omit it).
+    /// The fuzzy pass runs on title words first and
     /// only then on a bounded slice of body words, so 1660 entries
     /// stay fast. Each entry's lowercased strings and word lists are
     /// built once per search and shared by every needle (the query

@@ -245,9 +245,10 @@ struct SearchView: View {
     /// partial, synonym and symptom expansions resolve to the
     /// right cases, a 1-2 edit typo still finds the right lesson
     /// or Situation, free samples and the current chapter rank
-    /// higher, completed items are marked, never hidden; the 60-hit
-    /// cap lifts while a difficulty filter is active, so the filter
-    /// never empties a query's results). With no search text, every catalogue entry is the
+    /// higher, completed items are marked, never hidden; every
+    /// match is returned and the numbered pages show them twenty
+    /// at a time, so no match is ever hidden behind a hit cap).
+    /// With no search text, every catalogue entry is the
     /// base set and the difficulty filter alone applies.
     private var filteredResults: [SearchHit] {
         searchSnapshot.hits
@@ -301,11 +302,12 @@ struct SearchView: View {
         situationLevelsByID: [String: String],
         chapterPrefix: String?
     ) -> SearchResultsSnapshot {
-        // When the difficulty filter is active, the search runs
-        // uncapped: the old 60-hit cap ran before the filter, so
-        // a query plus a filter could return nothing even though
-        // matches existed beyond the first 60 hits. With no
-        // active filter the 60-hit cap stays, as before.
+        // The search runs uncapped: every match is returned and
+        // the numbered pages show them twenty at a time. The old
+        // 60-hit cap hid matches beyond the first 60 with no way
+        // to reach them, and it ran before the difficulty filter,
+        // so a query plus a filter could return nothing even
+        // though matches existed beyond the cap.
         let base: [SearchHit]
         if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             base = entries.map { SearchHit(entry: $0, score: 0, reason: "", matchedTerm: nil) }
@@ -315,7 +317,7 @@ struct SearchView: View {
                 query: query,
                 freeSampleIDs: Set(ContentService.freeSampleIDs),
                 currentChapterPrefix: chapterPrefix,
-                limit: SearchService.isLevelFilterActive(levels) ? entries.count : 60
+                limit: entries.count
             )
         }
         let filtered = SearchService.applyLevelFilter(
@@ -1652,12 +1654,12 @@ private struct SearchEntrySheet: View {
         }
     }
 
-    /// Whether the entry's chapter is unlocked, for tests. True for
-    /// every other type, and for a test with no chapter number.
+    /// Whether the entry's chapters are unlocked, for tests:
+    /// false when any chapter the test draws on is locked (see
+    /// EntryAccessRules.testChapters). True for every other type.
     private var isChapterUnlocked: Bool {
-        guard entry.type == .test,
-              let number = entry.chapterNumber else { return true }
-        return storeManager.isChapterUnlocked("ch\(number)")
+        guard entry.type == .test else { return true }
+        return !EntryAccessRules.isTestLocked(entry.id, isChapterUnlocked: { storeManager.isChapterUnlocked($0) })
     }
 
     private var isLocked: Bool {
@@ -1673,8 +1675,8 @@ private struct SearchEntrySheet: View {
     /// The product that unlocks this entry, for the lock card.
     private var unlockingProduct: CourseProduct? {
         let chapterProductID: String?
-        if entry.type == .test, let number = entry.chapterNumber {
-            chapterProductID = storeManager.unlockingProduct(for: "ch\(number)")?.productID
+        if entry.type == .test {
+            chapterProductID = EntryAccessRules.testUnlockingProductID(entry.id)
         } else {
             chapterProductID = nil
         }

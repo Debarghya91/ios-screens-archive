@@ -1415,20 +1415,29 @@ struct ChapterDetailView: View {
 
     @State private var showCheckout = false
 
-    /// Lessons shown at first. Most chapters have fewer than ten
-    /// lessons and show all of them; a longer chapter gets a
-    /// Load more button instead of a very long list.
-    @State private var visibleLessonCount = 10
-    private static let lessonPageSize = 10
+    /// The page of lessons shown, numbered like every other
+    /// long list in the app. Most chapters have fewer than
+    /// twenty lessons and show all of them on one page.
+    @State private var currentPage = 1
 
     private var lessons: [SearchEntry] {
         PFChapterHelper.lessons(forChapter: chapterNumber, in: contentService)
     }
 
-    /// The lessons actually rendered: the first page(s) of the
+    private var totalLessonPages: Int {
+        PFPagination.totalPages(totalCount: lessons.count)
+    }
+
+    /// The clamped page actually shown, so a list that shrank
+    /// below the stored page still shows its last real page.
+    private var effectiveLessonPage: Int {
+        PFPagination.clampedPage(currentPage, totalPages: totalLessonPages)
+    }
+
+    /// The lessons actually rendered: one numbered page of the
     /// chapter's lessons.
     private var visibleLessons: [SearchEntry] {
-        Array(lessons.prefix(visibleLessonCount))
+        PFPagination.slice(lessons, page: currentPage)
     }
 
     private var completedCount: Int {
@@ -1513,38 +1522,28 @@ struct ChapterDetailView: View {
                     lockBanner
                 }
                 ForEach(visibleLessons) { lesson in
-                    // A locked lesson never navigates into LessonView:
-                    // tapping it opens checkout, where the price and
-                    // the Buy button live. Free lessons (the first
-                    // lesson of the chapter, or a sequential sample)
-                    // and unlocked lessons navigate normally. Rows
+                    // Every lesson opens through the router into
+                    // LessonView, locked or not: a locked lesson
+                    // lands on its paywall view there (what to
+                    // expect plus the buy button), never straight
+                    // into checkout and never into content. Rows
                     // show the lesson number inside the chapter.
-                    if isLocked && !PFChapterHelper.isFreeLesson(lesson, in: contentService) {
-                        Button {
-                            showCheckout = true
-                        } label: {
-                            LessonRow(entry: lesson, showsLessonNumber: true)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(PFCardButtonStyle())
-                        .accessibilityLabel("\(lesson.title), locked. Tap to see the price.")
-                    } else {
-                        Button {
-                            LessonSheetRouter.shared.open(lesson)
-                        } label: {
-                            LessonRow(entry: lesson, showsLessonNumber: true)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(PFCardButtonStyle())
+                    Button {
+                        LessonSheetRouter.shared.open(lesson)
+                    } label: {
+                        LessonRow(entry: lesson, showsLessonNumber: true)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(PFCardButtonStyle())
                 }
-                if lessons.count > visibleLessons.count {
-                    Text("Showing \(visibleLessons.count) of \(lessons.count) lessons")
+                if totalLessonPages > 1 {
+                    let bounds = PFPagination.rangeBounds(page: effectiveLessonPage, totalCount: lessons.count)
+                    Text("Showing \(bounds.first)-\(bounds.last) of \(lessons.count) lessons")
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    PFSecondaryButton(title: "Load more lessons") {
-                        visibleLessonCount += Self.lessonPageSize
+                    PFPaginationBar(currentPage: effectiveLessonPage, totalPages: totalLessonPages) { page in
+                        currentPage = page
                     }
                 }
                 chapterNavFooter
@@ -1552,7 +1551,7 @@ struct ChapterDetailView: View {
             .padding(PFSpacing.lg)
             .id("chapterTop")
         }
-        .pfScrollToTopOnAppear("chapterTop")
+        .pfScrollToTopOnAppear("chapterTop", resetWhen: currentPage)
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .navigationTitle(PFBookModeReadingOrder.chapterLabel(forInternalNumber: chapterNumber) ?? PFChapterHelper.chapterTitle(for: lessons, number: chapterNumber))
@@ -1678,9 +1677,7 @@ struct LibraryRow: View {
 struct GuideListView: View {
     @EnvironmentObject private var contentService: ContentService
 
-    @State private var visibleCount: Int = 20
-
-    private static let pageSize = 20
+    @State private var currentPage = 1
 
     var body: some View {
         entryList(entries: contentService.allGuides, emptyText: "No guides are available yet. Check your connection and try again.", title: "Guides")
@@ -1688,7 +1685,9 @@ struct GuideListView: View {
 
     @ViewBuilder
     private func entryList(entries: [SearchEntry], emptyText: String, title: String) -> some View {
-        let visibleEntries = Array(entries.prefix(visibleCount))
+        let totalPages = PFPagination.totalPages(totalCount: entries.count)
+        let effectivePage = PFPagination.clampedPage(currentPage, totalPages: totalPages)
+        let visibleEntries = PFPagination.slice(entries, page: currentPage)
         ScrollView {
             VStack(alignment: .leading, spacing: PFSpacing.md) {
                 if contentService.isLoadingIndex && entries.isEmpty {
@@ -1704,24 +1703,25 @@ struct GuideListView: View {
                     }
                     .buttonStyle(PFCardButtonStyle())
                 }
-                if entries.count > visibleEntries.count {
-                    Text("Showing \(visibleEntries.count) of \(entries.count) guides")
+                if totalPages > 1 {
+                    let bounds = PFPagination.rangeBounds(page: effectivePage, totalCount: entries.count)
+                    Text("Showing \(bounds.first)-\(bounds.last) of \(entries.count) guides")
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    PFSecondaryButton(title: "Load more guides") {
-                        visibleCount += Self.pageSize
+                    PFPaginationBar(currentPage: effectivePage, totalPages: totalPages) { page in
+                        currentPage = page
                     }
                 }
             }
             .padding(PFSpacing.lg)
             .id("guidesTop")
         }
-        .pfScrollToTopOnAppear("guidesTop")
+        .pfScrollToTopOnAppear("guidesTop", resetWhen: currentPage)
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .onChange(of: entries) { _, _ in
-            visibleCount = Self.pageSize
+            currentPage = 1
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
@@ -1731,16 +1731,22 @@ struct GuideListView: View {
 struct LabListView: View {
     @EnvironmentObject private var contentService: ContentService
 
-    @State private var visibleCount: Int = 20
-
-    private static let pageSize = 20
+    @State private var currentPage = 1
 
     private var labs: [SearchEntry] {
         contentService.searchIndex?.entries.filter { $0.type == .lab } ?? []
     }
 
+    private var totalLabPages: Int {
+        PFPagination.totalPages(totalCount: labs.count)
+    }
+
+    private var effectiveLabPage: Int {
+        PFPagination.clampedPage(currentPage, totalPages: totalLabPages)
+    }
+
     private var visibleLabs: [SearchEntry] {
-        Array(labs.prefix(visibleCount))
+        PFPagination.slice(labs, page: currentPage)
     }
 
     var body: some View {
@@ -1759,24 +1765,25 @@ struct LabListView: View {
                     }
                     .buttonStyle(PFCardButtonStyle())
                 }
-                if labs.count > visibleLabs.count {
-                    Text("Showing \(visibleLabs.count) of \(labs.count) labs")
+                if totalLabPages > 1 {
+                    let bounds = PFPagination.rangeBounds(page: effectiveLabPage, totalCount: labs.count)
+                    Text("Showing \(bounds.first)-\(bounds.last) of \(labs.count) labs")
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    PFSecondaryButton(title: "Load more labs") {
-                        visibleCount += Self.pageSize
+                    PFPaginationBar(currentPage: effectiveLabPage, totalPages: totalLabPages) { page in
+                        currentPage = page
                     }
                 }
             }
             .padding(PFSpacing.lg)
             .id("labsTop")
         }
-        .pfScrollToTopOnAppear("labsTop")
+        .pfScrollToTopOnAppear("labsTop", resetWhen: currentPage)
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .onChange(of: labs) { _, _ in
-            visibleCount = Self.pageSize
+            currentPage = 1
         }
         .navigationTitle("Labs")
         .navigationBarTitleDisplayMode(.inline)
@@ -1786,16 +1793,22 @@ struct LabListView: View {
 struct TestListView: View {
     @EnvironmentObject private var contentService: ContentService
 
-    @State private var visibleCount: Int = 20
-
-    private static let pageSize = 20
+    @State private var currentPage = 1
 
     private var tests: [SearchEntry] {
         contentService.searchIndex?.entries.filter { $0.type == .test } ?? []
     }
 
+    private var totalTestPages: Int {
+        PFPagination.totalPages(totalCount: tests.count)
+    }
+
+    private var effectiveTestPage: Int {
+        PFPagination.clampedPage(currentPage, totalPages: totalTestPages)
+    }
+
     private var visibleTests: [SearchEntry] {
-        Array(tests.prefix(visibleCount))
+        PFPagination.slice(tests, page: currentPage)
     }
 
     var body: some View {
@@ -1818,24 +1831,25 @@ struct TestListView: View {
                     }
                     .buttonStyle(PFCardButtonStyle())
                 }
-                if tests.count > visibleTests.count {
-                    Text("Showing \(visibleTests.count) of \(tests.count) tests")
+                if totalTestPages > 1 {
+                    let bounds = PFPagination.rangeBounds(page: effectiveTestPage, totalCount: tests.count)
+                    Text("Showing \(bounds.first)-\(bounds.last) of \(tests.count) tests")
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    PFSecondaryButton(title: "Load more tests") {
-                        visibleCount += Self.pageSize
+                    PFPaginationBar(currentPage: effectiveTestPage, totalPages: totalTestPages) { page in
+                        currentPage = page
                     }
                 }
             }
             .padding(PFSpacing.lg)
             .id("testsTop")
         }
-        .pfScrollToTopOnAppear("testsTop")
+        .pfScrollToTopOnAppear("testsTop", resetWhen: currentPage)
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .onChange(of: tests) { _, _ in
-            visibleCount = Self.pageSize
+            currentPage = 1
         }
         .navigationTitle("Tests")
         .navigationBarTitleDisplayMode(.inline)
@@ -1854,8 +1868,11 @@ struct TestListView: View {
 // runs the quiz from those real questions only. Nothing here invents
 // a question, an option or a correct answer, and no score is saved:
 // answers stay in memory for the attempt and are gone when the view
-// goes away. Tests stay open to every learner, as they were when the
-// rows opened the shared reading view: no gating is added here.
+// goes away. Tests are gated by the chapters their questions draw
+// on (EntryAccessRules.testChapters): a locked test shows only its
+// paywall view and never fetches its page, so no question, option
+// or explanation can leak. A test whose chapters span parts is
+// unlocked by The Integrated Course; a single-part test by its part.
 // AssessmentView and FinalAssessmentView were not reused: they run
 // lesson quiz questions, record competency results or certificates,
 // and need a dimension or a course bundle, none of which a test has.
@@ -1938,10 +1955,18 @@ struct TestEntryInfo {
 /// so plainly here; tapping it still opens the quiz view, which
 /// loads the test page and reports what it finds.
 struct TestRow: View {
+    @EnvironmentObject private var storeManager: StoreManager
     let entry: SearchEntry
 
     private var info: TestEntryInfo {
         TestEntryInfo(entry: entry)
+    }
+
+    /// True when this test's questions stay locked: any chapter
+    /// it draws on is locked. The row shows the lock so the tap
+    /// landing on the paywall view is no surprise.
+    private var isLocked: Bool {
+        EntryAccessRules.isTestLocked(entry.id, isChapterUnlocked: { storeManager.isChapterUnlocked($0) })
     }
 
     var body: some View {
@@ -1971,6 +1996,15 @@ struct TestRow: View {
                             .font(.pfCaption)
                     }
                     .foregroundColor(.pfSecondaryText)
+                    if isLocked {
+                        HStack(spacing: PFSpacing.xs) {
+                            Image(systemName: "lock.fill")
+                                .font(.pfCaption.weight(.semibold))
+                            Text("Premium")
+                                .font(.pfCaptionBold)
+                        }
+                        .foregroundColor(.pfGold)
+                    }
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -1978,7 +2012,7 @@ struct TestRow: View {
                     .pfDecorative()
             }
         }
-        .accessibilityLabel("\(entry.title), \(info.rowMetaText)")
+        .accessibilityLabel("\(entry.title), \(info.rowMetaText)\(isLocked ? ", locked" : "")")
     }
 }
 
@@ -2193,6 +2227,8 @@ enum TestPageLoader {
 struct TestQuizView: View {
     let entry: SearchEntry
 
+    @EnvironmentObject private var storeManager: StoreManager
+
     @State private var isLoading = true
     @State private var loadError: String? = nil
     @State private var didAttemptLoad = false
@@ -2205,12 +2241,32 @@ struct TestQuizView: View {
     @State private var selectedOption: Int? = nil
     @State private var startedAt: Date? = nil
     @State private var finishedAt: Date? = nil
+    @State private var showCheckout = false
+    /// True when the fetched questions draw on a locked chapter
+    /// the static map did not cover: the test stays locked even
+    /// though the page loaded, so a stale map fails closed.
+    @State private var driftLocked = false
     /// True once this attempt's score has been persisted, so a
     /// re-render can never record the same attempt twice.
     @State private var didRecordResult = false
 
     private var catalogueInfo: TestEntryInfo {
         TestEntryInfo(entry: entry)
+    }
+
+    /// True when this test's questions must stay locked: any
+    /// chapter the test draws on is locked, or the test is
+    /// unknown to the map. Admins and Integrated owners always
+    /// pass through isChapterUnlocked.
+    private var isLocked: Bool {
+        EntryAccessRules.isTestLocked(entry.id, isChapterUnlocked: { storeManager.isChapterUnlocked($0) })
+    }
+
+    /// The single product whose purchase unlocks this test, for
+    /// the paywall view: its one part, or The Integrated Course
+    /// when its chapters span parts.
+    private var unlockingProduct: CourseProduct? {
+        ProductCatalogue.product(for: EntryAccessRules.testUnlockingProductID(entry.id))
     }
 
     private var currentQuestion: TestQuizQuestion? {
@@ -2249,7 +2305,9 @@ struct TestQuizView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PFSpacing.lg) {
-                if isLoading {
+                if isLocked || driftLocked {
+                    paywallView
+                } else if isLoading {
                     HStack(spacing: PFSpacing.sm) {
                         ProgressView()
                         Text("Loading the test questions...")
@@ -2283,8 +2341,78 @@ struct TestQuizView: View {
         .pfTabBarClearance()
         .navigationTitle(entry.title)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showCheckout) {
+            CheckoutView()
+        }
         .task {
             await load()
+        }
+        .onChange(of: isLocked) { _, locked in
+            // A purchase that unlocks the test while the paywall
+            // is showing loads the questions without needing a
+            // retry tap; a revoke re-locks through the body branch.
+            if !locked, loadedQuestions.isEmpty, loadError == nil {
+                driftLocked = false
+                didAttemptLoad = false
+                Task { await load() }
+            }
+        }
+    }
+
+    // MARK: - Paywall
+
+    /// The paywall view for a locked test: what to expect (the
+    /// test title, its area and question count from the catalogue
+    /// entry only) plus the buy button for the product that
+    /// unlocks it. No question, option or explanation is shown,
+    /// and the test page is never fetched while locked.
+    private var paywallView: some View {
+        PFCard {
+            VStack(alignment: .leading, spacing: PFSpacing.md) {
+                HStack(spacing: PFSpacing.md) {
+                    PFIconTile(systemImage: "lock.fill", size: 44)
+                    VStack(alignment: .leading, spacing: PFSpacing.xs) {
+                        Text("Locked test")
+                            .font(.pfCardTitle)
+                            .foregroundColor(.pfNavy)
+                        Text(entry.title)
+                            .font(.pfBody)
+                            .foregroundColor(.pfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                if let domainLabel = catalogueInfo.domainLabel {
+                    Text(domainLabel)
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let count = catalogueInfo.questionCount {
+                    Text("This test asks \(count) \(count == 1 ? "question" : "questions") from the course, with a score and explanations when you finish.")
+                        .font(.pfBody)
+                        .foregroundColor(.pfSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let product = unlockingProduct {
+                    Text("This test is part of \(product.name). Buy it for \(storeManager.priceText(for: product.productID)) to unlock it for 1 year.")
+                        .font(.pfBody)
+                        .foregroundColor(.pfNavy)
+                        .fixedSize(horizontal: false, vertical: true)
+                    PFGoldButton(title: storeManager.isBusy ? "Please wait..." : "Buy \(product.name) for \(storeManager.priceText(for: product.productID))") {
+                        storeManager.clearStatusMessage()
+                        Task { await storeManager.purchase(productID: product.productID) }
+                    }
+                    .disabled(storeManager.isBusy)
+                    .opacity(storeManager.isBusy ? 0.5 : 1)
+                }
+                PFSecondaryButton(title: "See purchase options") {
+                    showCheckout = true
+                }
+                Text(StoreManager.buildPhaseBuyOpensContent ? "For now, Buy opens the course on this device. No payment is taken." : "Sign in first, then pay securely with your Apple ID.")
+                    .font(.pfCaption)
+                    .foregroundColor(.pfSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -2293,12 +2421,32 @@ struct TestQuizView: View {
     private func load() async {
         if didAttemptLoad { return }
         didAttemptLoad = true
+        // A locked test never fetches its page: the questions
+        // live on the page, so fetching would load locked
+        // content into memory before any gate could apply.
+        guard !isLocked else {
+            isLoading = false
+            return
+        }
         isLoading = true
         loadError = nil
         do {
             let result = try await TestPageLoader.load(entry: entry)
-            loadedInfo = result.info
-            loadedQuestions = result.questions
+            // Drift check: if any fetched question draws on a
+            // locked chapter the static map did not cover, or
+            // carries no chapter at all, the test stays locked
+            // and no question is kept.
+            if result.questions.contains(where: { question in
+                guard let chapterID = question.chapterID else { return true }
+                return !storeManager.isChapterUnlocked(chapterID)
+            }) {
+                driftLocked = true
+                loadedInfo = nil
+                loadedQuestions = []
+            } else {
+                loadedInfo = result.info
+                loadedQuestions = result.questions
+            }
         } catch let error as TestPageError {
             loadError = error.message
         } catch {
@@ -2309,6 +2457,7 @@ struct TestQuizView: View {
 
     private func retryLoad() {
         didAttemptLoad = false
+        driftLocked = false
         loadedInfo = nil
         loadedQuestions = []
         Task { await load() }

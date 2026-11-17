@@ -5,6 +5,7 @@
 // No em dashes in any user-facing text.
 
 import SwiftUI
+import UIKit
 import WebKit
 import os
 
@@ -25,6 +26,21 @@ enum PFThumbnailLog {
 extension Color {
     /// Royal blue, the single primary color.
     static let pfRoyal = Color(red: 0.09, green: 0.25, blue: 0.55)
+    /// The app tint: royal blue in light mode, a mid royal in
+    /// dark mode. Toolbar buttons (Done, Skip, Save) sit on the
+    /// system navigation bar, which goes dark in dark mode, so
+    /// the fixed royal would be unreadable there; the mid royal
+    /// stays legible on dark bars while remaining visible on the
+    /// light content backgrounds, where the tint colors only
+    /// graphics (spinners, toggle tracks, sliders). Content text
+    /// never relies on the tint: it uses explicit pf colors.
+    /// Only the tint adapts: every pf surface color stays fixed,
+    /// so content pairings never change.
+    static let pfTint = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.30, green: 0.50, blue: 0.88, alpha: 1)
+            : UIColor(red: 0.09, green: 0.25, blue: 0.55, alpha: 1)
+    })
     /// A lighter royal blue for secondary accents and selected states.
     static let pfRoyalLight = Color(red: 0.16, green: 0.36, blue: 0.68)
     /// Premium gold, used sparingly for the main call to action and highlights.

@@ -840,15 +840,67 @@ struct WeeklyGoal: Codable, Hashable {
 /// FAQ answers belong to Interview Ready: the first 5 in catalogue
 /// order are free samples. Labs belong to Practice Experiences:
 /// the first 2 in catalogue order are free samples. Tests belong
-/// to their chapter's part: a test locks when its chapter is
-/// locked, and a test with no chapter number stays open
-/// (diagnostic and placement tests are free). Lessons and
+/// to the chapters their questions draw on (see testChapters): a
+/// test locks when any chapter it draws on is locked, and a test
+/// with no entry in the map stays locked (fail closed), because
+/// an unknown test must never expose questions from chapters the
+/// learner has not unlocked. Lessons and
 /// situations never reach the sheet: they open LessonView and the
 /// situation detail, which carry their own gates. Guides are
 /// intentionally ungated: their product home is undecided (only
 /// the 5 Studio career guides map to a product), so no mapping is
 /// invented here.
 enum EntryAccessRules {
+
+    /// The chapters each standalone test draws its questions
+    /// from, taken from the live test pages: every question in a
+    /// test page's TEST_DATA carries its chapter. A test is
+    /// unlocked only when every chapter it draws on is unlocked,
+    /// so owning one part never exposes another part's questions.
+    /// The map must be extended when a test page gains questions
+    /// from a chapter it did not draw on before; TestQuizView
+    /// also re-checks the fetched questions' chapters, so a stale
+    /// map fails closed instead of leaking.
+    static let testChapters: [String: [String]] = [
+        "t-apis": ["ch26", "ch30", "ch38", "ch47", "ch65"],
+        "t-architecture": ["ch25", "ch35", "ch36", "ch37", "ch48"],
+        "t-cards": ["ch21", "ch22", "ch31", "ch32", "ch34", "ch63"],
+        "t-clearing": ["ch17", "ch18", "ch19", "ch20"],
+        "t-compliance": ["ch23", "ch24", "ch40", "ch41", "ch43", "ch44", "ch68"],
+        "t-crossborder": ["ch13", "ch14", "ch15", "ch16", "ch49", "ch51", "ch53", "ch58"],
+        "t-emerging": ["ch27", "ch34", "ch46", "ch55", "ch59"],
+        "t-foundations": ["ch1", "ch2", "ch3", "ch4", "ch64"],
+        "t-messaging": ["ch5", "ch6", "ch7", "ch8", "ch39", "ch50", "ch52", "ch60", "ch67"],
+        "t-mock-1": ["ch1", "ch3", "ch4", "ch6", "ch7", "ch8", "ch9", "ch10", "ch11", "ch39", "ch50", "ch56", "ch57", "ch62"],
+        "t-mock-2": ["ch14", "ch17", "ch18", "ch20", "ch21", "ch22", "ch23", "ch24", "ch40", "ch51", "ch58"],
+        "t-mock-3": ["ch2", "ch8", "ch11", "ch16", "ch19", "ch24", "ch25", "ch26", "ch27", "ch28", "ch31", "ch36", "ch42", "ch44", "ch65"],
+        "t-operations": ["ch40", "ch41", "ch42", "ch43", "ch44", "ch45"],
+        "t-professional": ["ch28", "ch29", "ch33", "ch42", "ch45", "ch47"],
+        "t-rails": ["ch9", "ch10", "ch11", "ch12", "ch36", "ch56", "ch57", "ch59", "ch62"],
+    ]
+
+    /// True when this test's questions must stay locked: any
+    /// chapter it draws on is locked, or the test has no entry
+    /// in testChapters (fail closed for unknown tests).
+    static func isTestLocked(_ testID: String, isChapterUnlocked: (String) -> Bool) -> Bool {
+        guard let chapters = testChapters[testID] else { return true }
+        return chapters.contains { !isChapterUnlocked($0) }
+    }
+
+    /// The single product whose purchase unlocks this test: the
+    /// one part all its chapters belong to, or The Integrated
+    /// Course when its chapters span parts (or the test is
+    /// unknown), because only the Integrated Course unlocks
+    /// every chapter. Held-out chapters (ch37) belong to no part
+    /// and never force the Integrated fallback on their own.
+    static func testUnlockingProductID(_ testID: String) -> String {
+        guard let chapters = testChapters[testID] else {
+            return ProductCatalogue.integratedProductID
+        }
+        let parts = Set(chapters.compactMap { ProductCatalogue.productContaining(chapterID: $0)?.productID })
+        if parts.count == 1, let only = parts.first { return only }
+        return ProductCatalogue.integratedProductID
+    }
 
     /// True when this entry's full text is locked.
     /// - Parameters:
@@ -859,7 +911,9 @@ enum EntryAccessRules {
     ///   - isPracticeUnlocked: Practice Experiences entitlement.
     ///   - isInterviewUnlocked: Interview Ready entitlement.
     ///   - isChapterUnlocked: whether the entry's chapter is
-    ///     unlocked; pass true for a test with no chapter number.
+    ///     unlocked. For a test, the caller passes false when
+    ///     isTestLocked says the test is locked, so the test
+    ///     branch here needs no chapter of its own.
     static func isLocked(
         _ entry: SearchEntry,
         indexInType: Int?,
@@ -885,8 +939,9 @@ enum EntryAccessRules {
 
     /// The product that unlocks this entry, for lock copy. Nil for
     /// entry types that never lock. For a test, the caller passes
-    /// the chapter's unlocking product ID, or nil when the chapter
-    /// is unknown: the Integrated Course is the fallback, because
+    /// testUnlockingProductID: the one part the test's chapters
+    /// belong to, or the Integrated Course when they span parts.
+    /// A nil fallback still means the Integrated Course, because
     /// it unlocks every chapter.
     static func unlockingProductID(for entry: SearchEntry, chapterUnlockingProductID: String?) -> String? {
         switch entry.type {

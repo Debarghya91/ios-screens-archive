@@ -146,9 +146,7 @@ struct AdminContentTypeView: View {
     @ObservedObject private var management = ContentManagementService.shared
     let type: PFContentType
 
-    @State private var visibleCount: Int = 20
-
-    private static let pageSize = 20
+    @State private var currentPage = 1
 
     /// One listable item: its id and title from the loaded data.
     private struct AdminItem: Identifiable {
@@ -179,8 +177,16 @@ struct AdminContentTypeView: View {
         }
     }
 
+    private var totalItemPages: Int {
+        PFPagination.totalPages(totalCount: items.count)
+    }
+
+    private var effectiveItemPage: Int {
+        PFPagination.clampedPage(currentPage, totalPages: totalItemPages)
+    }
+
     private var visibleItems: [AdminItem] {
-        Array(items.prefix(visibleCount))
+        PFPagination.slice(items, page: currentPage)
     }
 
     var body: some View {
@@ -211,13 +217,14 @@ struct AdminContentTypeView: View {
                         }
                         .buttonStyle(PFCardButtonStyle())
                     }
-                    if items.count > visibleItems.count {
-                        Text("Showing \(visibleItems.count) of \(items.count) items")
+                    if totalItemPages > 1 {
+                        let bounds = PFPagination.rangeBounds(page: effectiveItemPage, totalCount: items.count)
+                        Text("Showing \(bounds.first)-\(bounds.last) of \(items.count) items")
                             .font(.pfCaption)
                             .foregroundColor(.pfSecondaryText)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        PFSecondaryButton(title: "Load more items") {
-                            visibleCount += Self.pageSize
+                        PFPaginationBar(currentPage: effectiveItemPage, totalPages: totalItemPages) { page in
+                            currentPage = page
                         }
                     }
                 }
@@ -225,7 +232,7 @@ struct AdminContentTypeView: View {
             .padding(PFSpacing.lg)
             .id("adminTypeTop")
         }
-        .pfScrollToTopOnAppear("adminTypeTop")
+        .pfScrollToTopOnAppear("adminTypeTop", resetWhen: currentPage)
         .background(Color.pfBackground)
         .safeAreaInset(edge: .bottom) {
             Color.clear.frame(height: PFSpacing.xl)

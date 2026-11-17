@@ -2498,16 +2498,22 @@ struct GuidedPathDetailView: View {
     @EnvironmentObject private var progressStore: ProgressStore
     let session: GuidedSession
 
-    @State private var visibleCount: Int = 20
-
-    private static let pageSize = 20
+    @State private var currentPage = 1
 
     private var lessons: [SearchEntry] {
         PFChapterHelper.lessons(forSession: session, in: contentService)
     }
 
+    private var totalLessonPages: Int {
+        PFPagination.totalPages(totalCount: lessons.count)
+    }
+
+    private var effectiveLessonPage: Int {
+        PFPagination.clampedPage(currentPage, totalPages: totalLessonPages)
+    }
+
     private var visibleLessons: [SearchEntry] {
-        Array(lessons.prefix(visibleCount))
+        PFPagination.slice(lessons, page: currentPage)
     }
 
     private var completedCount: Int {
@@ -2594,24 +2600,25 @@ struct GuidedPathDetailView: View {
                     }
                     .buttonStyle(PFCardButtonStyle())
                 }
-                if lessons.count > visibleLessons.count {
-                    Text("Showing \(visibleLessons.count) of \(lessons.count) lessons")
+                if totalLessonPages > 1 {
+                    let bounds = PFPagination.rangeBounds(page: effectiveLessonPage, totalCount: lessons.count)
+                    Text("Showing \(bounds.first)-\(bounds.last) of \(lessons.count) lessons")
                         .font(.pfCaption)
                         .foregroundColor(.pfSecondaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    PFSecondaryButton(title: "Load more lessons") {
-                        visibleCount += Self.pageSize
+                    PFPaginationBar(currentPage: effectiveLessonPage, totalPages: totalLessonPages) { page in
+                        currentPage = page
                     }
                 }
             }
             .padding(PFSpacing.lg)
             .id("guidedPathTop")
         }
-        .pfScrollToTopOnAppear("guidedPathTop")
+        .pfScrollToTopOnAppear("guidedPathTop", resetWhen: currentPage)
         .background(Color.pfBackground)
         .pfTabBarClearance()
         .onChange(of: lessons) { _, _ in
-            visibleCount = Self.pageSize
+            currentPage = 1
         }
         .navigationTitle("Session \(session.id): \(session.title)")
         .navigationBarTitleDisplayMode(.inline)

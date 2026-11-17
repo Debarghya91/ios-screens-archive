@@ -59,6 +59,7 @@ struct DiagnosticAssessmentView: View {
     let onComplete: (DiagnosticOutcome?) -> Void
 
     @ObservedObject private var contentService = ContentService.shared
+    @ObservedObject private var storeManager = StoreManager.shared
 
     private enum Phase {
         case loading
@@ -68,8 +69,11 @@ struct DiagnosticAssessmentView: View {
     }
 
     /// Early chapters whose first lessons supply the diagnostic
-    /// questions, in order. Only real quiz questions from these
-    /// lessons are used, up to 6, trying at most 12 lessons.
+    /// questions, in order. Only real quiz questions from
+    /// readable lessons are used (free samples and unlocked
+    /// chapters): a locked lesson's quiz is never fetched, so
+    /// the diagnostic can never expose locked content during
+    /// onboarding. Up to 6 questions, trying at most 12 lessons.
     private static let sourceChapterNumbers = [69, 1, 4, 2, 3]
     private static let maxQuestions = 6
     private static let maxLessonsTried = 12
@@ -185,6 +189,14 @@ struct DiagnosticAssessmentView: View {
     /// has no quiz, contributes nothing and is skipped, never
     /// invented. A question with an unusable option list or an
     /// out-of-range correct index is dropped, never guessed.
+    /// True when this lesson's quiz may be shown: the lesson is
+    /// a free sample, or its chapter is unlocked (which also
+    /// covers admins, held-out chapters and Integrated owners).
+    private func isLessonReadable(_ entry: SearchEntry, chapterNumber: Int) -> Bool {
+        if PFChapterHelper.isFreeLesson(entry, in: contentService) { return true }
+        return storeManager.isChapterUnlocked("ch\(chapterNumber)")
+    }
+
     private func loadQuestions() async {
         guard !loadAttempted else { return }
         loadAttempted = true
@@ -194,6 +206,10 @@ struct DiagnosticAssessmentView: View {
         outer: for number in Self.sourceChapterNumbers {
             for entry in PFChapterHelper.lessons(forChapter: number, in: contentService) {
                 if collected.count >= Self.maxQuestions || tried >= Self.maxLessonsTried { break outer }
+                // Only readable lessons supply questions: a locked
+                // lesson's quiz is locked content, so it is never
+                // fetched and never counts toward the tried cap.
+                guard isLessonReadable(entry, chapterNumber: number) else { continue }
                 tried += 1
                 guard let detail = try? await contentService.loadLessonDetail(entry: entry) else { continue }
                 for quiz in detail.quiz {

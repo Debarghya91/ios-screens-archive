@@ -156,6 +156,10 @@ private struct CrashReportDetailView: View {
             }
             .padding(PFSpacing.lg)
         }
+        // Fixed light background, like every other content screen:
+        // the navy report text stays readable in dark mode, when
+        // the default background would go dark under it.
+        .background(Color.pfBackground)
         .navigationTitle("Crash report")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {

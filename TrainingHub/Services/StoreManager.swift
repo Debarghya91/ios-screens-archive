@@ -491,6 +491,14 @@ final class StoreManager: ObservableObject {
 
     private var updatesTask: Task<Void, Never>?
 
+    /// The one-shot task that re-checks entitlements when the
+    /// nearest expiry passes, so an open lesson locks the moment
+    /// its purchase expires instead of staying readable until
+    /// the next foreground, purchase or restore. Rescheduled
+    /// after every entitlement refresh; cancelled and replaced,
+    /// never stacked.
+    private var expiryRefreshTask: Task<Void, Never>?
+
     /// The in-flight product fetch, so concurrent loadProducts()
     /// calls join the same fetch instead of stacking duplicates or
     /// proceeding with no products. A failed or partial fetch can
@@ -773,6 +781,36 @@ final class StoreManager: ObservableObject {
         entitled.sort { $0.purchaseDate > $1.purchaseDate }
         ownedTransactions = entitled
         setPurchasedProductIDs(Set(entitled.map { $0.productID }), expiries: expiries)
+        scheduleExpiryRefresh()
+    }
+
+    /// Schedule a single entitlement re-check at the nearest
+    /// future expiry across both entitlement sources. No future
+    /// expiry means nothing to schedule. The task sleeps until
+    /// just past the expiry, then refreshes both sources: the
+    /// expired IDs drop out of the published sets, every
+    /// observing view re-renders, and an open lesson re-locks
+    /// and stops its audio through its lock-change handler. The
+    /// refresh reschedules for the next expiry, so the chain
+    /// covers every expiry in turn. If the app is suspended at
+    /// the expiry, the foreground refresh covers the same ground
+    /// when it returns.
+    private func scheduleExpiryRefresh() {
+        expiryRefreshTask?.cancel()
+        expiryRefreshTask = nil
+        let now = Date()
+        let expiries = (Array(deviceEntitlementExpiries.values) + Array(serverEntitlementExpiries.values))
+            .filter { $0 > now }
+        guard let nearest = expiries.min() else { return }
+        expiryRefreshTask = Task { [weak self] in
+            let delay = nearest.timeIntervalSinceNow + 1
+            guard delay > 0 else { return }
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            await self.refreshEntitlement()
+            await self.refreshEntitlementFromServer()
+        }
     }
 
     /// Re-read the server entitlements for the signed-in user from
@@ -788,6 +826,9 @@ final class StoreManager: ObservableObject {
     /// is replayed instead, or the set is cleared when there is no
     /// fresh cache. The StoreKit entitlements are untouched.
     func refreshEntitlementFromServer() async {
+        // Every exit reassigns the server sets, so every exit
+        // reschedules the expiry re-check from the new state.
+        defer { scheduleExpiryRefresh() }
         guard SupabaseConfig.isConfigured,
               let userID = AuthService.shared.currentUser?.id else {
             serverEntitledProductIDs = []
@@ -854,6 +895,9 @@ final class StoreManager: ObservableObject {
         // every live audio service must stop, including players
         // owned by views that are not on screen.
         NotificationCenter.default.post(name: .pfStopAudioForAccessChange, object: nil)
+        // The server expiries are gone: reschedule from the
+        // on-device expiries that remain.
+        scheduleExpiryRefresh()
     }
 
     /// Retry recording on-device purchases on the server after a

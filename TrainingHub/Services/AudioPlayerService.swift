@@ -269,7 +269,20 @@ final class AudioPlayerService: ObservableObject {
         }
     }
 
-    /// Pause on interruption begin (for example a phone call) and resume
+    /// Deactivate the shared audio session when playback fully
+    /// stops, so other audio on the device can resume and the app
+    /// stops holding the playback session after narration ends.
+    /// Pause never calls this: a paused lesson must resume at
+    /// once, and background Now Playing stays valid while paused.
+    /// A failure is logged and never blocks the stop: the session
+    /// may already be inactive (for example during a phone call).
+    private func deactivateAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        } catch {
+            logAudio("SESSION_DEACTIVATE_FAILED", detail: error.localizedDescription)
+        }
+    }
     /// on interruption end if playback was active before it. The
     /// handler hops to the main thread first: notification delivery
     /// has no thread guarantee, and it mutates published state.
@@ -913,6 +926,10 @@ final class AudioPlayerService: ObservableObject {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             Self.nowPlayingOwner = nil
         }
+        // Playback has fully stopped: release the audio session
+        // so other audio can resume. Every play path reactivates
+        // it through configureAudioSession before playing.
+        deactivateAudioSession()
     }
 
     @objc private func playerItemFinished(_ notification: Notification) {
