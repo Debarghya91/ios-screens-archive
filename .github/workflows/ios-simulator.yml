@@ -1,4 +1,12 @@
-name: iOS simulator build
+name: iOS simulator build, smoke run and tap tests
+
+# Run-before-send gate: every push to main must BUILD, then RUN the
+# app in the simulator with scripted taps before any build ships.
+# One job, sequential: build -> smoke run -> tap-test classes.
+# The smoke run fails the job if the app dies, traps, or the log
+# shows a crash. The tap tests fail the job if any scripted flow
+# fails. Screenshots, logs and xcresults upload as artifacts
+# whether the job passes or fails.
 
 on:
   push:
@@ -6,9 +14,106 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-smoke-and-test:
     runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      APP_BUNDLE_ID: com.paymentstraininghub.app
     steps:
       - uses: actions/checkout@v4
+
       - name: Build for simulator
         run: xcodebuild -project TrainingHub.xcodeproj -scheme TrainingHub -destination 'platform=iOS Simulator,name=iPhone 17 Pro Max' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+
+      - name: Boot simulator
+        id: simulator
+        run: |
+          set -euo pipefail
+          UDID=$(xcrun simctl list devices available | grep -m1 "iPhone 17 Pro Max" | grep -oE '[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}' || true)
+          if [ -z "$UDID" ]; then
+            UDID=$(xcrun simctl create "PTH-RunBeforeSend" "iPhone 17 Pro Max")
+          fi
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" 2>/dev/null || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl list devices | grep "$UDID"
+
+      - name: Smoke run (launch, screenshots, crash gate)
+        run: |
+          set -euo pipefail
+          UDID="${{ steps.simulator.outputs.udid }}"
+          APP="build/Build/Products/Debug-iphonesimulator/TrainingHub.app"
+          test -d "$APP" || { echo "::error::Built app not found at $APP"; exit 1; }
+          mkdir -p smoke
+          # Fresh install so the run starts from a clean first launch.
+          xcrun simctl uninstall "$UDID" "$APP_BUNDLE_ID" 2>/dev/null || true
+          # Snapshot host-side crash reports before launch.
+          ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i "traininghub" > smoke/diag-before.txt || : > smoke/diag-before.txt
+          xcrun simctl install "$UDID" "$APP"
+          # Stream the app log in the background.
+          xcrun simctl spawn "$UDID" log stream --predicate 'process == "TrainingHub"' --style compact > smoke/app.log 2>&1 &
+          LOG_PID=$!
+          cleanup() { kill $LOG_PID 2>/dev/null || true; }
+          trap cleanup EXIT
+          xcrun simctl launch "$UDID" "$APP_BUNDLE_ID"
+          sleep 5
+          xcrun simctl io "$UDID" screenshot smoke/shot-05s.png
+          sleep 25
+          xcrun simctl io "$UDID" screenshot smoke/shot-30s.png
+          # Liveness: the app service must still be listed 30s after launch.
+          if ! xcrun simctl spawn "$UDID" launchctl list 2>/dev/null | grep -q "$APP_BUNDLE_ID"; then
+            echo "::error::Smoke run failed: the app process is no longer running 30s after launch."
+            exit 1
+          fi
+          cleanup
+          trap - EXIT
+          # Crash gate 1: no NEW host-side crash report for the app.
+          ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i "traininghub" > smoke/diag-after.txt || : > smoke/diag-after.txt
+          if ! diff -q smoke/diag-before.txt smoke/diag-after.txt >/dev/null; then
+            echo "::error::Smoke run failed: new TrainingHub diagnostic reports appeared during the run:"
+            diff smoke/diag-before.txt smoke/diag-after.txt || true
+            exit 1
+          fi
+          # Crash gate 2: no fatal markers in the streamed app log.
+          if grep -E "EXC_|SIGTRAP|SIGABRT|SIGSEGV|fatal error|Terminating app due to uncaught exception" smoke/app.log; then
+            echo "::error::Smoke run failed: fatal markers in the streamed app log (see smoke/app.log)."
+            exit 1
+          fi
+          xcrun simctl terminate "$UDID" "$APP_BUNDLE_ID" 2>/dev/null || true
+          echo "Smoke run passed: app alive at 30s, no new crash report, no fatal log markers."
+
+      - name: Tap tests (XCUITest, one fresh install per class)
+        run: |
+          set -uo pipefail
+          UDID="${{ steps.simulator.outputs.udid }}"
+          mkdir -p tap-results
+          FAILED=0
+          for CLASS in IntroSkipUITests IntroFirstLessonUITests ChapterLessonUITests InvestigationTimelineUITests; do
+            echo "=== $CLASS (fresh install) ==="
+            xcrun simctl uninstall "$UDID" "$APP_BUNDLE_ID" 2>/dev/null || true
+            if xcodebuild test \
+              -project TrainingHub.xcodeproj \
+              -scheme TrainingHubRunBeforeSend \
+              -destination "platform=iOS Simulator,id=$UDID" \
+              -derivedDataPath build \
+              -parallel-testing-enabled NO \
+              -only-testing:"TrainingHubUITests/$CLASS" \
+              -resultBundlePath "tap-results/$CLASS.xcresult" \
+              CODE_SIGNING_ALLOWED=NO; then
+              echo "$CLASS: PASSED"
+            else
+              echo "::error::$CLASS: FAILED (see tap-results/$CLASS.xcresult)"
+              FAILED=1
+            fi
+          done
+          exit $FAILED
+
+      - name: Upload run evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-run-before-send
+          path: |
+            smoke/
+            tap-results/
+          if-no-files-found: warn
