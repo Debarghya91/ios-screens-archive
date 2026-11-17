@@ -231,7 +231,9 @@ final class TabBarFrameReaderView: UIView {
             barFrame = barBoundsInWindow
         }
         let geometry = TabBarGeometry(buttonRects: merged, barFrame: barFrame)
+        GateDiag.delivery("TabBarCheck", changed: geometry != lastReported) // GATE-DIAG TEMPORARY
         guard geometry != lastReported, barFrame.width > 0, barFrame.height > 0 else { return }
+        GateDiag.delivery("TabBarReport", changed: true) // GATE-DIAG TEMPORARY
         lastReported = geometry
         let handler = onGeometry
         DispatchQueue.main.async { handler?(geometry) }

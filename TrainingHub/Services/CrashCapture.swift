@@ -18,6 +18,7 @@
 // handler and leaves no report; the run-marker heuristic in
 // previousDeathUnreported tells those deaths apart from clean runs.
 
+import Combine
 import Foundation
 import os
 import UIKit
@@ -57,6 +58,48 @@ enum GateDiag {
         counts[name] = next
         lock.unlock()
         log.info("Publish \(name, privacy: .public) #\(next, privacy: .public)")
+    }
+
+    /// Count one preference, frame or geometry delivery. Logs at
+    /// thresholds, with the guard outcome of the latest delivery.
+    static func delivery(_ name: String, changed: Bool) {
+        lock.lock()
+        let next = (counts[name] ?? 0) + 1
+        counts[name] = next
+        lock.unlock()
+        if thresholds.contains(next) {
+            log.info("Delivery \(name, privacy: .public) #\(next, privacy: .public) changed=\(changed, privacy: .public)")
+        }
+    }
+
+    /// Count one objectWillChange fire from an observed object.
+    /// Logs at thresholds. Catches @Published streams the
+    /// per-property counters do not cover.
+    static func objectFired(_ name: String) {
+        lock.lock()
+        let next = (counts[name] ?? 0) + 1
+        counts[name] = next
+        lock.unlock()
+        if thresholds.contains(next) {
+            log.info("ObjectWillChange \(name, privacy: .public) #\(next, privacy: .public)")
+        }
+    }
+
+    private static var tapsInstalled = false
+    private static var tapCancellables: [AnyCancellable] = []
+
+    /// Subscribe once to every observed object's objectWillChange.
+    /// Call from MainTabView's task with the live objects.
+    static func installTaps(_ taps: [(String, ObservableObjectPublisher)]) {
+        lock.lock()
+        guard !tapsInstalled else { lock.unlock(); return }
+        tapsInstalled = true
+        lock.unlock()
+        for (name, publisher) in taps {
+            publisher
+                .sink { objectFired(name) }
+                .store(in: &tapCancellables)
+        }
     }
 }
 

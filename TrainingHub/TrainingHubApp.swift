@@ -210,6 +210,7 @@ final class LessonSheetRouter: ObservableObject {
         guard PFNavigationDebouncer.shared.allow(key: entry.id) else { return }
         CrashBreadcrumbs.record("lesson tap \(entry.id)")
         presentedEntry = entry
+        CrashBreadcrumbs.record("lesson sheet requested \(entry.id)") // GATE-DIAG TEMPORARY
     }
 
     /// Close the lesson sheet.
@@ -254,10 +255,12 @@ final class LessonSheetRouter: ObservableObject {
     /// the open is scheduled is a no-op, so the destination
     /// can never present twice.
     func openPendingAfterIntroduction() {
+        CrashBreadcrumbs.record("openPending called") // GATE-DIAG TEMPORARY
         guard let destination = pendingDestination, !isOpeningPending else { return }
         isOpeningPending = true
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 400_000_000)
+            CrashBreadcrumbs.record("openPending firing") // GATE-DIAG TEMPORARY
             isOpeningPending = false
             pendingDestination = nil
             switch destination {
@@ -519,6 +522,7 @@ struct MainTabView: View {
     /// did not take the hierarchy; otherwise it waits for that
     /// sheet's dismissal, which re-runs this function.
     private func presentationDidDismiss() {
+        CrashBreadcrumbs.record("arbitration ran") // GATE-DIAG TEMPORARY
         resolvePendingDeepLink()
         if deepLinkLessonEntry == nil, presentedSheet == nil {
             lessonSheetRouter.openPendingAfterIntroduction()
@@ -680,24 +684,31 @@ struct MainTabView: View {
                 merged[key] = value
                 changed = true
             }
+            GateDiag.delivery("DrawerRowAnchors", changed: changed) // GATE-DIAG TEMPORARY
             if changed { drawerRowAnchors = merged }
         }
         .onPreferenceChange(DrawerRowFrameKey.self) { frames in
+            GateDiag.delivery("DrawerRowFrames", changed: drawerRowFrames != frames) // GATE-DIAG TEMPORARY
             if drawerRowFrames != frames { drawerRowFrames = frames }
         }
         .onPreferenceChange(KeepLearningAnchorKey.self) { anchor in
+            GateDiag.delivery("KeepLearningAnchor", changed: keepLearningAnchor == nil && anchor != nil) // GATE-DIAG TEMPORARY
             if keepLearningAnchor == nil, let anchor { keepLearningAnchor = anchor }
         }
         .onPreferenceChange(KeepLearningFrameKey.self) { frame in
+            GateDiag.delivery("KeepLearningFrame", changed: keepLearningFrame != frame) // GATE-DIAG TEMPORARY
             if keepLearningFrame != frame { keepLearningFrame = frame }
         }
         .onPreferenceChange(SearchFieldAnchorKey.self) { anchor in
+            GateDiag.delivery("SearchFieldAnchor", changed: searchFieldAnchor == nil && anchor != nil) // GATE-DIAG TEMPORARY
             if searchFieldAnchor == nil, let anchor { searchFieldAnchor = anchor }
         }
         .onPreferenceChange(SearchPillsAnchorKey.self) { anchor in
+            GateDiag.delivery("SearchPillsAnchor", changed: searchPillsAnchor == nil && anchor != nil) // GATE-DIAG TEMPORARY
             if searchPillsAnchor == nil, let anchor { searchPillsAnchor = anchor }
         }
         .onPreferenceChange(ContinueLearningAnchorKey.self) { anchor in
+            GateDiag.delivery("ContinueLearningAnchor", changed: continueLearningAnchor == nil && anchor != nil) // GATE-DIAG TEMPORARY
             if continueLearningAnchor == nil, let anchor { continueLearningAnchor = anchor }
         }
         .coordinateSpace(name: TourCoordinateSpace.name)
@@ -722,6 +733,7 @@ struct MainTabView: View {
         .sheet(item: lessonSheetBinding, onDismiss: { presentationDidDismiss() }) { entry in
             NavigationStack {
                 LessonView(entry: entry)
+                    .onAppear { CrashBreadcrumbs.record("lesson sheet appeared") } // GATE-DIAG TEMPORARY
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Done") { lessonSheetRouter.close() }
@@ -874,6 +886,21 @@ struct MainTabView: View {
         // introduction just opened.
         .onChange(of: onboardingStore.hasCompletedOnboarding) { _, _ in
             maybeShowNotificationPermissionPrompt()
+        }
+        .task {
+            // GATE-DIAG TEMPORARY: count every objectWillChange fire
+            // from each observed object, to catch @Published streams
+            // the per-property counters do not cover.
+            GateDiag.installTaps([
+                ("ContentService", contentService.objectWillChange),
+                ("ProgressStore", progressStore.objectWillChange),
+                ("StoreManager", storeManager.objectWillChange),
+                ("DeepLinkRouter", deepLinkRouter.objectWillChange),
+                ("OnboardingStore", onboardingStore.objectWillChange),
+                ("LessonSheetRouter", lessonSheetRouter.objectWillChange),
+                ("NotificationService", notificationService.objectWillChange),
+                ("BookmarkStore", PFBookmarkStore.shared.objectWillChange),
+            ])
         }
         .task {
             // Keep the splash fast: about 1.2 seconds, then fade out.
