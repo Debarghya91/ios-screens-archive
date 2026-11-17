@@ -359,7 +359,7 @@ private struct CommunityChallengePlayView: View {
     /// Called when the shown step changes (or the completion
     /// summary replaces the steps), so the enclosing screen can
     /// scroll the new step to the top: the scroll rule.
-    let onStepChange: () -> Void = {}
+    let onStepChange: () -> Void
 
     /// Explicit init: the memberwise form did not accept the
     /// onStepChange argument on the cloud build, so the four

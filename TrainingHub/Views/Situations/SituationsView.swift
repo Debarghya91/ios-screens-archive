@@ -1322,7 +1322,7 @@ struct SituationDetailLoaderView: View {
             let item = await contentService.situationDetail(id: situation.id)
             guard !Task.isCancelled else { return }
             if let item {
-                resolvedSituation = situation(fromFull: item)
+                resolvedSituation = TrainingHub.situation(fromFull: item)
             }
             loadFinished = true
         }
