@@ -656,26 +656,48 @@ struct MainTabView: View {
                     .zIndex(1)
             }
         }
+        // Tour target geometry. Every handler below writes state
+        // ONLY when the stored value actually changes. The
+        // handlers used to assign unconditionally, and anchor
+        // values are fresh objects on every layout pass (Anchor
+        // has no value equality to dedupe on), so each delivery
+        // scheduled a new transaction, which re-laid-out, which
+        // re-delivered: the main thread never settled, the
+        // screen sat pixel-static while the view graph spun, and
+        // accessibility snapshots timed out, failing three gate
+        // classes in run 44132116949. Anchors resolve against the
+        // current layout when read, so capturing the first live
+        // anchor per target is enough: re-storing a fresh one
+        // buys nothing. Frames are concrete rects, so an
+        // equality guard is the correct dedupe there. The tour
+        // overlay itself is currently never shown; these values
+        // are captured for it and cost nothing once settled.
         .onPreferenceChange(DrawerRowAnchorKey.self) { anchors in
-            drawerRowAnchors = anchors
+            var merged = drawerRowAnchors
+            var changed = false
+            for (key, value) in anchors where merged[key] == nil {
+                merged[key] = value
+                changed = true
+            }
+            if changed { drawerRowAnchors = merged }
         }
         .onPreferenceChange(DrawerRowFrameKey.self) { frames in
-            drawerRowFrames = frames
+            if drawerRowFrames != frames { drawerRowFrames = frames }
         }
         .onPreferenceChange(KeepLearningAnchorKey.self) { anchor in
-            keepLearningAnchor = anchor
+            if keepLearningAnchor == nil, let anchor { keepLearningAnchor = anchor }
         }
         .onPreferenceChange(KeepLearningFrameKey.self) { frame in
-            keepLearningFrame = frame
+            if keepLearningFrame != frame { keepLearningFrame = frame }
         }
         .onPreferenceChange(SearchFieldAnchorKey.self) { anchor in
-            searchFieldAnchor = anchor
+            if searchFieldAnchor == nil, let anchor { searchFieldAnchor = anchor }
         }
         .onPreferenceChange(SearchPillsAnchorKey.self) { anchor in
-            searchPillsAnchor = anchor
+            if searchPillsAnchor == nil, let anchor { searchPillsAnchor = anchor }
         }
         .onPreferenceChange(ContinueLearningAnchorKey.self) { anchor in
-            continueLearningAnchor = anchor
+            if continueLearningAnchor == nil, let anchor { continueLearningAnchor = anchor }
         }
         .coordinateSpace(name: TourCoordinateSpace.name)
         // Deep-link lesson sheet: a lesson link opens here, in its
