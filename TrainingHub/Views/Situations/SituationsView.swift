@@ -398,19 +398,19 @@ struct SituationsView: View {
     /// pushed detail views have no menu button and keep a clean back button.
     @Binding var isDrawerOpen: Bool
 
-    /// Shows a Done button in the navigation bar when this view is
-    /// pushed from Checkout after a build-phase Buy, so the learner
-    /// has a way back: the pushed copy has no drawer, and its own
-    /// NavigationStack hides the outer back button. False in the
-    /// tab, where the drawer button is the way out.
-    var showCloseButton: Bool = false
-
     /// Reselect tick from the tab bar: bumped when the learner
     /// taps the Payment Cases tab while already on it. Scrolls
     /// back to the top of the list.
     var tabReselectTick: Int = 0
 
-    @Environment(\.dismiss) private var dismiss
+    // NOTE: do not read @Environment(\.dismiss) here. Its value
+    // identity changes on every evaluation, which re-invalidates
+    // this view and loops the tab hierarchy (gate runs
+    // 44165658277-44198996345; _printChanges named _dismiss at
+    // every sample). The Done button this served was dead: no
+    // caller ever set showCloseButton, so the button, the flag
+    // and this read were removed together. A future close
+    // affordance must use a closure, not the environment.
 
     /// The difficulty filter, preserved across restarts through
     /// SceneStorage as the level's raw value (empty means no
@@ -836,11 +836,6 @@ struct SituationsView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     DrawerMenuButton(isDrawerOpen: $isDrawerOpen)
-                }
-                if showCloseButton {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Done") { dismiss() }
-                    }
                 }
             }
             .sheet(isPresented: $showCheckout) {

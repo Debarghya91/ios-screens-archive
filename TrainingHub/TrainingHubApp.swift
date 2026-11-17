@@ -341,7 +341,12 @@ struct MainTabView: View {
     /// Opens the Privacy Policy and Terms of Service in the
     /// browser: the drawer rows link out to the live legal
     /// pages, they never present a sheet.
-    @Environment(\.openURL) private var openURL
+    // NOTE: do not read @Environment(\.openURL) here. Its value
+    // identity changes on every evaluation, which re-invalidates
+    // this view and loops the whole tab hierarchy (gate runs
+    // 44165658277-44198996345; _printChanges named _openURL at
+    // every sample). External links open via UIApplication.
+
     @State private var selectedTab = 0
     /// Bumped when the learner taps the tab they are already
     /// on. Each root view watches it and scrolls to its top.
@@ -1121,9 +1126,9 @@ struct MainTabView: View {
         case .certificates, .learningHabit, .notifications, .diagnostics:
             presentedSheet = destination
         case .privacyPolicy:
-            openURL(SupabaseConfig.privacyPolicyURL)
+            UIApplication.shared.open(SupabaseConfig.privacyPolicyURL)
         case .termsOfService:
-            openURL(SupabaseConfig.termsURL)
+            UIApplication.shared.open(SupabaseConfig.termsURL)
         case .practice:
             // Practice Mode as a sheet, for the first
             // practice-eligible situation. See PracticeSheetView.
