@@ -70,6 +70,7 @@
 		44CD21922DFE305A7D4CF9EB /* GuestLaunchUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 011CA1658562CD5365FD6D39 /* GuestLaunchUITests.swift */; };
 		PFC9836F545F4EBFB71195C8 /* LockedLessonUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = PF9A0A91DE2BBBC12207C166 /* LockedLessonUITests.swift */; };
 		PF8B2D4F6A1C349E7B8D0F5A3C /* SituationsGateUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = PF3E7A1C9D5B4480A9F2C6E1D4 /* SituationsGateUITests.swift */; };
+		7A2C3D1C015634B28ADABBF7 /* RunBeforeSendUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6DB84E0DBA4E68594510F78 /* RunBeforeSendUITests.swift */; };
 		8E1BA234C7F09A4CA1F776FE /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BB9B6029EFBAD3776411FC2E /* XCTest.framework */; };
 		PF8432B7D20777B8CF1A3B2B /* FinalAssessment.swift in Sources */ = {isa = PBXBuildFile; fileRef = PFDBE122C4BA6C254FF6AFC8 /* FinalAssessment.swift */; };
 		PF016642B0A6C76839581C5C /* FinalAssessmentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = PFAA791A0934464786056527 /* FinalAssessmentView.swift */; };
@@ -223,6 +224,7 @@
 		011CA1658562CD5365FD6D39 /* GuestLaunchUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GuestLaunchUITests.swift; path = GuestLaunchUITests.swift; sourceTree = "<group>"; };
 		PF9A0A91DE2BBBC12207C166 /* LockedLessonUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LockedLessonUITests.swift; path = LockedLessonUITests.swift; sourceTree = "<group>"; };
 		PF3E7A1C9D5B4480A9F2C6E1D4 /* SituationsGateUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SituationsGateUITests.swift; path = SituationsGateUITests.swift; sourceTree = "<group>"; };
+		A6DB84E0DBA4E68594510F78 /* RunBeforeSendUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RunBeforeSendUITests.swift; path = RunBeforeSendUITests.swift; sourceTree = "<group>"; };
 		66DB56787A97D6A1B5EDA628 /* TrainingHubTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrainingHubTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D1961BD99EFF0783E4B3EAA4 /* TrainingHubUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrainingHubUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BB9B6029EFBAD3776411FC2E /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = DEVELOPER_DIR; };
@@ -552,6 +554,7 @@
 				011CA1658562CD5365FD6D39 /* GuestLaunchUITests.swift */,
 				PF9A0A91DE2BBBC12207C166 /* LockedLessonUITests.swift */,
 				PF3E7A1C9D5B4480A9F2C6E1D4 /* SituationsGateUITests.swift */,
+				A6DB84E0DBA4E68594510F78 /* RunBeforeSendUITests.swift */,
 		); name = TrainingHubUITests; path = TrainingHubUITests; sourceTree = "<group>"; };
 		PF9BF4E121688435F6719EB9 /* Interview */ = {isa = PBXGroup; children = (
 				PF60900C8C93076A0B1FF86A /* InterviewQuestionsView.swift */,
@@ -800,6 +803,7 @@
 			44CD21922DFE305A7D4CF9EB /* GuestLaunchUITests.swift in Sources */,
 			PFC9836F545F4EBFB71195C8 /* LockedLessonUITests.swift in Sources */,
 			PF8B2D4F6A1C349E7B8D0F5A3C /* SituationsGateUITests.swift in Sources */,
+			7A2C3D1C015634B28ADABBF7 /* RunBeforeSendUITests.swift in Sources */,
 		); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
