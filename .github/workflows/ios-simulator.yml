@@ -86,11 +86,26 @@ jobs:
         run: |
           set -uo pipefail
           UDID="${{ steps.simulator.outputs.udid }}"
-          mkdir -p tap-results
+          mkdir -p tap-results samples
           FAILED=0
           for CLASS in IntroSkipUITests IntroFirstLessonUITests ChapterLessonUITests InvestigationTimelineUITests; do
             echo "=== $CLASS (fresh install) ==="
             xcrun simctl uninstall "$UDID" "$APP_BUNDLE_ID" 2>/dev/null || true
+            if [ "$CLASS" = "InvestigationTimelineUITests" ]; then
+              SAMPLER_N=1
+              (
+                sleep 45
+                while true; do
+                  PID="$(pgrep -f "TrainingHub.app" | head -n 1)"
+                  if [ -n "$PID" ]; then
+                    sample "$PID" 5 -file "samples/timeline-sample-$SAMPLER_N.txt" || true
+                    SAMPLER_N=$((SAMPLER_N + 1))
+                  fi
+                sleep 20
+                done
+              ) &
+              SAMPLER_PID=$!
+            fi
             if xcodebuild test \
               -project TrainingHub.xcodeproj \
               -scheme TrainingHubRunBeforeSend \
@@ -105,7 +120,11 @@ jobs:
               echo "::error::$CLASS: FAILED (see tap-results/$CLASS.xcresult)"
               FAILED=1
             fi
-          done
+            if [ -n "${SAMPLER_PID:-}" ]; then
+              kill "$SAMPLER_PID" 2>/dev/null || true
+              SAMPLER_PID=""
+            fi
+        done
           exit $FAILED
 
       - name: Upload run evidence
@@ -116,4 +135,5 @@ jobs:
           path: |
             smoke/
             tap-results/
+            samples/
           if-no-files-found: warn
