@@ -1514,7 +1514,6 @@ struct ChapterDetailView: View {
                         Text(PFChapterHelper.chapterTitle(for: lessons, number: chapterNumber))
                             .font(.pfSectionTitle)
                             .foregroundColor(.pfNavy)
-                            .onAppear { CrashBreadcrumbs.record("chapter detail appeared \(chapterNumber)") } // GATE-DIAG TEMPORARY
                         if !lessons.isEmpty {
                             if completedCount > 0 {
                                 Text("\(completedCount) of \(lessons.count) lessons complete")

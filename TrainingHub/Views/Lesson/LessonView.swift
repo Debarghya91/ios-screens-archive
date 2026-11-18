@@ -629,7 +629,6 @@ struct LessonView: View {
     // MARK: - Body
 
     var body: some View {
-        GateDiag.count("LessonView") // GATE-DIAG TEMPORARY
         return ScrollView {
             VStack(alignment: .leading, spacing: PFSpacing.xl) {
                 headerSection

@@ -328,12 +328,7 @@ final class IntroFirstLessonUITests: XCTestCase {
         // The lesson opens in the lesson sheet: title, Lesson
         // navigation bar, and Done button.
         XCTAssertTrue(
-            // GATE-DIAG TEMPORARY: 60s, not 15s. Run 44193811851
-            // proved the cover dismissal lands about 15s late
-            // visually; the wait must exceed the cover delay
-            // plus the sheet delay to separate late from never.
-            // Restore 15s once the delay itself is fixed.
-            app.staticTexts[lessonTitle].waitForExistence(timeout: 60),
+            app.staticTexts[lessonTitle].waitForExistence(timeout: 15),
             "The lesson screen must appear with its title after the card tap."
         )
         XCTAssertTrue(app.navigationBars[RunBeforeSendFixture.lessonNavTitle].exists)
@@ -370,15 +365,10 @@ final class ChapterLessonUITests: XCTestCase {
         let chapterRow = app.buttons.containing(
             .staticText, identifier: RunBeforeSendFixture.chapterOneCaption
         ).firstMatch
-        // GATE-DIAG TEMPORARY: run 44203744040 tapped a
-        // hittable Chapter 1 row yet no chapter page opened.
-        // Record what the query resolved to before tapping.
-        print("GATE-TEST-DIAG chapter row count=\(app.buttons.containing(.staticText, identifier: RunBeforeSendFixture.chapterOneCaption).count) exists=\(chapterRow.exists) hittable=\(chapterRow.isHittable) frame=\(chapterRow.frame)")
         XCTAssertTrue(
             app.scrollUntilHittable(chapterRow, maxSwipes: 20),
             "The Chapter 1 row must render in the catalogue."
         )
-        print("GATE-TEST-DIAG chapter row after scroll exists=\(chapterRow.exists) hittable=\(chapterRow.isHittable) frame=\(chapterRow.frame)")
         chapterRow.tap()
 
         // The chapter page lists its lessons.
@@ -408,11 +398,7 @@ final class ChapterLessonUITests: XCTestCase {
         lessonRow.tap()
 
         XCTAssertTrue(
-            // GATE-DIAG TEMPORARY: 45s, not 15s. Run 44193811851
-            // proved presentations land about 15s late; the wait
-            // must exceed the delay to separate late from never.
-            // Restore 15s once the delay itself is fixed.
-            app.staticTexts[RunBeforeSendFixture.firstLessonTitle].waitForExistence(timeout: 45),
+            app.staticTexts[RunBeforeSendFixture.firstLessonTitle].waitForExistence(timeout: 15),
             "The lesson screen must appear with its title after the lesson tap."
         )
         XCTAssertTrue(app.navigationBars[RunBeforeSendFixture.lessonNavTitle].exists)
@@ -465,26 +451,8 @@ final class InvestigationTimelineUITests: XCTestCase {
 
         // The case detail offers the investigation.
         let investigate = app.buttons["Investigate this case"]
-        // GATE-DIAG TEMPORARY: run 44203744040 showed the
-        // button rendered yet never hittable across 20 swipes,
-        // and run 44207329076 threw "Multiple matching elements"
-        // on the single-resolution query, so more than one
-        // button carries this label. Resolve throw-safely with
-        // a label predicate and log every match's frame and
-        // hittability, before and after scrolling.
-        func logInvestigateMatches(_ tag: String) {
-            let matches = app.buttons.matching(NSPredicate(format: "label == %@", "Investigate this case"))
-            print("GATE-TEST-DIAG investigate \(tag) count=\(matches.count)")
-            for index in 0..<matches.count {
-                let element = matches.element(boundBy: index)
-                print("GATE-TEST-DIAG investigate \(tag) [\(index)] hittable=\(element.isHittable) frame=\(element.frame)")
-            }
-        }
-        logInvestigateMatches("before-scroll")
-        let investigateFound = app.scrollUntilHittable(investigate, maxSwipes: 20)
-        logInvestigateMatches("after-scroll")
         XCTAssertTrue(
-            investigateFound,
+            app.scrollUntilHittable(investigate, maxSwipes: 20),
             "The 'Investigate this case' entry must render on a free case."
         )
         investigate.tap()

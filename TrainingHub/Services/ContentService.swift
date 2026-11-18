@@ -82,7 +82,6 @@ final class ContentService: ObservableObject {
 
     @Published private(set) var searchIndex: SearchIndex? = nil {
         didSet {
-            GateDiag.publish("searchIndex") // GATE-DIAG TEMPORARY
             catalogueCache = Self.deriveCatalogue(from: searchIndex)
             catalogueRevision += 1
         }
@@ -175,9 +174,7 @@ final class ContentService: ObservableObject {
     /// The full situations data (ContentManifest.situationCount items), when it has loaded.
     /// Nil until the fetch succeeds; the list falls back to the
     /// search index entries so it never goes empty.
-    @Published private(set) var fullSituations: [FullSituationItem]? = nil {
-        didSet { GateDiag.publish("fullSituations") } // GATE-DIAG TEMPORARY
-    }
+    @Published private(set) var fullSituations: [FullSituationItem]? = nil
     @Published private(set) var isLoadingSituations = false
 
     /// The compact situations index (one row per case, no full
@@ -186,9 +183,7 @@ final class ContentService: ObservableObject {
     /// never goes empty. Full case detail is fetched per case
     /// through situationDetail(id:), never by downloading the
     /// whole file first.
-    @Published private(set) var situationsIndex: SituationsIndexDoc? = nil {
-        didSet { GateDiag.publish("situationsIndex") } // GATE-DIAG TEMPORARY
-    }
+    @Published private(set) var situationsIndex: SituationsIndexDoc? = nil
     @Published private(set) var isLoadingSituationsIndex = false
 
     /// Fetched detail chunks, by chunk number, for this launch

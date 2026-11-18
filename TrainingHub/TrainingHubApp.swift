@@ -211,7 +211,6 @@ final class LessonSheetRouter: ObservableObject {
         guard PFNavigationDebouncer.shared.allow(key: entry.id) else { return }
         CrashBreadcrumbs.record("lesson tap \(entry.id)")
         presentedEntry = entry
-        CrashBreadcrumbs.record("lesson sheet requested \(entry.id)") // GATE-DIAG TEMPORARY
     }
 
     /// Close the lesson sheet.
@@ -256,12 +255,10 @@ final class LessonSheetRouter: ObservableObject {
     /// the open is scheduled is a no-op, so the destination
     /// can never present twice.
     func openPendingAfterIntroduction() {
-        CrashBreadcrumbs.record("openPending called") // GATE-DIAG TEMPORARY
         guard let destination = pendingDestination, !isOpeningPending else { return }
         isOpeningPending = true
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 400_000_000)
-            CrashBreadcrumbs.record("openPending firing") // GATE-DIAG TEMPORARY
             isOpeningPending = false
             pendingDestination = nil
             switch destination {
@@ -496,16 +493,17 @@ struct MainTabView: View {
 
     /// The one sheet MainTabView can present: a deep-link
     /// lesson, a tapped lesson, or the introduction's free
-    /// case. Three separate .sheet modifiers on this view
-    /// shadowed each other (only one presentation modifier of
-    /// a kind is honored per view), which is how every gate run
-    /// lost the lesson sheet: the router recorded the request,
-    /// the binding flipped, the sheet never presented, and no
-    /// warning was logged. One sheet, one binding, one
-    /// presentation. Priority is deep link first, then the
-    /// tapped lesson, then the free case; in practice only one
-    /// source is ever set, because the arbitration gate holds
-    /// the others until the sheet closes.
+    /// case. One sheet, one binding, one presentation: a single
+    /// consolidated sheet keeps one presentation path for all
+    /// three sources. (Multiple .sheet modifiers are supported
+    /// since iOS 14.5; the consolidation is hygiene, not the
+    /// fix for the lost sheet. The real causes, found in the
+    /// November 2026 gate runs, were an unrecognized-selector
+    /// crash in the audio service and a re-evaluation loop from
+    /// unstable environment values.) Priority is deep link
+    /// first, then the tapped lesson, then the free case; in
+    /// practice only one source is ever set, because the
+    /// arbitration gate holds the others until the sheet closes.
     private enum MainTabSheet: Identifiable {
         case deepLink(SearchEntry)
         case lesson(SearchEntry)
@@ -534,23 +532,12 @@ struct MainTabView: View {
             },
             set: { sheet in
                 if sheet == nil {
-                    CrashBreadcrumbs.record("sheet binding set to nil") // GATE-DIAG TEMPORARY
                     deepLinkLessonEntry = nil
                     lessonSheetRouter.presentedEntry = nil
                     lessonSheetRouter.presentedCase = nil
                 }
             }
         )
-    }
-
-    /// GATE-DIAG TEMPORARY: record that SwiftUI requested the
-    /// sheet content, then hand the item through. Distinguishes
-    /// "content closure never requested" from "closure ran but
-    /// the view never appeared". DELETE with the rest of
-    /// GateDiag.
-    private func logSheetRequest(_ sheet: MainTabSheet) -> MainTabSheet {
-        CrashBreadcrumbs.record("sheet content requested \(sheet.id)")
-        return sheet
     }
 
     /// The single sheet's content: a deep-link lesson, a tapped
@@ -572,7 +559,6 @@ struct MainTabView: View {
         case .lesson(let entry):
             NavigationStack {
                 LessonView(entry: entry)
-                    .onAppear { CrashBreadcrumbs.record("lesson sheet appeared") } // GATE-DIAG TEMPORARY
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Done") { lessonSheetRouter.close() }
@@ -621,7 +607,6 @@ struct MainTabView: View {
     /// did not take the hierarchy; otherwise it waits for that
     /// sheet's dismissal, which re-runs this function.
     private func presentationDidDismiss() {
-        CrashBreadcrumbs.record("arbitration ran") // GATE-DIAG TEMPORARY
         resolvePendingDeepLink()
         if deepLinkLessonEntry == nil, presentedSheet == nil {
             lessonSheetRouter.openPendingAfterIntroduction()
@@ -629,66 +614,15 @@ struct MainTabView: View {
         scheduleNotificationPromptCheck()
     }
 
-    /// GATE-DIAG TEMPORARY: record the real UIKit presentation
-    /// hierarchy at this moment: the root view controller, the
-    /// chain of presented controllers, and whether each is
-    /// mid-dismissal, mid-presentation, or stuck in a
-    /// transition. SwiftUI state and the UIKit hierarchy
-    /// diverged in gate runs 44171037785 and 44188117143 (the
-    /// cover stayed visible after onDismiss), and only this
-    /// probe shows which side is telling the truth. DELETE with
-    /// the rest of GateDiag.
-    private func probePresentationHierarchy(tag: String) {
-        let windows = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap { $0.windows }
-        guard !windows.isEmpty else {
-            CrashBreadcrumbs.record("PROBE \(tag): no window")
-            return
-        }
-        // One short line per window: breadcrumb entries are
-        // capped, and a combined line truncates the tail.
-        for (index, window) in windows.enumerated() {
-            let short: (UIViewController) -> String = { vc in
-                String(String(describing: type(of: vc)).split(separator: "<").first ?? "?")
-            }
-            var parts = "root=\(window.rootViewController.map(short) ?? "nil")"
-            var current = window.rootViewController?.presentedViewController
-            var depth = 0
-            while let presented = current, depth < 3 {
-                parts += " | p=\(short(presented)) dis=\(presented.isBeingDismissed ? 1 : 0) pres=\(presented.isBeingPresented ? 1 : 0) coord=\(presented.transitionCoordinator != nil ? 1 : 0)"
-                current = presented.presentedViewController
-                depth += 1
-            }
-            CrashBreadcrumbs.record("PROBE \(tag) w\(index) key=\(window.isKeyWindow ? 1 : 0) L=\(window.windowLevel.rawValue) \(parts)")
-        }
-    }
-
-    /// GATE-DIAG TEMPORARY (Test C): the cover's dismissal runs
-    /// the UIKit probe sequence AND the restored arbitration.
-    /// Test B (run 44193811851) proved the cover dismisses with
-    /// a clean UIKit hierarchy, about 15 seconds late visually.
-    /// Test C asks whether the pending presentation survives
-    /// that delayed dismissal: the probe runs alongside the
-    /// arbitration, so a collision and a delay stay
-    /// distinguishable.
+    /// The cover's dismissal runs the post-dismissal
+    /// arbitration: pending deep links, pending lesson
+    /// presentations, and the notification prompt check.
     private func coverDidDismiss() {
         CrashBreadcrumbs.record("cover onDismiss fired")
-        probePresentationHierarchy(tag: "cover-onDismiss")
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            probePresentationHierarchy(tag: "cover+100ms")
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            probePresentationHierarchy(tag: "cover+1s")
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            probePresentationHierarchy(tag: "cover+5s")
-        }
         presentationDidDismiss()
     }
 
     var body: some View {
-        GateDiag.count("MainTabView") // GATE-DIAG TEMPORARY
-        if GateDiag.printChangesSample("MainTabView") { let _ = Self._printChanges() } // GATE-DIAG TEMPORARY
         return ZStack {
             // Invisible tab bar frame reader: measures the real
             // tab bar geometry in window coordinates for the
@@ -841,31 +775,24 @@ struct MainTabView: View {
                 merged[key] = value
                 changed = true
             }
-            GateDiag.delivery("DrawerRowAnchors", changed: changed) // GATE-DIAG TEMPORARY
             if changed { drawerRowAnchors = merged }
         }
         .onPreferenceChange(DrawerRowFrameKey.self) { frames in
-            GateDiag.delivery("DrawerRowFrames", changed: drawerRowFrames != frames) // GATE-DIAG TEMPORARY
             if drawerRowFrames != frames { drawerRowFrames = frames }
         }
         .onPreferenceChange(KeepLearningAnchorKey.self) { anchor in
-            GateDiag.delivery("KeepLearningAnchor", changed: keepLearningAnchor == nil && anchor != nil) // GATE-DIAG TEMPORARY
             if keepLearningAnchor == nil, let anchor { keepLearningAnchor = anchor }
         }
         .onPreferenceChange(KeepLearningFrameKey.self) { frame in
-            GateDiag.delivery("KeepLearningFrame", changed: keepLearningFrame != frame) // GATE-DIAG TEMPORARY
             if keepLearningFrame != frame { keepLearningFrame = frame }
         }
         .onPreferenceChange(SearchFieldAnchorKey.self) { anchor in
-            GateDiag.delivery("SearchFieldAnchor", changed: searchFieldAnchor == nil && anchor != nil) // GATE-DIAG TEMPORARY
             if searchFieldAnchor == nil, let anchor { searchFieldAnchor = anchor }
         }
         .onPreferenceChange(SearchPillsAnchorKey.self) { anchor in
-            GateDiag.delivery("SearchPillsAnchor", changed: searchPillsAnchor == nil && anchor != nil) // GATE-DIAG TEMPORARY
             if searchPillsAnchor == nil, let anchor { searchPillsAnchor = anchor }
         }
         .onPreferenceChange(ContinueLearningAnchorKey.self) { anchor in
-            GateDiag.delivery("ContinueLearningAnchor", changed: continueLearningAnchor == nil && anchor != nil) // GATE-DIAG TEMPORARY
             if continueLearningAnchor == nil, let anchor { continueLearningAnchor = anchor }
         }
         .coordinateSpace(name: TourCoordinateSpace.name)
@@ -874,11 +801,9 @@ struct MainTabView: View {
         // in its own NavigationStack with a Done button, over
         // any tab. No push transition is involved, so a tap can
         // never strand the learner on a list. One modifier
-        // only: three .sheet modifiers on this view shadowed
-        // each other and the lesson sheet never presented (see
-        // MainTabSheet).
+        // only: a single consolidated sheet (see MainTabSheet).
         .sheet(item: mainTabSheetBinding, onDismiss: { presentationDidDismiss() }) { sheet in
-            mainTabSheetContent(for: logSheetRequest(sheet))
+            mainTabSheetContent(for: sheet)
         }
         // Presentation arbitration: this alert shows only when
         // no sheet owns the hierarchy, onboarding and the splash
@@ -1005,14 +930,6 @@ struct MainTabView: View {
         // different purposes and must not both trigger the
         // pending presentation.
         .onChange(of: onboardingStore.hasCompletedOnboarding) { _, completed in
-            // GATE-DIAG TEMPORARY (Test B isolation): the flag
-            // flip requests dismissal only, and the UIKit probe
-            // records the hierarchy at that moment. The
-            // notification check is disabled here for this run
-            // so no other presentation competes with the cover
-            // dismissal. Restore scheduleNotificationPromptCheck
-            // here once the lifecycle failure is proven.
-            probePresentationHierarchy(tag: "flag-flipped")
             if completed {
                 showOnboarding = false
             }
@@ -1023,49 +940,6 @@ struct MainTabView: View {
             // cover must never compete with the splash.
             if !splashVisible, !onboardingStore.hasCompletedOnboarding {
                 showOnboarding = true
-            }
-        }
-        .onChange(of: lessonSheetRouter.presentedEntry) { _, entry in
-            // GATE-DIAG TEMPORARY: probe the UIKit hierarchy
-            // when a lesson sheet is requested, and after it,
-            // to learn whether the sheet's view controller
-            // exists (late render) or never materialises
-            // (dropped presentation).
-            guard entry != nil else { return }
-            probePresentationHierarchy(tag: "sheet-requested")
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                probePresentationHierarchy(tag: "sheet+1s")
-                try? await Task.sleep(nanoseconds: 4_000_000_000)
-                probePresentationHierarchy(tag: "sheet+5s")
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
-                probePresentationHierarchy(tag: "sheet+15s")
-            }
-        }
-        .task {
-            // GATE-DIAG TEMPORARY: count every objectWillChange fire
-            // from each observed object, to catch @Published streams
-            // the per-property counters do not cover.
-            GateDiag.installTaps([
-                ("ContentService", contentService.objectWillChange),
-                ("ProgressStore", progressStore.objectWillChange),
-                ("StoreManager", storeManager.objectWillChange),
-                ("DeepLinkRouter", deepLinkRouter.objectWillChange),
-                ("OnboardingStore", onboardingStore.objectWillChange),
-                ("LessonSheetRouter", lessonSheetRouter.objectWillChange),
-                ("NotificationService", notificationService.objectWillChange),
-                ("BookmarkStore", PFBookmarkStore.shared.objectWillChange),
-            ])
-        }
-        .task {
-            // GATE-DIAG TEMPORARY: main-actor heartbeat, one
-            // line every 2 seconds. Gaps in the heartbeat
-            // timestamps mark main-thread stalls precisely.
-            var tick = 0
-            while !Task.isCancelled {
-                tick += 1
-                GateDiag.heartbeat(tick)
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
         }
         .task {
