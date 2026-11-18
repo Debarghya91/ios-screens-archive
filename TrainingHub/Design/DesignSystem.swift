@@ -911,7 +911,15 @@ struct PFGuardedNavigationLink<Destination: View, Label: View>: View {
 
     var body: some View {
         Button {
-            guard PFNavigationDebouncer.shared.allow(key: key) else { return }
+            // GATE-DIAG TEMPORARY: the gate's chapter-row tap
+            // lands on a hittable row yet no push follows (run
+            // 44203744040). Record whether the action ran and
+            // whether the debounce passed, keyed by destination.
+            guard PFNavigationDebouncer.shared.allow(key: key) else {
+                CrashBreadcrumbs.record("guarded debounced \(key)")
+                return
+            }
+            CrashBreadcrumbs.record("guarded tap \(key)")
             if let breadcrumb {
                 CrashBreadcrumbs.record(breadcrumb)
             }

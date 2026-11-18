@@ -370,10 +370,15 @@ final class ChapterLessonUITests: XCTestCase {
         let chapterRow = app.buttons.containing(
             .staticText, identifier: RunBeforeSendFixture.chapterOneCaption
         ).firstMatch
+        // GATE-DIAG TEMPORARY: run 44203744040 tapped a
+        // hittable Chapter 1 row yet no chapter page opened.
+        // Record what the query resolved to before tapping.
+        print("GATE-TEST-DIAG chapter row count=\(app.buttons.containing(.staticText, identifier: RunBeforeSendFixture.chapterOneCaption).count) exists=\(chapterRow.exists) hittable=\(chapterRow.isHittable) frame=\(chapterRow.frame)")
         XCTAssertTrue(
             app.scrollUntilHittable(chapterRow, maxSwipes: 20),
             "The Chapter 1 row must render in the catalogue."
         )
+        print("GATE-TEST-DIAG chapter row after scroll exists=\(chapterRow.exists) hittable=\(chapterRow.isHittable) frame=\(chapterRow.frame)")
         chapterRow.tap()
 
         // The chapter page lists its lessons.
@@ -460,8 +465,14 @@ final class InvestigationTimelineUITests: XCTestCase {
 
         // The case detail offers the investigation.
         let investigate = app.buttons["Investigate this case"]
+        // GATE-DIAG TEMPORARY: run 44203744040 showed the
+        // button rendered yet never hittable across 20 swipes.
+        // Record the query resolution before and after scrolling.
+        print("GATE-TEST-DIAG investigate count=\(app.buttons.matching(identifier: "Investigate this case").count) exists=\(investigate.exists) hittable=\(investigate.isHittable) frame=\(investigate.frame)")
+        let investigateFound = app.scrollUntilHittable(investigate, maxSwipes: 20)
+        print("GATE-TEST-DIAG investigate after scroll count=\(app.buttons.matching(identifier: "Investigate this case").count) exists=\(investigate.exists) hittable=\(investigate.isHittable) frame=\(investigate.frame)")
         XCTAssertTrue(
-            app.scrollUntilHittable(investigate, maxSwipes: 20),
+            investigateFound,
             "The 'Investigate this case' entry must render on a free case."
         )
         investigate.tap()
