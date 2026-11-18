@@ -926,7 +926,16 @@ struct PFGuardedNavigationLink<Destination: View, Label: View>: View {
             isActive = true
         } label: { label }
         .background(
+            // Hidden from the accessibility tree: without this,
+            // the link exposes itself as a second button carrying
+            // the wrapper's accessibility label, with a degenerate
+            // (infinite, zero-size) frame. VoiceOver then reads
+            // two identical buttons, one dead, and UI tests
+            // resolving the label throw "Multiple matching
+            // elements" (gate run 44211772393: the real button at
+            // a normal frame plus a phantom at (inf, inf, 0, 0)).
             NavigationLink(destination: destination, isActive: $isActive) { EmptyView() }
+                .accessibilityHidden(true)
         )
     }
 }
