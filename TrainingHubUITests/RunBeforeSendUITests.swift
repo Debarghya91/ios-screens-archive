@@ -466,11 +466,23 @@ final class InvestigationTimelineUITests: XCTestCase {
         // The case detail offers the investigation.
         let investigate = app.buttons["Investigate this case"]
         // GATE-DIAG TEMPORARY: run 44203744040 showed the
-        // button rendered yet never hittable across 20 swipes.
-        // Record the query resolution before and after scrolling.
-        print("GATE-TEST-DIAG investigate count=\(app.buttons.matching(identifier: "Investigate this case").count) exists=\(investigate.exists) hittable=\(investigate.isHittable) frame=\(investigate.frame)")
+        // button rendered yet never hittable across 20 swipes,
+        // and run 44207329076 threw "Multiple matching elements"
+        // on the single-resolution query, so more than one
+        // button carries this label. Resolve throw-safely with
+        // a label predicate and log every match's frame and
+        // hittability, before and after scrolling.
+        func logInvestigateMatches(_ tag: String) {
+            let matches = app.buttons.matching(NSPredicate(format: "label == %@", "Investigate this case"))
+            print("GATE-TEST-DIAG investigate \(tag) count=\(matches.count)")
+            for index in 0..<matches.count {
+                let element = matches.element(boundBy: index)
+                print("GATE-TEST-DIAG investigate \(tag) [\(index)] hittable=\(element.isHittable) frame=\(element.frame)")
+            }
+        }
+        logInvestigateMatches("before-scroll")
         let investigateFound = app.scrollUntilHittable(investigate, maxSwipes: 20)
-        print("GATE-TEST-DIAG investigate after scroll count=\(app.buttons.matching(identifier: "Investigate this case").count) exists=\(investigate.exists) hittable=\(investigate.isHittable) frame=\(investigate.frame)")
+        logInvestigateMatches("after-scroll")
         XCTAssertTrue(
             investigateFound,
             "The 'Investigate this case' entry must render on a free case."

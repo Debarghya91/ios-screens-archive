@@ -88,6 +88,16 @@ struct LearnSectionsView: View {
     /// exactly.
     @State private var selectedPathLevel: PathLevelFilter = .all
 
+    /// The catalogue chapter being opened, hoisted OUT of the
+    /// lazy row: gate runs 44203744040 and 44207329076 proved a
+    /// row-owned isActive binding never pushes from this
+    /// LazyVStack (the tap ran, the debounce passed, no push
+    /// followed), while the identical guarded link pushes fine
+    /// from the Situations list. The navigation state lives here
+    /// at the section level and drives one hidden link in the
+    /// body background, so row recycling cannot kill the push.
+    @State private var selectedCatalogueChapter: Int? = nil
+
     private enum PathLevelFilter: String, CaseIterable {
         case all = "All"
         case foundation = "Foundation"
@@ -149,6 +159,15 @@ struct LearnSectionsView: View {
                 practiceExperiencesSection
             }
         }
+        .background(
+            NavigationLink(
+                destination: ChapterDetailView(chapterNumber: selectedCatalogueChapter ?? 1),
+                isActive: Binding(
+                    get: { selectedCatalogueChapter != nil },
+                    set: { if !$0 { selectedCatalogueChapter = nil } }
+                )
+            ) { EmptyView() }
+        )
     }
 
     // MARK: - Loading and error
@@ -607,7 +626,15 @@ struct LearnSectionsView: View {
                 ForEach(chapterBundles) { product in
                     catalogueCourseBand(product: product)
                     ForEach(Array(PFChapterHelper.readingOrderChapterNumbers(for: product).enumerated()), id: \.element) { index, number in
-                        PFGuardedNavigationLink(key: "chapter-\(number)", destination: { ChapterDetailView(chapterNumber: number) }) {
+                        Button {
+                            let key = "chapter-\(number)"
+                            guard PFNavigationDebouncer.shared.allow(key: key) else {
+                                CrashBreadcrumbs.record("guarded debounced \(key)")
+                                return
+                            }
+                            CrashBreadcrumbs.record("guarded tap \(key)")
+                            selectedCatalogueChapter = number
+                        } label: {
                             CatalogueChapterRow(chapterNumber: number, isAlternate: index % 2 == 1)
                         }
                         .buttonStyle(PFCardButtonStyle())
@@ -1487,6 +1514,7 @@ struct ChapterDetailView: View {
                         Text(PFChapterHelper.chapterTitle(for: lessons, number: chapterNumber))
                             .font(.pfSectionTitle)
                             .foregroundColor(.pfNavy)
+                            .onAppear { CrashBreadcrumbs.record("chapter detail appeared \(chapterNumber)") } // GATE-DIAG TEMPORARY
                         if !lessons.isEmpty {
                             if completedCount > 0 {
                                 Text("\(completedCount) of \(lessons.count) lessons complete")
